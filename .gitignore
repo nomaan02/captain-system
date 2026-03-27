@@ -1,0 +1,37 @@
+# Runtime data
+questdb/db/
+redis/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Secrets
+vault/keys.vault
+vault-backup/
+nginx/certs/server.key
+nginx/certs/server.crt
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Logs (track structure, not content)
+logs/incidents/*
+logs/crash_reports/*
+!logs/incidents/.gitkeep
+!logs/crash_reports/.gitkeep
+
+# Data (external files, not tracked)
+data/market/
+data/vix/
+data/macro/
+data/options/
+data/cot/
+data/calendar/
+data/roll_calendar/
+data/p1_outputs/
+data/p2_outputs/
+
+# TSM validated copies (auto-generated)
+config/tsm/validated/

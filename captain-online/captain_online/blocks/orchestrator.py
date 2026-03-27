@@ -1,0 +1,443 @@
+# region imports
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
+# endregion
+"""Captain Online Orchestrator — P3-PG-20 (Task 3.11a / ON lines 1349-1430).
+
+Session loop: runs 24/7, evaluates at session opens (NY, LON, APAC).
+
+Flow per session:
+  1. Circuit breaker check (DATA_HOLD >= 3 OR VIX > threshold OR manual_halt)
+  2. SHARED: B1 (ingestion) → B2 (regime) → B3 (AIM aggregation)
+  3. PER-USER LOOP: B4 (Kelly) → B5 (selection) → B5B (quality) → B5C (CB) → B6 (signal)
+  4. POST-LOOP: B8 (concentration) → B9 (capacity)
+  5. CONTINUOUS: B7 (position monitoring) while any position open
+
+Session schedule:
+  NY:   09:30 America/New_York
+  LON:  08:00 (≈03:00 EST)
+  APAC: per asset config
+
+Subscribes to Redis: captain:commands (for manual halt, pause, etc.)
+"""
+
+import json
+import logging
+import threading
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from shared.redis_client import (
+    get_redis_client,
+    ensure_consumer_group, read_stream, ack_message,
+    STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
+)
+from shared.journal import write_checkpoint
+from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE
+
+_ET = ZoneInfo(SYSTEM_TIMEZONE)
+
+logger = logging.getLogger(__name__)
+
+# Session open times (hour, minute) in America/New_York
+SESSION_OPEN_TIMES = {
+    1: (9, 30),   # NY
+    2: (3, 0),    # LON (08:00 London ≈ 03:00 EST)
+    3: (20, 0),   # APAC (approximate — asset-specific)
+}
+
+# Tolerance window for session detection (minutes)
+SESSION_WINDOW_MINUTES = 2
+
+
+class OnlineOrchestrator:
+    """Event loop for Captain Online process."""
+
+    def __init__(self):
+        self.running = False
+        self.open_positions = []  # Active positions across all users
+        self._session_evaluated_today = {}  # {session_id: date} — prevent double-eval
+        self._all_signals = []  # Collect signals for B8 concentration
+
+    def start(self):
+        """Start the orchestrator."""
+        self.running = True
+        logger.info("Online orchestrator starting...")
+        write_checkpoint("ONLINE", "ORCHESTRATOR_START", "init", "session_loop")
+
+        # Redis command listener in background
+        thread = threading.Thread(target=self._command_listener, daemon=True)
+        thread.start()
+
+        # Main loop
+        self._session_loop()
+
+    def stop(self):
+        self.running = False
+        logger.info("Online orchestrator stopping...")
+
+    def _session_loop(self):
+        """Main 24/7 loop — check sessions, monitor positions."""
+        while self.running:
+            now = datetime.now(_ET)
+
+            for session_id, (hour, minute) in SESSION_OPEN_TIMES.items():
+                if self._is_session_opening(now, session_id, hour, minute):
+                    self._run_session(session_id)
+
+            # Continuous: B7 position monitoring
+            if self.open_positions:
+                self._run_position_monitor()
+
+            # Heartbeat
+            time.sleep(1)
+
+    def _is_session_opening(self, now: datetime, session_id: int, hour: int, minute: int) -> bool:
+        """Check if we're within the session open window and haven't evaluated today."""
+        today = now.date()
+        if self._session_evaluated_today.get(session_id) == today:
+            return False
+
+        target_minute = hour * 60 + minute
+        current_minute = now.hour * 60 + now.minute
+        return abs(current_minute - target_minute) <= SESSION_WINDOW_MINUTES
+
+    def _run_session(self, session_id: int):
+        """Execute full session evaluation pipeline."""
+        session_name = SESSION_IDS.get(session_id, "UNKNOWN")
+        logger.info("Session %s (%d) opening — beginning evaluation", session_name, session_id)
+        write_checkpoint("ONLINE", f"SESSION_{session_name}", "start", "circuit_breaker")
+
+        # Circuit breaker check
+        if not self._circuit_breaker_check(session_id):
+            logger.warning("Session %s HALTED by circuit breaker", session_name)
+            self._session_evaluated_today[session_id] = datetime.now(_ET).date()
+            return
+
+        try:
+            # ──── SHARED INTELLIGENCE (once per session) ────
+            from captain_online.blocks.b1_data_ingestion import run_data_ingestion
+            data = run_data_ingestion(session_id)
+            if data is None:
+                logger.info("Session %s: no active assets — skipping", session_name)
+                self._session_evaluated_today[session_id] = datetime.now(_ET).date()
+                return
+
+            from captain_online.blocks.b2_regime_probability import run_regime_probability
+            regime = run_regime_probability(
+                data["active_assets"], data["features"], data["regime_models"]
+            )
+
+            from captain_online.blocks.b3_aim_aggregation import run_aim_aggregation
+            aim = run_aim_aggregation(
+                data["active_assets"], data["features"],
+                data["aim_states"], data["aim_weights"]
+            )
+
+            write_checkpoint("ONLINE", f"SESSION_{session_name}", "shared_done", "per_user_loop")
+
+            # ──── PER-USER DEPLOYMENT LOOP ────
+            active_users = self._get_active_users()
+            self._all_signals = []
+
+            for user in active_users:
+                user_silo = self._load_user_silo(user["user_id"])
+                if user_silo is None:
+                    logger.warning("No capital silo for user %s — skipping", user["user_id"])
+                    continue
+
+                self._process_user(
+                    session_id, data, regime, aim, user_silo
+                )
+
+            # ──── POST-LOOP ────
+            if len(active_users) > 1:
+                from captain_online.blocks.b8_concentration_monitor import run_concentration_monitor
+                run_concentration_monitor(session_id, active_users, self._all_signals)
+
+            from captain_online.blocks.b9_capacity_evaluation import run_capacity_evaluation
+            run_capacity_evaluation(session_id, active_users, data["active_assets"])
+
+            logger.info("Session %s evaluation complete for %d user(s)",
+                        session_name, len(active_users))
+
+        except Exception as e:
+            logger.error("Session %s evaluation FAILED: %s", session_name, e, exc_info=True)
+            write_checkpoint("ONLINE", f"SESSION_{session_name}", "error", "retry_next",
+                             {"error": str(e)})
+
+        self._session_evaluated_today[session_id] = datetime.now(_ET).date()
+
+    def _process_user(self, session_id: int, data: dict, regime: dict, aim: dict, user_silo: dict):
+        """Run B4→B5→B5B→B5C→B6 for one user."""
+        user_id = user_silo.get("user_id", "unknown")
+        accounts = user_silo.get("accounts", [])
+        if isinstance(accounts, str):
+            try:
+                accounts = json.loads(accounts)
+            except (json.JSONDecodeError, TypeError):
+                accounts = []
+
+        try:
+            from captain_online.blocks.b4_kelly_sizing import run_kelly_sizing
+            sizing = run_kelly_sizing(
+                active_assets=data["active_assets"],
+                regime_probs=regime["regime_probs"],
+                regime_uncertain=regime["regime_uncertain"],
+                combined_modifier=aim["combined_modifier"],
+                kelly_params=data["kelly_params"],
+                ewma_states=data["ewma_states"],
+                tsm_configs=data["tsm_configs"],
+                sizing_overrides=data["sizing_overrides"],
+                user_silo=user_silo,
+                locked_strategies=data["locked_strategies"],
+                assets_detail=data["assets_detail"],
+                session_id=session_id,
+            )
+
+            if sizing is None or sizing.get("silo_blocked"):
+                return
+
+            from captain_online.blocks.b5_trade_selection import run_trade_selection, apply_hmm_session_allocation
+            trades = run_trade_selection(
+                active_assets=data["active_assets"],
+                final_contracts=sizing["final_contracts"],
+                account_recommendation=sizing["account_recommendation"],
+                account_skip_reason=sizing["account_skip_reason"],
+                ewma_states=data["ewma_states"],
+                regime_probs=regime["regime_probs"],
+                user_silo=user_silo,
+                session_id=session_id,
+            )
+
+            # V3: HMM session allocation
+            trades["final_contracts"] = apply_hmm_session_allocation(
+                trades["selected_trades"], trades["final_contracts"],
+                accounts, session_id,
+            )
+
+            from captain_online.blocks.b5b_quality_gate import run_quality_gate
+            quality = run_quality_gate(
+                selected_trades=trades["selected_trades"],
+                expected_edge=trades["expected_edge"],
+                combined_modifier=aim["combined_modifier"],
+                regime_probs=regime["regime_probs"],
+                user_silo=user_silo,
+                session_id=session_id,
+            )
+
+            # V3: Circuit breaker screen (after quality gate, before signal output)
+            from captain_online.blocks.b5c_circuit_breaker import run_circuit_breaker_screen
+            cb_result = run_circuit_breaker_screen(
+                recommended_trades=quality["recommended_trades"],
+                final_contracts=trades["final_contracts"],
+                account_recommendation=trades["account_recommendation"],
+                account_skip_reason=trades["account_skip_reason"],
+                accounts=accounts,
+                tsm_configs=data["tsm_configs"],
+                session_id=session_id,
+                proposed_contracts=trades["final_contracts"],
+                locked_strategies=data["locked_strategies"],
+                assets_detail=data["assets_detail"],
+            )
+
+            from captain_online.blocks.b6_signal_output import run_signal_output
+            output = run_signal_output(
+                recommended_trades=cb_result["recommended_trades"],
+                available_not_recommended=quality["available_not_recommended"],
+                quality_results=quality["quality_results"],
+                final_contracts=cb_result["final_contracts"],
+                account_recommendation=cb_result["account_recommendation"],
+                account_skip_reason=cb_result["account_skip_reason"],
+                features=data["features"],
+                ewma_states=data["ewma_states"],
+                aim_breakdown=aim["aim_breakdown"],
+                combined_modifier=aim["combined_modifier"],
+                regime_probs=regime["regime_probs"],
+                expected_edge=trades["expected_edge"],
+                locked_strategies=data["locked_strategies"],
+                tsm_configs=data["tsm_configs"],
+                user_silo=user_silo,
+                assets_detail=data["assets_detail"],
+                session_id=session_id,
+            )
+
+            self._all_signals.extend(output.get("signals", []))
+
+            rec_count = len(cb_result["recommended_trades"])
+            below_count = len(quality["available_not_recommended"])
+            logger.info("Session — user %s: %d recommended, %d below threshold",
+                        user_id, rec_count, below_count)
+
+        except Exception as e:
+            logger.error("User %s processing FAILED: %s", user_id, e, exc_info=True)
+
+    def _run_position_monitor(self):
+        """Run B7 position monitoring pass."""
+        from captain_online.blocks.b7_position_monitor import monitor_positions
+        # Load TSM configs for position resolution
+        from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
+        tsm_configs = _load_tsm_configs()
+        resolved = monitor_positions(self.open_positions, tsm_configs)
+        for pos in resolved:
+            self.open_positions.remove(pos)
+
+    def _circuit_breaker_check(self, session_id: int) -> bool:
+        """Per Arch §19.6: DATA_HOLD >= 3 OR VIX > threshold OR manual_halt."""
+        from captain_online.blocks.b5c_circuit_breaker import _get_data_hold_count, _get_current_vix
+
+        data_hold_count = _get_data_hold_count()
+        if data_hold_count >= 3:
+            logger.warning("Circuit breaker: %d assets in DATA_HOLD", data_hold_count)
+            return False
+
+        vix = _get_current_vix()
+        if vix is not None and vix > 50.0:
+            logger.warning("Circuit breaker: VIX = %.1f", vix)
+            return False
+
+        # Manual halt check
+        if self._is_manual_halt():
+            logger.warning("Circuit breaker: manual halt active")
+            return False
+
+        return True
+
+    def _is_manual_halt(self) -> bool:
+        """Check if manual halt is active via P3-D17."""
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT param_value FROM p3_d17_system_monitor_state
+                   WHERE param_key = 'manual_halt_all'
+                   ORDER BY last_updated DESC LIMIT 1"""
+            )
+            row = cur.fetchone()
+        if row and row[0]:
+            return row[0].lower() in ("true", "1", "yes")
+        return False
+
+    def _get_active_users(self) -> list[dict]:
+        """Load active users from P3-D15."""
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT user_id, role FROM p3_d15_user_session_data
+                   ORDER BY last_active DESC"""
+            )
+            rows = cur.fetchall()
+
+        seen = set()
+        users = []
+        for r in rows:
+            if r[0] in seen:
+                continue
+            seen.add(r[0])
+            users.append({"user_id": r[0], "role": r[1]})
+        return users if users else [{"user_id": "primary_user", "role": "ADMIN"}]
+
+    def _load_user_silo(self, user_id: str) -> dict | None:
+        """Load user capital silo from P3-D16."""
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT user_id, starting_capital, total_capital, accounts,
+                          max_simultaneous_positions, max_portfolio_risk_pct,
+                          correlation_threshold, user_kelly_ceiling
+                   FROM p3_d16_user_capital_silos
+                   WHERE user_id = %s
+                   ORDER BY last_updated DESC LIMIT 1""",
+                (user_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "user_id": row[0],
+            "starting_capital": row[1] or 0,
+            "total_capital": row[2] or 0,
+            "accounts": row[3] or "[]",
+            "max_simultaneous_positions": row[4],
+            "max_portfolio_risk_pct": row[5] or 0.10,
+            "correlation_threshold": row[6] or 0.7,
+            "user_kelly_ceiling": row[7] or 1.0,
+        }
+
+    def _command_listener(self):
+        """Read commands from Redis Stream with consumer group acknowledgment.
+
+        Reconnects with exponential backoff (1s → 30s) on any failure.
+        """
+        backoff = 1
+        while self.running:
+            try:
+                ensure_consumer_group(STREAM_COMMANDS, GROUP_ONLINE_COMMANDS)
+                logger.info("Online command stream consumer group ready")
+                backoff = 1
+
+                while self.running:
+                    for msg_id, data in read_stream(
+                        STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
+                        "online_1", block=2000,
+                    ):
+                        self._handle_command(data)
+                        ack_message(STREAM_COMMANDS, GROUP_ONLINE_COMMANDS, msg_id)
+
+            except Exception as e:
+                if not self.running:
+                    break
+                logger.error("Command stream error: %s — reconnecting in %ds", e, backoff)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+    def _handle_command(self, data: dict):
+        """Handle incoming command."""
+        cmd_type = data.get("type")
+        if cmd_type == "MANUAL_HALT":
+            logger.info("Manual halt command received")
+            # Stored in D17 by Command process
+        elif cmd_type == "TAKEN_SKIPPED":
+            self._handle_taken_skipped(data)
+        else:
+            logger.debug("Unhandled command type: %s", cmd_type)
+
+    def _handle_taken_skipped(self, data: dict):
+        """Handle TAKEN/SKIPPED decision from Command/GUI."""
+        action = data.get("action")
+        signal_id = data.get("signal_id")
+        user_id = data.get("user_id")
+
+        if action == "TAKEN":
+            # Create open position for B7 monitoring
+            position = {
+                "signal_id": signal_id,
+                "user_id": user_id,
+                "asset": data.get("asset"),
+                "direction": data.get("direction", 1),
+                "entry_price": data.get("actual_entry_price", data.get("entry_price")),
+                "signal_entry_price": data.get("entry_price"),
+                "actual_entry_price": data.get("actual_entry_price"),
+                "contracts": data.get("contracts", 0),
+                "tp_level": data.get("tp_level"),
+                "sl_level": data.get("sl_level"),
+                "point_value": data.get("point_value", 50.0),
+                "risk_amount": data.get("risk_amount", 0),
+                "account": data.get("account_id"),
+                "session": data.get("session"),
+                "regime_state": data.get("regime_state"),
+                "combined_modifier": data.get("combined_modifier"),
+                "aim_breakdown": data.get("aim_breakdown"),
+                "tsm_id": data.get("tsm_id"),
+                "entry_time": datetime.now(_ET),
+            }
+            self.open_positions.append(position)
+            logger.info("Position opened: %s for user %s (%d contracts)",
+                        data.get("asset"), user_id, position["contracts"])
+
+        elif action == "SKIPPED":
+            logger.info("Signal %s SKIPPED by user %s", signal_id, user_id)

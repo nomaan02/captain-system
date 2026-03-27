@@ -1,0 +1,29 @@
+{
+    "name": "IBKR Live",
+    "classification": {
+        "provider": "IBKR",
+        "category": "BROKER_RETAIL",
+        "stage": "LIVE",
+        "risk_goal": "GROW_CAPITAL"
+    },
+    "starting_balance": 50000,
+    "max_drawdown_limit": 15000,
+    "max_daily_loss": null,
+    "max_contracts": 50,
+    "commission_per_contract": 2.25,
+    "overnight_allowed": true,
+    "trading_hours": "EXTENDED",
+    "fee_schedule": {
+        "type": "BROKER",
+        "fees_by_instrument": {
+            "ES": {"round_turn": 4.50, "components": {"commission": 2.25, "exchange": 2.25}},
+            "MES": {"round_turn": 1.50, "components": {"commission": 0.75, "exchange": 0.75}}
+        },
+        "slippage_model": {
+            "type": "SPREAD_BASED",
+            "spread_multiple": 0.5
+        }
+    },
+    "topstep_optimisation": false,
+    "scaling_plan_active": false
+}

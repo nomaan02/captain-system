@@ -1,0 +1,79 @@
+{
+    "name": "Topstep 150K Express Funded",
+    "classification": {
+        "provider": "TopstepX",
+        "category": "PROP_FUNDED",
+        "stage": "XFA",
+        "risk_goal": "GROW_CAPITAL"
+    },
+    "starting_balance": 150000,
+    "max_drawdown_limit": 4500,
+    "max_daily_loss": 3000,
+    "max_contracts": 15,
+    "commission_per_contract": 1.40,
+    "overnight_allowed": false,
+    "trading_hours": {
+        "session_open": "18:00 EST",
+        "session_close": "16:10 EST",
+        "flat_by": "16:10 EST",
+        "risk_manager_flatten": "16:08 EST",
+        "eod_exit_buffer": "15:55 EST",
+        "weekend_close": "Friday 16:10 EST",
+        "weekend_open": "Sunday 18:00 EST",
+        "note": "Session spans overnight (18:00 to 16:10 next day). Must be flat by 16:10 EST daily."
+    },
+    "fee_schedule": {
+        "type": "TOPSTEP_EXPRESS",
+        "fees_by_instrument": {
+            "ES":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MES": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "NQ":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MNQ": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "M2K": {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
+            "MYM": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "NKD": {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MGC": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "ZB":  {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
+            "ZN":  {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
+            "CL":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MCL": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}}
+        },
+        "slippage_model": {
+            "type": "FIXED_TICKS",
+            "ticks_per_side": 1
+        }
+    },
+    "topstep_optimisation": true,
+    "topstep_params": {
+        "p": 0.005,
+        "e": 0.01,
+        "c": 0.5,
+        "lambda": 0,
+        "time_partitions": null,
+        "max_payouts_remaining": 5,
+        "session_weights_initial": {"NY": 0.60, "LON": 0.25, "APAC": 0.15}
+    },
+    "scaling_plan_active": true,
+    "scaling_plan": [
+        {"balance_threshold": 150000, "profit_level": 0,    "max_contracts": 3,  "max_micros": 30,  "label": "Tier 1: 30 micros (3 minis)"},
+        {"balance_threshold": 151500, "profit_level": 1500, "max_contracts": 4,  "max_micros": 40,  "label": "Tier 2: 40 micros (4 minis)"},
+        {"balance_threshold": 152000, "profit_level": 2000, "max_contracts": 5,  "max_micros": 50,  "label": "Tier 3: 50 micros (5 minis)"},
+        {"balance_threshold": 153000, "profit_level": 3000, "max_contracts": 10, "max_micros": 100, "label": "Tier 4: 100 micros (10 minis)"},
+        {"balance_threshold": 154500, "profit_level": 4500, "max_contracts": 15, "max_micros": 150, "label": "Tier 5: 150 micros (15 minis)"}
+    ],
+    "consistency_rule": {
+        "max_daily_profit": 4500,
+        "note": "No single day should exceed 50% of profit target ($9,000)"
+    },
+    "payout_rules": {
+        "max_per_payout": 5000,
+        "max_profit_fraction": 0.50,
+        "commission_rate": 0.10,
+        "eligibility_winning_days": 5,
+        "minimum_win_amount": 150,
+        "max_total_payouts": 5,
+        "tier_floor_profit": 4500,
+        "note": "After 5 payouts, account transitions XFA -> Live"
+    },
+    "account_loss_fee": 226.60
+}

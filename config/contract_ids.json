@@ -1,0 +1,76 @@
+{
+    "description": "TopstepX contract IDs. Auto-updated 2026-03-23 via roll_calendar_update.py",
+    "note": "MGC uses April expiry (J26), all others June (M26). ZN uses TYA (standard 10yr), NOT TNA (Ultra).",
+    "contracts": {
+        "ES": {
+            "contract_id": "CON.F.US.EP.M26",
+            "name": "ESM6",
+            "description": "E-Mini S&P 500: June 2026",
+            "tick_size": 0.25,
+            "tick_value": 12.5
+        },
+        "MES": {
+            "contract_id": "CON.F.US.MES.M26",
+            "name": "MESM6",
+            "description": "Micro E-mini S&P 500: June 2026",
+            "tick_size": 0.25,
+            "tick_value": 1.25
+        },
+        "NQ": {
+            "contract_id": "CON.F.US.ENQ.M26",
+            "name": "NQM6",
+            "description": "E-mini NASDAQ-100: June 2026",
+            "tick_size": 0.25,
+            "tick_value": 5.0
+        },
+        "MNQ": {
+            "contract_id": "CON.F.US.MNQ.M26",
+            "name": "MNQM6",
+            "description": "Micro E-mini Nasdaq-100: June 2026",
+            "tick_size": 0.25,
+            "tick_value": 0.5
+        },
+        "M2K": {
+            "contract_id": "CON.F.US.M2K.M26",
+            "name": "M2KM6",
+            "description": "Micro E-mini Russell 2000: June 2026",
+            "tick_size": 0.1,
+            "tick_value": 0.5
+        },
+        "MYM": {
+            "contract_id": "CON.F.US.MYM.M26",
+            "name": "MYMM6",
+            "description": "Micro E-mini Dow $0.50: June 2026",
+            "tick_size": 1.0,
+            "tick_value": 0.5
+        },
+        "NKD": {
+            "contract_id": "CON.F.US.NKD.M26",
+            "name": "NKDM6",
+            "description": "Nikkei 225 (Globex): June 2026",
+            "tick_size": 5.0,
+            "tick_value": 25.0
+        },
+        "MGC": {
+            "contract_id": "CON.F.US.MGC.J26",
+            "name": "MGCJ6",
+            "description": "Micro Gold: April 2026",
+            "tick_size": 0.1,
+            "tick_value": 1.0
+        },
+        "ZB": {
+            "contract_id": "CON.F.US.USA.M26",
+            "name": "ZBM6",
+            "description": "30yr US Treasury Bonds (Globex): June 2026",
+            "tick_size": 0.03125,
+            "tick_value": 31.25
+        },
+        "ZN": {
+            "contract_id": "CON.F.US.TYA.M26",
+            "name": "ZNM6",
+            "description": "10yr US Treasury Notes (Globex): June 2026",
+            "tick_size": 0.015625,
+            "tick_value": 15.625
+        }
+    }
+}

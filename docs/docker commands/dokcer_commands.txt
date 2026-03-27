@@ -1,0 +1,35 @@
+ Terminal 2 — All services (overview)
+
+  docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f --tail=50
+
+
+
+Terminal 3 — Filter for errors only
+
+  docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f captain-command 2>&1 | grep -iE "error|fail|disconnect|reconnect|closed"
+
+This shows only the interesting events — disconnects, reconnection attempts, and errors.
+
+
+
+One-shot health check
+
+# Container health status
+  docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+
+# API health endpoint
+  curl -s http://localhost:8000/api/health | python -m json.tool
+
+
+
+  Start Docker Desktop, then run these commands from captain-system/:
+
+  cd C:\Users\nomaa\QuantConnect\most-production\captain-system
+
+# Rebuild and restart just captain-command (picks up shared/ changes)
+  docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build captain-command
+
+Step 2: Verify the fix is loaded
+
+# Confirm the new values are in the mounted file inside the container
+  docker compose exec captain-command grep -A4 "with_automatic_reconnect" /app/shared/topstep_stream.py

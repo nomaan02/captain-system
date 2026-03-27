@@ -1,0 +1,1369 @@
+{
+  "ES": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 163281.43999999994,
+      "peak_balance": 164116.15999999992,
+      "payouts_taken": 0,
+      "winning_days": 498,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 226.6,
+      "total_resets": 1,
+      "events_count": 2,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 1161,
+        "net_pnl": 9622.26,
+        "sharpe": 0.6969002773286387,
+        "max_dd_pct": 1.143761820605835,
+        "win_rate": 0.5391903531438416,
+        "avg_daily_pnl": 8.287906976744186
+      },
+      "XFA": {
+        "days": 286,
+        "net_pnl": 4100.26,
+        "sharpe": 1.2148432065156192,
+        "max_dd_pct": 5.806422063775005,
+        "win_rate": 0.5594405594405595,
+        "avg_daily_pnl": 14.336573426573427
+      }
+    },
+    "taken": 1447,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-434D1FEFB8AA",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 150441.07999999978,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-12-02",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.802606"
+      },
+      {
+        "event_id": "LCE-6F2E873D723B",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159181.1799999998,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2022-11-08"
+        },
+        "ts": "2026-03-24T00:26:11.803500"
+      }
+    ]
+  },
+  "M2K": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "EVAL",
+      "balance": 153445.0700000003,
+      "peak_balance": 153445.0700000003,
+      "payouts_taken": 0,
+      "winning_days": 257,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 0,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 494,
+        "net_pnl": 3445.07,
+        "sharpe": 2.5810201596484648,
+        "max_dd_pct": 0.26457961478785297,
+        "win_rate": 0.520242914979757,
+        "avg_daily_pnl": 6.973825910931175
+      }
+    },
+    "taken": 494,
+    "blocked": 0,
+    "events": []
+  },
+  "MES": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "EVAL",
+      "balance": 153011.09000000014,
+      "peak_balance": 153126.8700000001,
+      "payouts_taken": 0,
+      "winning_days": 349,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 0,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 671,
+        "net_pnl": 3011.09,
+        "sharpe": 3.0899820605632105,
+        "max_dd_pct": 0.7118765697883027,
+        "win_rate": 0.5201192250372578,
+        "avg_daily_pnl": 4.487466467958272
+      }
+    },
+    "taken": 671,
+    "blocked": 0,
+    "events": []
+  },
+  "MGC": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 182835.87000000005,
+      "peak_balance": 182896.04000000004,
+      "payouts_taken": 0,
+      "winning_days": 307,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 1,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 207,
+        "net_pnl": 9143.26,
+        "sharpe": 5.79481192617105,
+        "max_dd_pct": 0.4873608815426997,
+        "win_rate": 0.28502415458937197,
+        "avg_daily_pnl": 44.170338164251206
+      },
+      "XFA": {
+        "days": 1330,
+        "net_pnl": 23692.61,
+        "sharpe": 2.745443176110536,
+        "max_dd_pct": 9.920518602029308,
+        "win_rate": 0.18646616541353384,
+        "avg_daily_pnl": 17.81399248120301
+      }
+    },
+    "taken": 1537,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-0C5DA66B2A84",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159143.26,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2013-11-19"
+        },
+        "ts": "2026-03-24T00:26:11.889698"
+      }
+    ]
+  },
+  "MNQ": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 164031.5900000007,
+      "peak_balance": 164091.6900000007,
+      "payouts_taken": 0,
+      "winning_days": 474,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 1,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 912,
+        "net_pnl": 9060.58,
+        "sharpe": 2.4475371123817546,
+        "max_dd_pct": 1.0812013348164629,
+        "win_rate": 0.28728070175438597,
+        "avg_daily_pnl": 9.93484649122807
+      },
+      "XFA": {
+        "days": 800,
+        "net_pnl": 4971.01,
+        "sharpe": 1.583539243605081,
+        "max_dd_pct": 1.7059068052296347,
+        "win_rate": 0.265,
+        "avg_daily_pnl": 6.2137625000000005
+      }
+    },
+    "taken": 1712,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-05F4C7094549",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159060.5800000005,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-06-25"
+        },
+        "ts": "2026-03-24T00:26:11.897522"
+      }
+    ]
+  },
+  "MYM": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "EVAL",
+      "balance": 155479.17000000007,
+      "peak_balance": 155479.17000000007,
+      "payouts_taken": 0,
+      "winning_days": 748,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 0,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 1535,
+        "net_pnl": 5479.17,
+        "sharpe": 2.342292579933767,
+        "max_dd_pct": 12.08480565371025,
+        "win_rate": 0.48729641693811077,
+        "avg_daily_pnl": 3.5694918566775247
+      }
+    },
+    "taken": 1535,
+    "blocked": 0,
+    "events": []
+  },
+  "NKD": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 178077.38,
+      "peak_balance": 179649.12000000002,
+      "payouts_taken": 0,
+      "winning_days": 59,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 2039.3999999999996,
+      "total_resets": 9,
+      "events_count": 16,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 328,
+        "net_pnl": 67418.59,
+        "sharpe": 3.5123648260763485,
+        "max_dd_pct": 0.18907517264939472,
+        "win_rate": 0.3871951219512195,
+        "avg_daily_pnl": 205.54448170731706
+      },
+      "XFA": {
+        "days": 1232,
+        "net_pnl": 407897.34,
+        "sharpe": 5.569361157761026,
+        "max_dd_pct": 0.1631397701720102,
+        "win_rate": 0.4797077922077922,
+        "avg_daily_pnl": 331.08550324675326
+      }
+    },
+    "taken": 1560,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-26D2D7AB3729",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159335.41,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2010-07-04"
+        },
+        "ts": "2026-03-24T00:26:11.912175"
+      },
+      {
+        "event_id": "LCE-3152225F3901",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 384741.93000000005,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-04-16",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.912959"
+      },
+      {
+        "event_id": "LCE-3B51E0F84B79",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 160362.89,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-06-24"
+        },
+        "ts": "2026-03-24T00:26:11.913027"
+      },
+      {
+        "event_id": "LCE-A8CDAB7F6BD3",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 195268.5100000001,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-11-26",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.913320"
+      },
+      {
+        "event_id": "LCE-6AEE9B599426",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159209.38999999998,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2016-03-02"
+        },
+        "ts": "2026-03-24T00:26:11.913393"
+      },
+      {
+        "event_id": "LCE-D345F9B350A1",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 185241.59000000017,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-02-06",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.913793"
+      },
+      {
+        "event_id": "LCE-88B086F2997A",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159754.48999999996,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-03-20"
+        },
+        "ts": "2026-03-24T00:26:11.913850"
+      },
+      {
+        "event_id": "LCE-875B0F3BB1C8",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 179339.83,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-12-19",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.914056"
+      },
+      {
+        "event_id": "LCE-F71DE92B490C",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 152638.7900000001,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2019-05-19",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.914137"
+      },
+      {
+        "event_id": "LCE-870E9DAD7B66",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 160093.03999999998,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2019-12-03"
+        },
+        "ts": "2026-03-24T00:26:11.914233"
+      },
+      {
+        "event_id": "LCE-7563FA6261D4",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 162373.16000000003,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2020-04-22",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.914354"
+      },
+      {
+        "event_id": "LCE-774D6F2B5406",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 150393.95999999996,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2020-06-09",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.914403"
+      },
+      {
+        "event_id": "LCE-CA28BECAA1E5",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 147370.49000000002,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2020-11-11",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.914486"
+      },
+      {
+        "event_id": "LCE-51BE8D4A5526",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159057.18999999994,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2021-02-16"
+        },
+        "ts": "2026-03-24T00:26:11.914541"
+      },
+      {
+        "event_id": "LCE-F0F64E185371",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 239870.29000000007,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2024-08-12",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.915301"
+      },
+      {
+        "event_id": "LCE-1E6A59B48C18",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159202.94000000003,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2025-01-29"
+        },
+        "ts": "2026-03-24T00:26:11.915406"
+      }
+    ]
+  },
+  "NQ": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 193217.09000000008,
+      "peak_balance": 194855.0500000001,
+      "payouts_taken": 0,
+      "winning_days": 200,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 679.8,
+      "total_resets": 3,
+      "events_count": 6,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 361,
+        "net_pnl": 26767.17,
+        "sharpe": 2.3058868042759078,
+        "max_dd_pct": 1.6022137485435863,
+        "win_rate": 0.3628808864265928,
+        "avg_daily_pnl": 74.14728531855955
+      },
+      "XFA": {
+        "days": 1196,
+        "net_pnl": 88257.98,
+        "sharpe": 2.269510349018359,
+        "max_dd_pct": 0.9132251008644323,
+        "win_rate": 0.3536789297658863,
+        "avg_daily_pnl": 73.79429765886287
+      }
+    },
+    "taken": 1557,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-C4C19A186E50",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159645.55000000005,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2010-06-30"
+        },
+        "ts": "2026-03-24T00:26:11.919713"
+      },
+      {
+        "event_id": "LCE-B5891CF1B803",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 197061.17000000036,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-09-10",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.920582"
+      },
+      {
+        "event_id": "LCE-44C12E5EE050",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159368.9700000001,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-12-18"
+        },
+        "ts": "2026-03-24T00:26:11.920797"
+      },
+      {
+        "event_id": "LCE-64A88B242651",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 176129.7999999999,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2019-04-25",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.921445"
+      },
+      {
+        "event_id": "LCE-3DE0E3957381",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 148617.09000000017,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2020-08-28",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.921857"
+      },
+      {
+        "event_id": "LCE-B4E334D42712",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159135.56000000003,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2021-05-05"
+        },
+        "ts": "2026-03-24T00:26:11.921999"
+      }
+    ]
+  },
+  "ZB": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 162288.1399999998,
+      "peak_balance": 162288.1399999998,
+      "payouts_taken": 0,
+      "winning_days": 58,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 679.8,
+      "total_resets": 3,
+      "events_count": 7,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 180,
+        "net_pnl": 36610.05,
+        "sharpe": 5.165007250912396,
+        "max_dd_pct": 0.6527594137515718,
+        "win_rate": 0.5555555555555556,
+        "avg_daily_pnl": 203.38916666666668
+      },
+      "XFA": {
+        "days": 374,
+        "net_pnl": 15267.15,
+        "sharpe": 1.131497023086089,
+        "max_dd_pct": 2.9166666666666665,
+        "win_rate": 0.42780748663101603,
+        "avg_daily_pnl": 40.82125668449198
+      }
+    },
+    "taken": 554,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-DE5A045A0E7F",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159054.17,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2011-02-16"
+        },
+        "ts": "2026-03-24T00:26:11.925174"
+      },
+      {
+        "event_id": "LCE-A21E10422A0E",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 165104.5899999999,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-02-19",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.925401"
+      },
+      {
+        "event_id": "LCE-1993E207D277",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159095.84000000003,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-02-25"
+        },
+        "ts": "2026-03-24T00:26:11.925470"
+      },
+      {
+        "event_id": "LCE-1A926AF8047B",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 163076.53000000017,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-10-18",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.925771"
+      },
+      {
+        "event_id": "LCE-3E0AD08789E4",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159032.97999999995,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2020-07-07"
+        },
+        "ts": "2026-03-24T00:26:11.925871"
+      },
+      {
+        "event_id": "LCE-DC26E7BC7432",
+        "event_type": "FAILURE",
+        "from_stage": "XFA",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_XFA",
+        "balance_at_event": 161407.93999999983,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2022-11-16",
+          "reason": "MLL_BREACH_XFA"
+        },
+        "ts": "2026-03-24T00:26:11.926057"
+      },
+      {
+        "event_id": "LCE-7CE1DE3E3116",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159427.0599999999,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2024-01-31"
+        },
+        "ts": "2026-03-24T00:26:11.926140"
+      }
+    ]
+  },
+  "ZN": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "XFA",
+      "balance": 268420.18000000005,
+      "peak_balance": 268532.68000000005,
+      "payouts_taken": 0,
+      "winning_days": 797,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 0.0,
+      "total_resets": 0,
+      "events_count": 1,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 145,
+        "net_pnl": 9172.83,
+        "sharpe": 4.524186011358056,
+        "max_dd_pct": 1.5097142857142856,
+        "win_rate": 0.46206896551724136,
+        "avg_daily_pnl": 63.26089655172414
+      },
+      "XFA": {
+        "days": 1470,
+        "net_pnl": 109247.35,
+        "sharpe": 5.153021544768532,
+        "max_dd_pct": 1.5225999292915224,
+        "win_rate": 0.4965986394557823,
+        "avg_daily_pnl": 74.31792517006804
+      }
+    },
+    "taken": 1615,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-5011A7932172",
+        "event_type": "STAGE_TRANSITION",
+        "from_stage": "EVAL",
+        "to_stage": "XFA",
+        "trigger": "PROFIT_TARGET_MET",
+        "balance_at_event": 159172.83000000002,
+        "fee_charged": 0.0,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2011-06-27"
+        },
+        "ts": "2026-03-24T00:26:11.930188"
+      }
+    ]
+  },
+  "ZT": {
+    "mode": "multistage",
+    "snap": {
+      "current_stage": "EVAL",
+      "balance": 148220.0,
+      "peak_balance": 150000.0,
+      "payouts_taken": 0,
+      "winning_days": 0,
+      "tradable_balance": 0.0,
+      "reserve_balance": 0.0,
+      "reserve_per_block": 0.0,
+      "unlocks_remaining": 0,
+      "cumulative_live_profit": 0.0,
+      "total_fees": 3852.199999999999,
+      "total_resets": 17,
+      "events_count": 17,
+      "halted": false
+    },
+    "stage_metrics": {
+      "EVAL": {
+        "days": 1032,
+        "net_pnl": -54505.74,
+        "sharpe": -2.1634086861968633,
+        "max_dd_pct": 17.417391566265064,
+        "win_rate": 0.19767441860465115,
+        "avg_daily_pnl": -52.81563953488372
+      }
+    },
+    "taken": 1032,
+    "blocked": 0,
+    "events": [
+      {
+        "event_id": "LCE-F8B8E7F8CE42",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 148470.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2012-08-21",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937030"
+      },
+      {
+        "event_id": "LCE-49D5F6819B52",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145750.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2013-11-19",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937159"
+      },
+      {
+        "event_id": "LCE-1FF0E20DD367",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145730.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-05-16",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937241"
+      },
+      {
+        "event_id": "LCE-892ADA8A3150",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145300.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2014-10-02",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937311"
+      },
+      {
+        "event_id": "LCE-4AF05C61CB04",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145430.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-02-02",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937385"
+      },
+      {
+        "event_id": "LCE-E4340C7D6E1F",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145485.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2015-06-26",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937459"
+      },
+      {
+        "event_id": "LCE-A817052E4524",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 146040.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2016-04-13",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937570"
+      },
+      {
+        "event_id": "LCE-9652B9AC717B",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145488.33,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2017-02-02",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937666"
+      },
+      {
+        "event_id": "LCE-C4D2F0885BA9",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145340.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-02-12",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937735"
+      },
+      {
+        "event_id": "LCE-7F81B1558149",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145460.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2018-07-12",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937820"
+      },
+      {
+        "event_id": "LCE-22FA71884123",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 145495.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2019-02-08",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.937935"
+      },
+      {
+        "event_id": "LCE-13E1F4045B5C",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 146590.0,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2019-06-18",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938011"
+      },
+      {
+        "event_id": "LCE-4CDB912B5562",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 150421.67,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2021-08-05",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938173"
+      },
+      {
+        "event_id": "LCE-8EE0A27CE832",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 149305.33,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2022-04-29",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938314"
+      },
+      {
+        "event_id": "LCE-BDFCB5486248",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 148904.67,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2022-10-18",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938432"
+      },
+      {
+        "event_id": "LCE-99C66B38E867",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 150176.67,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2024-10-16",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938692"
+      },
+      {
+        "event_id": "LCE-915627674F99",
+        "event_type": "FAILURE",
+        "from_stage": "EVAL",
+        "to_stage": "EVAL",
+        "trigger": "MLL_BREACH_EVAL",
+        "balance_at_event": 147887.59000000003,
+        "fee_charged": 226.6,
+        "payout_amount": 0.0,
+        "payout_net": 0.0,
+        "payouts_taken": 0,
+        "tradable_balance": 0.0,
+        "reserve_balance": 0.0,
+        "details": {
+          "day": "2025-08-07",
+          "reason": "MLL_BREACH_EVAL"
+        },
+        "ts": "2026-03-24T00:26:11.938823"
+      }
+    ]
+  }
+}

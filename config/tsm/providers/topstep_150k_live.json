@@ -1,0 +1,75 @@
+{
+    "name": "Topstep 150K Live Funded",
+    "classification": {
+        "provider": "TopstepX",
+        "category": "PROP_FUNDED",
+        "stage": "LIVE",
+        "risk_goal": "GROW_CAPITAL"
+    },
+    "starting_balance": null,
+    "max_drawdown_limit": null,
+    "max_daily_drawdown": 4500,
+    "low_balance_threshold": 10000,
+    "low_balance_daily_drawdown": 2000,
+    "daily_drawdown_action": "AUTO_LIQUIDATE_HALT_19EST",
+    "max_contracts": 15,
+    "commission_per_contract": 1.40,
+    "overnight_allowed": false,
+    "trading_hours": {
+        "session_open": "18:00 EST",
+        "session_close": "16:10 EST",
+        "flat_by": "16:10 EST",
+        "risk_manager_flatten": "16:08 EST",
+        "eod_exit_buffer": "15:55 EST",
+        "weekend_close": "Friday 16:10 EST",
+        "weekend_open": "Sunday 18:00 EST"
+    },
+    "fee_schedule": {
+        "type": "TOPSTEP_LIVE",
+        "fees_by_instrument": {
+            "ES":  {"round_turn": 2.80, "components": {"commission": 0.00, "exchange": 2.46, "regulatory": 0.04, "clearing": 0.30}},
+            "MES": {"round_turn": 0.74, "components": {"commission": 0.00, "exchange": 0.62, "regulatory": 0.02, "clearing": 0.10}},
+            "NQ":  {"round_turn": 4.18, "components": {"commission": 0.72, "exchange": 2.46, "regulatory": 0.04, "clearing": 0.96}},
+            "MNQ": {"round_turn": 1.12, "components": {"commission": 0.18, "exchange": 0.62, "regulatory": 0.02, "clearing": 0.30}},
+            "M2K": {"round_turn": 2.26, "components": {"commission": 0.00, "exchange": 1.92, "regulatory": 0.04, "clearing": 0.30}},
+            "MYM": {"round_turn": 0.74, "components": {"commission": 0.00, "exchange": 0.62, "regulatory": 0.02, "clearing": 0.10}},
+            "NKD": {"round_turn": 2.80, "components": {"commission": 0.00, "exchange": 2.46, "regulatory": 0.04, "clearing": 0.30}},
+            "MGC": {"round_turn": 0.74, "components": {"commission": 0.00, "exchange": 0.62, "regulatory": 0.02, "clearing": 0.10}},
+            "ZB":  {"round_turn": 2.26, "components": {"commission": 0.00, "exchange": 1.92, "regulatory": 0.04, "clearing": 0.30}},
+            "ZN":  {"round_turn": 2.26, "components": {"commission": 0.00, "exchange": 1.92, "regulatory": 0.04, "clearing": 0.30}},
+            "CL":  {"round_turn": 4.30, "components": {"commission": 0.72, "exchange": 2.58, "regulatory": 0.04, "clearing": 0.96}},
+            "MCL": {"round_turn": 1.12, "components": {"commission": 0.18, "exchange": 0.64, "regulatory": 0.02, "clearing": 0.28}}
+        },
+        "slippage_model": {
+            "type": "FIXED_TICKS",
+            "ticks_per_side": 1
+        }
+    },
+    "topstep_optimisation": true,
+    "topstep_params": {
+        "p": 0.005,
+        "e": 0.01,
+        "c": 0.5,
+        "lambda": 0,
+        "time_partitions": null,
+        "max_payouts_remaining": null,
+        "session_weights_initial": {"NY": 0.60, "LON": 0.25, "APAC": 0.15}
+    },
+    "scaling_plan_active": false,
+    "scaling_plan": null,
+    "capital_unlock": {
+        "tradable_cap": 30000,
+        "unlock_levels": 4,
+        "profit_per_unlock": 9000,
+        "note": "Live starts with min(balance, $30K) tradable. Remainder is reserve divided into 4 equal blocks. Each $9K profit unlocks one block."
+    },
+    "payout_rules": {
+        "max_per_payout": 5000,
+        "max_profit_fraction": 1.0,
+        "commission_rate": 0.0,
+        "eligibility_winning_days": 30,
+        "minimum_win_amount": 150,
+        "max_total_payouts": null
+    },
+    "account_loss_fee": 226.60
+}

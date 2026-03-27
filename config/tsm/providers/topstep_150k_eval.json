@@ -1,0 +1,57 @@
+{
+    "name": "Topstep 150K Trading Combine",
+    "classification": {
+        "provider": "TopstepX",
+        "category": "PROP_EVAL",
+        "stage": "STAGE_1",
+        "risk_goal": "PASS_EVAL"
+    },
+    "starting_balance": 150000,
+    "profit_target": 9000,
+    "max_drawdown_limit": 4500,
+    "max_contracts": 15,
+    "scaling_plan_active": false,
+    "scaling_plan": null,
+    "consistency_rule": null,
+    "overnight_allowed": false,
+    "trading_hours": {
+        "session_open": "18:00 EST",
+        "session_close": "16:10 EST",
+        "flat_by": "16:10 EST",
+        "risk_manager_flatten": "16:08 EST",
+        "eod_exit_buffer": "15:55 EST",
+        "weekend_close": "Friday 16:10 EST",
+        "weekend_open": "Sunday 18:00 EST"
+    },
+    "evaluation_stages": [
+        {
+            "stage": "STAGE_1",
+            "profit_target": 9000,
+            "max_drawdown_limit": 4500,
+            "time_limit_days": null
+        }
+    ],
+    "evaluation_end_date": null,
+    "commission_per_contract": 1.40,
+    "fee_schedule": {
+        "type": "TOPSTEP_EXPRESS",
+        "fees_by_instrument": {
+            "ES":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "NQ":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MES": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "MNQ": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "CL":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MCL": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}}
+        },
+        "slippage_model": {"type": "FIXED_TICKS", "ticks_per_side": 1}
+    },
+    "topstep_optimisation": true,
+    "topstep_params": {
+        "p": 0.005,
+        "e": 0.01,
+        "c": 0.5,
+        "lambda": 0,
+        "max_payouts_remaining": 0
+    },
+    "account_loss_fee": 226.60
+}

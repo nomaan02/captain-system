@@ -1,0 +1,162 @@
+services:
+  questdb:
+    image: questdb/questdb:latest
+    ports:
+      - "127.0.0.1:9000:9000"    # Web console (ADMIN only)
+      - "127.0.0.1:8812:8812"    # PostgreSQL wire protocol
+      - "127.0.0.1:9009:9009"    # InfluxDB line protocol
+    volumes:
+      - ./questdb/db:/var/lib/questdb/db
+    environment:
+      QDB_CAIRO_COMMIT_LAG: 1000
+      QDB_LINE_TCP_ENABLED: "true"
+      JAVA_TOOL_OPTIONS: "-XX:-UseJVMCICompiler"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/exec?query=SELECT%201"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"    # Redis (internal only)
+    volumes:
+      - ./redis:/data
+    command: redis-server --appendonly yes --appendfsync everysec
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  captain-offline:
+    build: ./captain-offline
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://questdb:9000/exec?query=SELECT%201"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    volumes:
+      - ./shared:/app/shared:ro
+      - ./config:/captain/config:ro
+      - ./data:/captain/data:ro
+      - ./logs:/captain/logs
+      - ./captain-offline/journal.sqlite:/captain/journal.sqlite
+    environment:
+      QUESTDB_HOST: questdb
+      QUESTDB_PORT: "8812"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CAPTAIN_ROLE: OFFLINE
+      TZ: America/New_York
+    depends_on:
+      questdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  captain-online:
+    build: ./captain-online
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://questdb:9000/exec?query=SELECT%201"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    volumes:
+      - ./shared:/app/shared:ro
+      - ./config:/captain/config:ro
+      - ./data:/captain/data:ro
+      - ./logs:/captain/logs
+      - ./vault:/captain/vault:ro
+      - ./captain-online/journal.sqlite:/captain/journal.sqlite
+    env_file:
+      - .env
+    environment:
+      QUESTDB_HOST: questdb
+      QUESTDB_PORT: "8812"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CAPTAIN_ROLE: ONLINE
+      TZ: America/New_York
+    depends_on:
+      questdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  captain-command:
+    build: ./captain-command
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    ports:
+      - "127.0.0.1:8000:8000"    # FastAPI (dev access for Vite proxy)
+    stop_grace_period: 30s
+    sysctls:
+      net.ipv4.tcp_keepalive_time: 60
+      net.ipv4.tcp_keepalive_intvl: 10
+      net.ipv4.tcp_keepalive_probes: 6
+    volumes:
+      - ./shared:/app/shared:ro
+      - ./config:/captain/config
+      - ./data:/captain/data:ro
+      - ./logs:/captain/logs
+      - ./vault:/captain/vault:ro
+      - vault-backup:/captain/vault-backup
+      - ./captain-command/journal.sqlite:/captain/journal.sqlite
+    env_file:
+      - .env
+    environment:
+      QUESTDB_HOST: questdb
+      QUESTDB_PORT: "8812"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CAPTAIN_ROLE: COMMAND
+      TZ: America/New_York
+      VAULT_KEY_PATH: /captain/vault/keys.vault
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    depends_on:
+      questdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  captain-gui:
+    build: ./captain-gui
+    volumes:
+      - gui-dist:/gui-dist
+    restart: "no"
+
+  # Nginx ports and config are deployment-specific.
+  # Use docker-compose.local.yml (localhost HTTP) or a production override (TLS).
+  # Never run the base file alone — always pair with an override.
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - gui-dist:/usr/share/nginx/html:ro
+    depends_on:
+      captain-command:
+        condition: service_healthy
+      captain-gui:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  gui-dist:
+  vault-backup:
