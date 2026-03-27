@@ -24,7 +24,7 @@ One-shot health check
 
   Start Docker Desktop, then run these commands from captain-system/:
 
-  cd C:\Users\nomaa\QuantConnect\most-production\captain-system
+  cd ~/captain-system
 
 # Rebuild and restart just captain-command (picks up shared/ changes)
   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build captain-command

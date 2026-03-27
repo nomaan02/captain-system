@@ -10,12 +10,12 @@
 #   CAPTAIN_DIR=/path bash captain-start.sh  # Custom project path
 #
 # Task Scheduler:
-#   wsl.exe -d Ubuntu -- bash /mnt/c/.../captain-system/captain-start.sh
+#   wsl.exe -d Ubuntu -- bash /home/nomaan/captain-system/captain-start.sh
 
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-CAPTAIN_DIR="${CAPTAIN_DIR:-/mnt/c/Users/nomaa/QuantConnect/most-production/captain-system}"
+CAPTAIN_DIR="${CAPTAIN_DIR:-/home/nomaan/captain-system}"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.local.yml"
 HEALTH_TIMEOUT=180          # seconds to wait for containers (first run builds images)
 HEALTH_INTERVAL=5           # seconds between health polls
