@@ -3,6 +3,7 @@ import useDashboardStore from "../stores/dashboardStore";
 import useNotificationStore from "../stores/notificationStore";
 import useChartStore from "../stores/chartStore";
 import useSystemOverviewStore from "../stores/systemOverviewStore";
+import useReplayStore from "../stores/replayStore";
 
 const BASE_DELAY = 2000;
 const MAX_DELAY = 30000;
@@ -136,6 +137,17 @@ export default function useWebSocket(userId = "primary_user") {
         case "system_overview":
           useSystemOverviewStore.getState().setOverview(data.data || data);
           break;
+
+        case "replay_tick":
+        case "replay_started":
+        case "replay_complete":
+        case "replay_error":
+        case "replay_paused":
+        case "replay_resumed": {
+          const { handleWsMessage } = useReplayStore.getState();
+          handleWsMessage(data);
+          break;
+        }
 
         default:
           break;

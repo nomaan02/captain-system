@@ -9,6 +9,11 @@ import DashboardPage from "./pages/DashboardPage";
 import ModelsPage from "./pages/ModelsPage";
 import ConfigPage from "./pages/ConfigPage";
 import SettingsPage from "./pages/SettingsPage";
+import HistoryPage from "./pages/HistoryPage";
+import ReportsPage from "./pages/ReportsPage";
+import ProcessesPage from "./pages/ProcessesPage";
+import SystemOverviewPage from "./pages/SystemOverviewPage";
+import ReplayPage from "./pages/ReplayPage";
 
 function App() {
   const action = useNavigationType();
@@ -33,6 +38,21 @@ function App() {
       case "/settings":
         title = "Captain Settings";
         break;
+      case "/history":
+        title = "Captain History";
+        break;
+      case "/reports":
+        title = "Captain Reports";
+        break;
+      case "/processes":
+        title = "Captain Processes";
+        break;
+      case "/system":
+        title = "Captain System Overview";
+        break;
+      case "/replay":
+        title = "Captain Replay";
+        break;
     }
 
     if (title) {
@@ -55,6 +75,11 @@ function App() {
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/config" element={<ConfigPage />} />
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/history" element={<HistoryPage />} />
+      <Route path="/reports" element={<ReportsPage />} />
+      <Route path="/processes" element={<ProcessesPage />} />
+      <Route path="/system" element={<SystemOverviewPage />} />
+      <Route path="/replay" element={<ReplayPage />} />
     </Routes>
   );
 }

@@ -56,6 +56,7 @@ const TopBar = ({ className = "" }) => {
           <NavLink to="/processes" className={navClass}>Processes</NavLink>
           <NavLink to="/history" className={navClass}>History</NavLink>
           <NavLink to="/reports" className={navClass}>Reports</NavLink>
+          <NavLink to="/replay" className={navClass}>Replay</NavLink>
           <NavLink to="/settings" className={navClass}>Settings</NavLink>
         </div>
 
