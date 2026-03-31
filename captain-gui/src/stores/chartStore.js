@@ -12,8 +12,6 @@ const useChartStore = create((set, get) => ({
     vwap: false,
   },
 
-  setBars: (bars) => set({ bars }),
-
   addBar: (bar) => {
     const current = get().bars;
     const lastBar = current[current.length - 1];

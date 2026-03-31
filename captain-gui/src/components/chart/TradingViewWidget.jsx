@@ -12,6 +12,7 @@ const TV_SYMBOLS = {
   NKD: "TVC:NI225",
   ZN: "TVC:US10Y",
   ZB: "TVC:US30Y",
+  M2K: "CME_MINI:RTY1!",
   MCL: "TVC:USOIL",
   "6E": "FX:EURUSD",
 };

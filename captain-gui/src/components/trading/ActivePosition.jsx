@@ -3,6 +3,12 @@ import useDashboardStore from "../../stores/dashboardStore";
 import { formatCurrency, formatPrice, formatTimeSince } from "../../utils/formatting";
 import { POINT_VALUES } from "../../constants/pointValues";
 
+const TICK_SIZES = {
+  MES: 0.25, ES: 0.25, MNQ: 0.25, NQ: 0.25,
+  MYM: 1.0, M2K: 0.10, MGC: 0.10, MCL: 0.01,
+  NKD: 5.0, ZB: 1/32, ZN: 1/64,
+};
+
 const ActivePosition = ({ className = "" }) => {
   const openPositions = useDashboardStore((s) => s.openPositions);
   const liveMarket = useDashboardStore((s) => s.liveMarket);
@@ -20,10 +26,13 @@ const ActivePosition = ({ className = "" }) => {
   const asset = pos.asset_id ?? pos.asset ?? "—";
   const contracts = pos.contracts ?? 1;
   const entryPrice = pos.entry_price;
-  const currentPrice = liveMarket?.last_price;
+  // TODO: Refactor liveMarket to Map<assetId, MarketData>
+  const marketMatch = liveMarket?.contract_id === asset || liveMarket?.symbol === asset;
+  const currentPrice = marketMatch ? liveMarket?.last_price : null;
   const pnl = pos.current_pnl ?? 0;
   const pointValue = POINT_VALUES[asset] ?? 5;
-  const ticks = currentPrice && entryPrice ? Math.round((currentPrice - entryPrice) * (direction === "LONG" ? 1 : -1) / (pointValue > 100 ? 1 : 0.25)) : 0;
+  const tickSize = TICK_SIZES[asset] ?? 0.25;
+  const ticks = currentPrice && entryPrice ? Math.round((currentPrice - entryPrice) * (direction === "LONG" ? 1 : -1) / tickSize) : 0;
   const slLevel = pos.sl_level;
   const tpLevel = pos.tp_level;
 

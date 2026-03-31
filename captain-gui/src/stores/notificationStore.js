@@ -5,8 +5,6 @@ const MAX_NOTIFICATIONS = 500;
 const useNotificationStore = create((set) => ({
   notifications: [],
   unreadCount: 0,
-  filter: "ALL", // ALL | ERRORS | SIGNALS | ORDERS
-
   addNotification: (notification) =>
     set((state) => ({
       notifications: [notification, ...state.notifications].slice(0, MAX_NOTIFICATIONS),
@@ -16,8 +14,6 @@ const useNotificationStore = create((set) => ({
   setNotifications: (notifications) => set({ notifications }),
 
   markAllRead: () => set({ unreadCount: 0 }),
-
-  setFilter: (filter) => set({ filter }),
 }));
 
 export default useNotificationStore;

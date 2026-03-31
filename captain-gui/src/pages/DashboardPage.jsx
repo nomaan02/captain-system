@@ -170,7 +170,7 @@ const useRightLayout = () =>
   useDefaultLayout({ id: "captain-right-layout" });
 
 const DashboardPage = () => {
-  const { sendCommand } = useWebSocket("primary_user");
+  useWebSocket("primary_user");
   const connected = useDashboardStore((s) => s.connected);
 
   const { defaultLayout: mainLayout, onLayoutChanged: onMainChanged } = useMainLayout();
@@ -197,8 +197,6 @@ const DashboardPage = () => {
 
     return () => clearInterval(interval);
   }, [connected]);
-
-  void sendCommand;
 
   return (
     <div data-testid="app-shell" className="h-screen w-full bg-surface overflow-hidden flex flex-col">

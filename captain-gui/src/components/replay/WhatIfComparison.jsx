@@ -28,7 +28,11 @@ const WhatIfComparison = () => {
   if (!comparison) return null;
 
   const origTrades = assetOrder.filter((a) => assetResults[a]?.status === "exited");
-  const origPnl = origTrades.reduce((s, a) => s + (assetResults[a]?.exitResult?.pnl ?? 0), 0);
+  const origPnl = origTrades.reduce((s, a) => {
+    const ppc = assetResults[a]?.exitResult?.pnl_per_contract ?? assetResults[a]?.exitResult?.pnl ?? 0;
+    const cts = assetResults[a]?.sizing?.contracts ?? 0;
+    return s + ppc * cts;
+  }, 0);
   const origBlocked = assetOrder.filter((a) => assetResults[a]?.status === "blocked").length;
 
   const wiTrades = comparison.trades || [];

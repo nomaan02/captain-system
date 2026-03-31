@@ -98,7 +98,7 @@ const SystemLog = ({ className = "" }) => {
       <div className="w-full flex flex-col overflow-y-auto flex-1 min-h-0">
         {filtered.length > 0 ? (
           filtered.map((n) => {
-            const time = n.timestamp ? new Date(n.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "—";
+            const time = n.timestamp ? new Date(n.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "America/New_York" }) : "—";
             const msg = n.message ?? "";
             const cat = n._cat;
             const catColor = cat ? CATEGORY_COLORS[cat] : null;

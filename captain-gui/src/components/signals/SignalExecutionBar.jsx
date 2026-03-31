@@ -10,8 +10,6 @@ const STAGE_LABELS = {
 };
 
 const SignalExecutionBar = ({ className = "" }) => {
-  const autoExecute = useDashboardStore((s) => s.autoExecute);
-  const setAutoExecute = useDashboardStore((s) => s.setAutoExecute);
   const pipelineStage = useDashboardStore((s) => s.pipelineStage);
 
   return (
@@ -44,32 +42,7 @@ const SignalExecutionBar = ({ className = "" }) => {
         </div>
       </div>
 
-      {/* Auto Trade toggle */}
-      <div className="flex flex-col items-start justify-end pt-0 px-0 pb-[2.6px] text-[13.6px] text-[#94a3b8]">
-        <div className="flex items-start gap-[5.9px]">
-          <div className="relative leading-[20.5px] shrink-0">Auto Trade</div>
-          <div
-            data-testid="execution-auto-trade-toggle"
-            data-status={autoExecute ? "on" : "off"}
-            onClick={() => setAutoExecute(!autoExecute)}
-            className="cursor-pointer"
-            role="switch"
-            aria-checked={autoExecute}
-          >
-            <div
-              className={`h-[21.2px] w-[42.4px] relative rounded-full shrink-0 transition-colors ${
-                autoExecute ? "bg-[#10b981]" : "bg-[#374151]"
-              }`}
-            >
-              <div
-                className={`absolute top-[3px] rounded-full bg-[#fff] w-[15.1px] h-[15.1px] transition-all ${
-                  autoExecute ? "left-[24.3px]" : "left-[3px]"
-                }`}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Auto-execute toggle removed — backend reads AUTO_EXECUTE from env var, no runtime toggle support */}
     </div>
   );
 };

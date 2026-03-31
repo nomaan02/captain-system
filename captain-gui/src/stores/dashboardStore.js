@@ -24,16 +24,21 @@ const useDashboardStore = create((set, get) => ({
   orStatus: null, // { or_high, or_low, or_state, or_direction, session }
 
   // Account selection
+  // TODO: Replace with dynamic account discovery from GET /api/accounts
   selectedAccount: "PRAC-V2-551001-43861321",
   accounts: [
     { id: "PRAC-V2-551001-43861321", label: "Practice 150K", type: "practice" },
     { id: "150KTC-V2-551001-19064435", label: "Live Prop 150K", type: "live" },
   ],
 
+  // Service health (populated from dashboard snapshot if backend sends it)
+  serviceHealth: { questdb: "unknown", redis: "unknown" },
+
   // Dashboard data
   capitalSilo: null,
   dailyTradeStats: null,
   openPositions: [],
+  closedTrades: [],
   pendingSignals: [],
   aimStates: [],
   tsmStatus: [],
@@ -58,6 +63,7 @@ const useDashboardStore = create((set, get) => ({
       openPositions: snapshot.open_positions
         ? normalizePositions(snapshot.open_positions)
         : state.openPositions,
+      closedTrades: snapshot.closed_trades ?? snapshot.trade_history ?? state.closedTrades,
       pendingSignals: snapshot.pending_signals
         ? normalizeSignals(snapshot.pending_signals)
         : state.pendingSignals,
@@ -74,6 +80,7 @@ const useDashboardStore = create((set, get) => ({
       pipelineStage: snapshot.pipeline_stage ?? state.pipelineStage,
       autoExecute: snapshot.auto_execute ?? state.autoExecute,
       orStatus: snapshot.or_status ?? state.orStatus,
+      serviceHealth: snapshot.service_health ?? state.serviceHealth,
     });
   },
 
@@ -102,6 +109,8 @@ const useDashboardStore = create((set, get) => ({
     set((state) => ({
       pendingSignals: state.pendingSignals.filter((s) => s.signal_id !== signalId),
     })),
+
+  setClosedTrades: (trades) => set({ closedTrades: normalizePositions(trades) }),
 
   setCommandAck: (ack) => set({ lastAck: ack }),
 

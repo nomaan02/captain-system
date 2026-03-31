@@ -1,3 +1,5 @@
+// DEAD CODE: USE_CUSTOM_CHART = false means this component never renders.
+// Safe to delete if custom chart feature is permanently abandoned.
 import { useEffect, useRef } from "react";
 import { createChart, ColorType, CandlestickSeries } from "lightweight-charts";
 import useChartStore from "../../stores/chartStore";

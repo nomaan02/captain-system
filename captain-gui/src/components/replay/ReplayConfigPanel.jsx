@@ -10,7 +10,7 @@ const Label = ({ children }) => (
   <label className="text-[8px] uppercase tracking-[0.8px] leading-[10px] text-[#64748b] font-mono">{children}</label>
 );
 
-const NumberInput = ({ value, onChange, step = 1, min, max, testId }) => (
+const NumberInput = ({ value, onChange, step = 1, min, max, testId, disabled = false }) => (
   <input
     data-testid={testId}
     type="number"
@@ -18,8 +18,9 @@ const NumberInput = ({ value, onChange, step = 1, min, max, testId }) => (
     step={step}
     min={min}
     max={max}
+    disabled={disabled}
     onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-    className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none"
+    className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
   />
 );
 
@@ -140,19 +141,19 @@ const ReplayConfigPanel = () => {
         <div className="grid grid-cols-2 gap-2">
           <div>
             <Label>Capital ($)</Label>
-            <NumberInput testId="replay-config-capital" value={config.capital} onChange={(v) => setConfig({ capital: v })} step={1000} min={0} />
+            <NumberInput testId="replay-config-capital" value={config.capital} onChange={(v) => setConfig({ capital: v })} step={1000} min={0} disabled={isRunning} />
           </div>
           <div>
             <Label>Budget Divisor</Label>
-            <NumberInput testId="replay-config-budget-divisor" value={config.budgetDivisor} onChange={(v) => setConfig({ budgetDivisor: v })} min={1} />
+            <NumberInput testId="replay-config-budget-divisor" value={config.budgetDivisor} onChange={(v) => setConfig({ budgetDivisor: v })} min={1} disabled={isRunning} />
           </div>
           <div>
             <Label>MDD Limit ($)</Label>
-            <NumberInput testId="replay-config-mdd" value={config.mddLimit} onChange={(v) => setConfig({ mddLimit: v })} step={100} min={0} />
+            <NumberInput testId="replay-config-mdd" value={config.mddLimit} onChange={(v) => setConfig({ mddLimit: v })} step={100} min={0} disabled={isRunning} />
           </div>
           <div>
             <Label>MLL Limit ($)</Label>
-            <NumberInput testId="replay-config-mll" value={config.mllLimit} onChange={(v) => setConfig({ mllLimit: v })} step={100} min={0} />
+            <NumberInput testId="replay-config-mll" value={config.mllLimit} onChange={(v) => setConfig({ mllLimit: v })} step={100} min={0} disabled={isRunning} />
           </div>
         </div>
 
@@ -177,19 +178,19 @@ const ReplayConfigPanel = () => {
         <div className="grid grid-cols-2 gap-2">
           <div>
             <Label>Max Positions</Label>
-            <NumberInput testId="replay-config-max-positions" value={config.maxPositions} onChange={(v) => setConfig({ maxPositions: v })} min={1} max={20} />
+            <NumberInput testId="replay-config-max-positions" value={config.maxPositions} onChange={(v) => setConfig({ maxPositions: v })} min={1} max={20} disabled={isRunning} />
           </div>
           <div>
             <Label>Max Contracts</Label>
-            <NumberInput testId="replay-config-max-contracts" value={config.maxContracts} onChange={(v) => setConfig({ maxContracts: v })} min={1} max={100} />
+            <NumberInput testId="replay-config-max-contracts" value={config.maxContracts} onChange={(v) => setConfig({ maxContracts: v })} min={1} max={100} disabled={isRunning} />
           </div>
           <div>
             <Label>TP Multiple</Label>
-            <NumberInput testId="replay-config-tp" value={config.tpMultiple} onChange={(v) => setConfig({ tpMultiple: v })} step={0.05} min={0} max={5} />
+            <NumberInput testId="replay-config-tp" value={config.tpMultiple} onChange={(v) => setConfig({ tpMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
           </div>
           <div>
             <Label>SL Multiple</Label>
-            <NumberInput testId="replay-config-sl" value={config.slMultiple} onChange={(v) => setConfig({ slMultiple: v })} step={0.05} min={0} max={5} />
+            <NumberInput testId="replay-config-sl" value={config.slMultiple} onChange={(v) => setConfig({ slMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
           </div>
         </div>
 

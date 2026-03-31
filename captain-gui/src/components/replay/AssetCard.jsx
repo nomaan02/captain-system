@@ -8,7 +8,6 @@ const STATUS_CONFIG = {
   sized: { label: "SIZED", bg: "bg-[rgba(59,130,246,0.12)]", border: "border-[rgba(59,130,246,0.25)]", badge: "text-[#3b82f6]" },
   exited: { label: "EXITED", bg: "bg-[rgba(16,185,129,0.12)]", border: "border-[rgba(16,185,129,0.25)]", badge: "text-[#10b981]" },
   error: { label: "ERROR", bg: "bg-[rgba(239,68,68,0.15)]", border: "border-[rgba(239,68,68,0.25)]", badge: "text-[#ef4444]" },
-  blocked: { label: "BLOCKED", bg: "bg-[rgba(100,116,139,0.1)]", border: "border-[#374151]", badge: "text-[#64748b]" },
   loading: { label: "LOADING", bg: "bg-[rgba(100,116,139,0.05)]", border: "border-[#1e293b]", badge: "text-[#64748b]" },
 };
 
@@ -21,7 +20,6 @@ const AssetCard = ({ asset, data }) => {
   const sizing = data?.sizing;
   const exitResult = data?.exitResult;
   const error = data?.error;
-  const blocked = data?.blocked;
 
   const direction = breakout?.direction > 0 ? "LONG" : breakout?.direction < 0 ? "SHORT" : null;
   const pnl = exitResult?.pnl ?? null;
@@ -63,11 +61,6 @@ const AssetCard = ({ asset, data }) => {
       {/* Error state */}
       {status === "error" && (
         <div className="text-[9px] text-[#ef4444] mt-1">{error || "Unknown error"}</div>
-      )}
-
-      {/* Blocked state */}
-      {status === "blocked" && (
-        <div className="text-[9px] text-[#64748b] mt-1">BLOCKED: {blocked || "Unknown reason"}</div>
       )}
 
       {/* OR range */}

@@ -46,7 +46,19 @@ const ReplaySummary = () => {
 
   const handleWhatIf = async () => {
     try {
-      const result = await api.replayWhatIf(config);
+      const overrides = {
+        user_capital: config.capital,
+        budget_divisor: config.budgetDivisor,
+        risk_goal: config.riskGoal,
+        max_positions: config.maxPositions,
+        max_contracts: config.maxContracts,
+        tp_multiple: config.tpMultiple,
+        sl_multiple: config.slMultiple,
+        cb_enabled: config.cbEnabled,
+        mdd_limit: config.mddLimit,
+        mll_limit: config.mllLimit,
+      };
+      const result = await api.replayWhatIf(overrides);
       useReplayStore.getState().setComparison(result);
     } catch (err) {
       console.error("What-if failed:", err);

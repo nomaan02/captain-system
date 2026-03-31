@@ -6,10 +6,8 @@ const RiskPanel = ({ className = "" }) => {
   const tsmStatus = useDashboardStore((s) => s.tsmStatus);
   const capitalSilo = useDashboardStore((s) => s.capitalSilo);
   const payoutPanel = useDashboardStore((s) => s.payoutPanel);
-  const openPositions = useDashboardStore((s) => s.openPositions);
   const connected = useDashboardStore((s) => s.connected);
   const timestamp = useDashboardStore((s) => s.timestamp);
-  const apiStatus = useDashboardStore((s) => s.apiStatus);
   const dailyTradeStats = useDashboardStore((s) => s.dailyTradeStats);
   const selectedAccount = useDashboardStore((s) => s.selectedAccount);
   const accounts = useDashboardStore((s) => s.accounts);
@@ -49,7 +47,7 @@ const RiskPanel = ({ className = "" }) => {
           <div className="flex items-start gap-[11.4px] text-[10.7px] text-[rgba(226,232,240,0.4)]">
             <div className="flex flex-col items-start pt-[2.6px] px-0 pb-0">
               <div className="relative leading-[16.1px]">
-                {timestamp ? new Date(timestamp).toLocaleTimeString("en-US", { hour12: false, timeZone: "UTC" }) + " UTC" : "—"}
+                {timestamp ? new Date(timestamp).toLocaleTimeString("en-US", { hour12: false, timeZone: "America/New_York" }) + " ET" : "—"}
               </div>
             </div>
             <div className={`h-[21.7px] ${connected ? "bg-[#11300b] border-[#55d869]" : "bg-[#300b0b] border-[#d85555]"} border-solid border box-border flex items-start pt-px pb-0 pl-[7px] pr-[5px]`}>
@@ -437,9 +435,9 @@ const RiskPanel = ({ className = "" }) => {
       {/* Footer */}
       <div className="self-stretch h-[22px] flex items-start justify-end py-0 pl-[13px] pr-3 box-border max-w-full shrink-0 text-[rgba(226,232,240,0.25)]">
         <div className="self-stretch flex-1 border-[rgba(46,78,89,0.3)] border-solid border-t box-border overflow-x-auto flex items-start justify-between pt-0.5 px-0 pb-[1.6px] gap-5 max-w-full">
-          <div className="relative leading-[16.1px]">SYS:RISK_MGR v2.4.1</div>
-          <div className="relative leading-[16.1px]">PROP:150K_CHALLENGE</div>
-          <div className="relative leading-[16.1px]">{timestamp ? `UPD: ${new Date(timestamp).toLocaleTimeString("en-US", { hour12: false, timeZone: "UTC" })}` : "UPD: —"}</div>
+          <div className="relative leading-[16.1px]">SYS:RISK_MGR</div>
+          <div className="relative leading-[16.1px]">BROKER:TOPSTEPX</div>
+          <div className="relative leading-[16.1px]">{timestamp ? `UPD: ${new Date(timestamp).toLocaleTimeString("en-US", { hour12: false, timeZone: "America/New_York" })}` : "UPD: —"}</div>
         </div>
       </div>
     </div>

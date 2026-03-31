@@ -26,11 +26,11 @@ const ChartPanel = ({ className = "" }) => {
       <div className="self-stretch bg-[#0a1614] border-[#1a3038] border-solid border-t flex items-start justify-between pt-[3px] px-[5px] pb-[3.4px] gap-5 text-[6.3px]">
         <div className="w-[141.8px] flex flex-col items-start py-0 pl-0 pr-5 box-border">
           <div className="relative leading-[12px]">
-            SYS:SIGNAL_ENGINE v3.2.1
+            SYS:SIGNAL_ENGINE
           </div>
         </div>
         <div className="relative leading-[12px]">
-          BROKER:TOPSTEPX | PROP:150K_CHALLENGE
+          BROKER:TOPSTEPX
         </div>
         <div className="relative leading-[12px]">UPD: {timestamp ? formatTime(timestamp) : "—"}</div>
       </div>
@@ -115,7 +115,7 @@ const ChartPanel = ({ className = "" }) => {
             </div>
           </div>
           <div data-testid="chart-or-state" className="bg-[rgba(245,158,11,0.1)] border border-solid border-[rgba(245,158,11,0.3)] px-2 py-0.5 text-[#f59e0b] text-[11px]">
-            {orStatus?.or_state ?? "INSIDE OR"}
+            {orStatus?.or_state ?? "WAITING"}
           </div>
         </div>
       </div>

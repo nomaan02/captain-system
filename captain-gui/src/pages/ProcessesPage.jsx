@@ -61,7 +61,7 @@ const PROCESS_NAMES = {
 const ACCENT_MAP = { ONLINE: "green", OFFLINE: "blue", COMMAND: "gray" };
 
 const ProcessesPage = () => {
-  const { processes, lockedStrategies, apiConnections, loading, error, startPolling, stopPolling } = useProcessesStore();
+  const { processes, lockedStrategies, apiConnections, error, startPolling, stopPolling } = useProcessesStore();
 
   useEffect(() => {
     startPolling();

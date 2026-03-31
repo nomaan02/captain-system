@@ -123,6 +123,9 @@ const useReplayStore = create((set, get) => ({
               [asset]: { ...state.assetResults[asset], sizing: payload, status: "sized" },
             },
             pipelineStages: { ...state.pipelineStages, B4: { status: "complete", data: payload } },
+            activeSimPosition: state.activeSimPosition?.asset_id === asset
+              ? { ...state.activeSimPosition, contracts: payload.contracts ?? payload.final ?? null }
+              : state.activeSimPosition,
           });
         } else if (event === "position_limit_applied") {
           set({

@@ -1,3 +1,5 @@
+// DEAD CODE: USE_CUSTOM_CHART = false means this component never renders.
+// Safe to delete if custom chart feature is permanently abandoned.
 import useChartStore from "../../stores/chartStore";
 
 const TIMEFRAMES = ["15s", "1m", "5m", "15m"];

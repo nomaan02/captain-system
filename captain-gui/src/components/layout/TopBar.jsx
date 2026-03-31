@@ -17,6 +17,8 @@ const TopBar = ({ className = "" }) => {
   const timestamp = useDashboardStore((s) => s.timestamp);
   const connected = useDashboardStore((s) => s.connected);
   const apiStatus = useDashboardStore((s) => s.apiStatus);
+  const pipelineStage = useDashboardStore((s) => s.pipelineStage);
+  const serviceHealth = useDashboardStore((s) => s.serviceHealth);
   const selectedAccount = useDashboardStore((s) => s.selectedAccount);
   const accounts = useDashboardStore((s) => s.accounts);
   const setSelectedAccount = useDashboardStore((s) => s.setSelectedAccount);
@@ -68,8 +70,6 @@ const TopBar = ({ className = "" }) => {
       setTimeout(() => setPullState("idle"), 5000);
     }
   };
-
-  const currentAccount = accounts.find((a) => a.id === selectedAccount) ?? accounts[0];
 
   return (
     <div
@@ -143,8 +143,16 @@ const TopBar = ({ className = "" }) => {
         </div>
 
         {/* TRADING badge */}
-        <div data-testid="topbar-trading-badge" className="shrink-0 border-[#55d869] border-solid border bg-[#11300b] flex items-center py-0 px-1.5">
-          <span className="text-[8.8px] leading-[13.2px] text-[#0faf7a]">TRADING</span>
+        <div data-testid="topbar-trading-badge" className={`shrink-0 border-solid border flex items-center py-0 px-1.5 ${
+          !connected ? "border-[#ef4444] bg-[#300b0b]" :
+          pipelineStage === "EXECUTED" ? "border-[#55d869] bg-[#11300b]" :
+          "border-[#f59e0b] bg-[#302200]"
+        }`}>
+          <span className={`text-[8.8px] leading-[13.2px] ${
+            !connected ? "text-[#ef4444]" :
+            pipelineStage === "EXECUTED" ? "text-[#0faf7a]" :
+            "text-[#f59e0b]"
+          }`}>{!connected ? "OFFLINE" : pipelineStage === "EXECUTED" ? "TRADING" : "MONITORING"}</span>
         </div>
 
         {/* Git Pull button */}
@@ -185,10 +193,10 @@ const TopBar = ({ className = "" }) => {
           <div data-testid="ws-status" data-status={connected ? "connected" : "disconnected"} className={`w-[5.5px] h-[5.5px] rounded-full ${connected ? "bg-[#00ad74]" : "bg-[#ef4444]"}`} />
           <span className="text-[9.1px] leading-[13.7px]">WS</span>
 
-          <div data-testid="qdb-status" data-status={connected ? "connected" : "disconnected"} className={`w-[5.5px] h-[5.5px] rounded-full ${connected ? "bg-[#00ad74]" : "bg-[#ef4444]"}`} />
+          <div data-testid="qdb-status" data-status={serviceHealth.questdb} className={`w-[5.5px] h-[5.5px] rounded-full ${serviceHealth.questdb === "ok" ? "bg-[#00ad74]" : serviceHealth.questdb === "error" ? "bg-[#ef4444]" : "bg-[#64748b]"}`} />
           <span className="text-[9.1px] leading-[13.7px]">QDB</span>
 
-          <div data-testid="redis-status" data-status={connected ? "connected" : "disconnected"} className={`w-[5.5px] h-[5.5px] rounded-full ${connected ? "bg-[#00ad73]" : "bg-[#ef4444]"}`} />
+          <div data-testid="redis-status" data-status={serviceHealth.redis} className={`w-[5.5px] h-[5.5px] rounded-full ${serviceHealth.redis === "ok" ? "bg-[#00ad74]" : serviceHealth.redis === "error" ? "bg-[#ef4444]" : "bg-[#64748b]"}`} />
           <span className="text-[9.1px] leading-[13.7px]">Redis</span>
 
           <span data-testid="last-tick-timestamp" className="text-[6.4px] leading-[13.7px] ml-1 text-[#64748b]">Last tick: {timestamp ? `${formatTimeSince(timestamp)} ago` : "—"}</span>
