@@ -16,10 +16,38 @@ from datetime import datetime
 JOURNAL_PATH = os.environ.get("CAPTAIN_JOURNAL_PATH", "/captain/journal.sqlite")
 
 
+_initialized = False
+
+
 def get_journal_connection() -> sqlite3.Connection:
-    """Get a connection to the per-process SQLite WAL journal."""
+    """Get a connection to the per-process SQLite WAL journal.
+
+    Auto-creates the journal file and system_journal table on first access
+    so fresh deployments don't need a separate init step.
+    """
+    global _initialized
+    # Ensure parent directory exists
+    parent = os.path.dirname(JOURNAL_PATH)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(JOURNAL_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
+    if not _initialized:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS system_journal (
+                entry_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                component TEXT NOT NULL,
+                checkpoint TEXT NOT NULL,
+                state_hash TEXT,
+                last_action TEXT,
+                next_action TEXT,
+                metadata TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_journal_component ON system_journal(component);
+            CREATE INDEX IF NOT EXISTS idx_journal_timestamp ON system_journal(timestamp);
+        """)
+        _initialized = True
     return conn
 
 
