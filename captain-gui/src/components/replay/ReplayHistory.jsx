@@ -4,17 +4,19 @@ import { formatCurrency, formatTimestamp } from "../../utils/formatting";
 import api from "../../api/client";
 
 const ReplayHistory = () => {
-  const replayHistory = useReplayStore((s) => s.replayHistory);
+  const rawHistory = useReplayStore((s) => s.replayHistory);
+  const replayHistory = Array.isArray(rawHistory) ? rawHistory : [];
 
   useEffect(() => {
     api.replayHistory()
       .then((data) => {
-        useReplayStore.getState().setHistory(data.history || data || []);
+        const list = data?.replays ?? data?.history ?? data;
+        useReplayStore.getState().setHistory(Array.isArray(list) ? list : []);
       })
       .catch(() => {});
   }, []);
 
-  if (!replayHistory || replayHistory.length === 0) {
+  if (replayHistory.length === 0) {
     return (
       <div data-testid="replay-history" className="p-3">
         <div className="text-[9px] uppercase tracking-[1px] text-[#0faf7a] font-mono mb-2">History</div>

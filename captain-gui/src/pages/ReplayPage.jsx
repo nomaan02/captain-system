@@ -51,10 +51,12 @@ const ReplayPage = () => {
   // Load presets + history on mount
   useEffect(() => {
     api.replayPresets().then((data) => {
-      useReplayStore.getState().setPresets(data.presets || data || []);
+      const list = data?.presets ?? data;
+      useReplayStore.getState().setPresets(Array.isArray(list) ? list : []);
     }).catch(() => {});
     api.replayHistory().then((data) => {
-      useReplayStore.getState().setHistory(data.history || data || []);
+      const list = data?.replays ?? data?.history ?? data;
+      useReplayStore.getState().setHistory(Array.isArray(list) ? list : []);
     }).catch(() => {});
   }, []);
 
