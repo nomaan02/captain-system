@@ -497,3 +497,200 @@ def api_test_notification(req: TestNotificationRequest):
         "user_id": req.user_id,
     }, gui_push, telegram_bot=_telegram_bot)
     return JSONResponse({"status": "sent", "user_id": req.user_id})
+
+
+# ---------------------------------------------------------------------------
+# REST: Session Replay (Block 11)
+# ---------------------------------------------------------------------------
+
+
+class ReplayStartRequest(BaseModel):
+    date: str
+    session: str = "NY"
+    config_overrides: dict = {}
+    speed: float = 1.0
+
+
+class ReplayControlRequest(BaseModel):
+    action: str  # pause, resume, speed, skip_to_next, stop
+    value: float | None = None
+
+
+class ReplaySaveRequest(BaseModel):
+    replay_id: str
+    user_id: str = "primary_user"
+
+
+class ReplayPresetRequest(BaseModel):
+    name: str
+    config: dict
+    user_id: str = "primary_user"
+
+
+@app.post("/api/replay/start")
+def api_replay_start(req: ReplayStartRequest):
+    """Start a session replay. Returns replay_id.
+
+    Sync def -- FastAPI runs this in a thread pool so the blocking
+    replay_engine calls do NOT freeze the uvicorn event loop.
+    """
+    try:
+        from captain_command.blocks.b11_replay_runner import start_replay
+        replay_id = start_replay(
+            user_id="primary_user",
+            date_str=req.date,
+            session=req.session,
+            config_overrides=req.config_overrides,
+            speed=req.speed,
+            gui_push_fn=gui_push,
+        )
+        return JSONResponse({"replay_id": replay_id})
+    except Exception as exc:
+        logger.error("Replay start failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.post("/api/replay/control")
+def api_replay_control(req: ReplayControlRequest):
+    """Control an active replay: pause, resume, speed, skip_to_next, stop."""
+    try:
+        from captain_command.blocks.b11_replay_runner import control_replay
+        result = control_replay("primary_user", req.action, req.value)
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.error("Replay control failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.post("/api/replay/save")
+def api_replay_save(req: ReplaySaveRequest):
+    """Save replay results to p3_replay_results."""
+    try:
+        from captain_command.blocks.b11_replay_runner import save_replay
+        result = save_replay(req.replay_id, req.user_id)
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.error("Replay save failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.get("/api/replay/status")
+def api_replay_status():
+    """Get the status of the active replay for primary_user."""
+    try:
+        from captain_command.blocks.b11_replay_runner import get_active_replay
+        result = get_active_replay("primary_user")
+        if result is None:
+            return JSONResponse({"status": "no_active_replay"})
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.error("Replay status failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.get("/api/replay/history")
+def api_replay_history():
+    """List saved replay results (most recent first, limit 50)."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT replay_id, user_id, replay_date, session_type,
+                          summary, created
+                   FROM p3_replay_results
+                   ORDER BY ts DESC LIMIT 50"""
+            )
+            rows = cur.fetchall()
+        results = []
+        for r in rows:
+            summary = {}
+            if r[4]:
+                try:
+                    summary = json.loads(r[4]) if isinstance(r[4], str) else r[4]
+                except (json.JSONDecodeError, TypeError):
+                    summary = {}
+            results.append({
+                "replay_id": r[0],
+                "user_id": r[1],
+                "replay_date": r[2],
+                "session_type": r[3],
+                "summary": summary,
+                "created": r[5],
+            })
+        return JSONResponse({"replays": results})
+    except Exception as exc:
+        logger.error("Replay history failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.get("/api/replay/presets")
+def api_replay_presets():
+    """List saved replay presets for primary_user."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT preset_id, name, config, ts
+                   FROM p3_replay_presets
+                   WHERE user_id = 'primary_user'
+                   ORDER BY ts DESC"""
+            )
+            rows = cur.fetchall()
+        presets = []
+        for r in rows:
+            config = {}
+            if r[2]:
+                try:
+                    config = json.loads(r[2]) if isinstance(r[2], str) else r[2]
+                except (json.JSONDecodeError, TypeError):
+                    config = {}
+            presets.append({
+                "preset_id": r[0],
+                "name": r[1],
+                "config": config,
+                "created": r[3],
+            })
+        return JSONResponse({"presets": presets})
+    except Exception as exc:
+        logger.error("Replay presets fetch failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.post("/api/replay/presets")
+def api_replay_preset_save(req: ReplayPresetRequest):
+    """Save a replay configuration preset."""
+    try:
+        import uuid as _uuid
+        from shared.questdb_client import get_cursor
+        preset_id = f"PRESET-{_uuid.uuid4().hex[:8].upper()}"
+        now = datetime.now().isoformat()
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO p3_replay_presets(
+                       preset_id, user_id, name, config, ts
+                   ) VALUES(%s, %s, %s, %s, %s)""",
+                (preset_id, req.user_id, req.name, json.dumps(req.config), now),
+            )
+        return JSONResponse({
+            "status": "saved",
+            "preset_id": preset_id,
+            "name": req.name,
+        })
+    except Exception as exc:
+        logger.error("Replay preset save failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+@app.post("/api/replay/whatif")
+def api_replay_whatif(req: ReplayStartRequest):
+    """Rerun sizing with different config using cached bars from last replay.
+
+    No API calls needed -- uses bars cached during the last replay run.
+    """
+    try:
+        from captain_command.blocks.b11_replay_runner import run_whatif as do_whatif
+        result = do_whatif("primary_user", req.config_overrides)
+        return JSONResponse(_make_json_safe(result))
+    except Exception as exc:
+        logger.error("Replay what-if failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
