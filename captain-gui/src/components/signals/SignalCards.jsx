@@ -24,7 +24,9 @@ const SignalCards = ({ className = "" }) => {
                 className={`px-1.5 py-[1px] text-[8px] leading-[12px] border border-solid ${
                   sig.direction === "LONG"
                     ? "bg-[rgba(16,185,129,0.2)] border-[rgba(16,185,129,0.4)] text-[#10b981]"
-                    : "bg-[rgba(239,68,68,0.2)] border-[rgba(239,68,68,0.4)] text-[#ef4444]"
+                    : sig.direction === "NEUTRAL"
+                      ? "bg-[rgba(100,116,139,0.2)] border-[rgba(100,116,139,0.4)] text-[#94a3b8]"
+                      : "bg-[rgba(239,68,68,0.2)] border-[rgba(239,68,68,0.4)] text-[#ef4444]"
                 }`}
               >
                 {sig.direction}

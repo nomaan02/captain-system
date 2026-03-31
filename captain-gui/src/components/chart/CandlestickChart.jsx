@@ -82,11 +82,22 @@ const CandlestickChart = () => {
     };
   }, []);
 
-  // Update bars data
+  // Update bars data — only fitContent on first load, not after user has scrolled
+  const hasUserScrolled = useRef(false);
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const ts = chartRef.current.timeScale();
+    const onVisibleChange = () => { hasUserScrolled.current = true; };
+    ts.subscribeVisibleLogicalRangeChange(onVisibleChange);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(onVisibleChange);
+  }, []);
+
   useEffect(() => {
     if (!seriesRef.current || bars.length === 0) return;
     seriesRef.current.setData(bars);
-    chartRef.current?.timeScale().fitContent();
+    if (!hasUserScrolled.current) {
+      chartRef.current?.timeScale().fitContent();
+    }
   }, [bars]);
 
   // Update price lines (entry, SL, TP, OR)

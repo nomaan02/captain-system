@@ -1,8 +1,20 @@
 import useDashboardStore from "../stores/dashboardStore";
 
+// TODO: Add independent data fetch — currently relies on DashboardPage WS being mounted first
 const ModelsPage = () => {
+  const connected = useDashboardStore((s) => s.connected);
   const aimStates = useDashboardStore((s) => s.aimStates);
   const regimePanel = useDashboardStore((s) => s.regimePanel);
+
+  if (!connected && aimStates.length === 0 && !regimePanel) {
+    return (
+      <div className="h-screen bg-surface p-4 flex items-center justify-center">
+        <div className="text-[#64748b] text-xs font-mono text-center">
+          Connect to the dashboard first to load data
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen bg-surface p-4 overflow-y-auto">

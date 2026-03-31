@@ -1,5 +1,7 @@
 import { useState } from "react";
 import useDashboardStore from "../stores/dashboardStore";
+
+// TODO: Add independent data fetch — currently relies on DashboardPage WS being mounted first
 import DataTable from "../components/shared/DataTable";
 import StatusBadge from "../components/shared/StatusBadge";
 import { formatTimestamp, formatCurrency } from "../utils/formatting";
@@ -53,16 +55,27 @@ const TABS = ["Signals", "Trade Outcomes", "Decay Events", "AIM Changes", "Syste
 
 const HistoryPage = () => {
   const [activeTab, setActiveTab] = useState(0);
+  const connected = useDashboardStore((s) => s.connected);
   const pendingSignals = useDashboardStore((s) => s.pendingSignals);
   const decayAlerts = useDashboardStore((s) => s.decayAlerts);
   const aimStates = useDashboardStore((s) => s.aimStates);
 
+  if (!connected && (pendingSignals || []).length === 0 && (decayAlerts || []).length === 0 && (aimStates || []).length === 0) {
+    return (
+      <div className="h-screen bg-surface p-4 flex items-center justify-center">
+        <div className="text-[#64748b] text-xs font-mono text-center">
+          Connect to the dashboard first to load data
+        </div>
+      </div>
+    );
+  }
+
   const tabs = [
     { name: TABS[0], columns: signalColumns, data: pendingSignals || [], search: "Search signals...", empty: "No pending signals" },
-    { name: TABS[1], columns: tradeColumns, data: [], search: "Search trades...", empty: "No trade outcomes recorded" },
+    { name: TABS[1], columns: tradeColumns, data: [], search: "Search trades...", empty: "No historical data available. History is populated from completed trading sessions." },
     { name: TABS[2], columns: decayColumns, data: decayAlerts || [], search: "Search decay events...", empty: "No decay events" },
     { name: TABS[3], columns: aimColumns, data: aimStates || [], search: "Search AIMs...", empty: "No AIM data" },
-    { name: TABS[4], columns: eventColumns, data: [], search: "Search events...", empty: "No system events recorded" },
+    { name: TABS[4], columns: eventColumns, data: [], search: "Search events...", empty: "No historical data available. History is populated from completed trading sessions." },
   ];
 
   const current = tabs[activeTab];

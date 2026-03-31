@@ -100,7 +100,7 @@ export default function useWebSocket(userId = "primary_user") {
 
         case "error":
           addNotification({
-            notif_id: `error-${Date.now()}`,
+            notif_id: `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             priority: "HIGH",
             message: data.message,
             timestamp: new Date().toISOString(),

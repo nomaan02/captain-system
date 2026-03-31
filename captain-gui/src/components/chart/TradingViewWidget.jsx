@@ -30,10 +30,15 @@ const TradingViewWidget = memo(() => {
   const selectedAsset = useChartStore((s) => s.selectedAsset);
   const timeframe = useChartStore((s) => s.timeframe);
 
+  const widgetScriptRef = useRef(null);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Clear previous widget
+    // Clean up previous widget
+    if (widgetScriptRef.current) {
+      widgetScriptRef.current = null;
+    }
     containerRef.current.innerHTML = "";
 
     const symbol = TV_SYMBOLS[selectedAsset] ?? "CME_MINI:MES1!";
@@ -62,6 +67,14 @@ const TradingViewWidget = memo(() => {
     });
 
     containerRef.current.appendChild(script);
+    widgetScriptRef.current = script;
+
+    return () => {
+      widgetScriptRef.current = null;
+      if (containerRef.current) {
+        containerRef.current.innerHTML = "";
+      }
+    };
   }, [selectedAsset, timeframe]);
 
   return (

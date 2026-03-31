@@ -126,7 +126,7 @@ const B5Detail = ({ data }) => {
         {selected.map((s, i) => (
           <div key={s.asset || i} className="flex justify-between py-[2px]">
             <span className="text-[#06b6d4]">{s.asset ?? "--"}</span>
-            <span>{s.contracts ?? s.total_pnl != null ? formatCurrency(s.total_pnl) : "--"}</span>
+            <span>{(s.contracts ?? s.total_pnl) != null ? formatCurrency(s.total_pnl) : "--"}</span>
           </div>
         ))}
         {selected.length === 0 && <div className="text-[#64748b]">None</div>}

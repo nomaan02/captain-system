@@ -77,7 +77,7 @@ const ChartPanel = ({ className = "" }) => {
           </div>
 
           {/* Change display */}
-          <div data-testid="chart-change" className={`relative text-[14.1px] leading-[21.2px] shrink-0 ${liveMarket?.change >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+          <div data-testid="chart-change" className={`relative text-[14.1px] leading-[21.2px] shrink-0 ${liveMarket?.change != null && liveMarket.change >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
             {liveMarket?.change != null ? (
               <span>
                 {liveMarket.change >= 0 ? "▲" : "▼"} {liveMarket.change >= 0 ? "+" : ""}{formatPrice(liveMarket.change)} ({liveMarket.change_pct >= 0 ? "+" : ""}{liveMarket.change_pct?.toFixed(2)}%)
