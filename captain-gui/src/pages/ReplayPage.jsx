@@ -10,14 +10,13 @@ import ReplaySummary from "../components/replay/ReplaySummary";
 import WhatIfComparison from "../components/replay/WhatIfComparison";
 import ReplayHistory from "../components/replay/ReplayHistory";
 import useReplayStore from "../stores/replayStore";
+import useWebSocket from "../ws/useWebSocket";
 import api from "../api/client";
 
-// Expose store on window in dev mode for debugging
 if (import.meta.env.DEV) {
   window.__replayStore = useReplayStore;
 }
 
-// Error boundary to catch and display component crashes instead of blank screen
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -43,12 +42,14 @@ class ErrorBoundary extends React.Component {
 }
 
 const ReplayPage = () => {
+  // WebSocket connection — required to receive replay streaming events
+  useWebSocket("primary_user");
+
   const assetOrder = useReplayStore((s) => s.assetOrder);
   const assetResults = useReplayStore((s) => s.assetResults);
   const expandedStage = useReplayStore((s) => s.expandedStage);
   const status = useReplayStore((s) => s.status);
 
-  // Load presets + history on mount
   useEffect(() => {
     api.replayPresets().then((data) => {
       const list = data?.presets ?? data;
@@ -72,25 +73,19 @@ const ReplayPage = () => {
         <ErrorBoundary name="PlaybackControls"><PlaybackControls /></ErrorBoundary>
       </div>
 
-      {/* Main content: 3-column CSS grid layout */}
+      {/* Main content: 3-column layout */}
       <div className="flex-1 min-h-0 grid grid-cols-[280px_1fr_280px]">
-        {/* Left Column -- Config + Pipeline */}
+        {/* Left Column -- Config only */}
         <div className="h-full overflow-y-auto border-r border-solid border-[#1e293b]">
           <ErrorBoundary name="ReplayConfigPanel"><ReplayConfigPanel /></ErrorBoundary>
-          <ErrorBoundary name="PipelineStepper"><PipelineStepper /></ErrorBoundary>
-          {expandedStage && (
-            <ErrorBoundary name="BlockDetail"><BlockDetail blockId={expandedStage} /></ErrorBoundary>
-          )}
         </div>
 
         {/* Center Column -- Asset Cards + Simulated Position */}
         <div className="h-full flex flex-col overflow-hidden">
-          {/* Simulated position */}
           <div className="shrink-0">
             <ErrorBoundary name="SimulatedPosition"><SimulatedPosition /></ErrorBoundary>
           </div>
 
-          {/* Asset cards grid */}
           <div className="flex-1 overflow-y-auto p-3">
             {assetOrder.length === 0 && status === "idle" && (
               <div className="flex flex-col items-center justify-center h-full text-center">
@@ -125,6 +120,22 @@ const ReplayPage = () => {
           <ErrorBoundary name="WhatIfComparison"><WhatIfComparison /></ErrorBoundary>
           <ErrorBoundary name="ReplayHistory"><ReplayHistory /></ErrorBoundary>
         </div>
+      </div>
+
+      {/* Bottom Bar -- Pipeline Stepper (centred) */}
+      <div className="shrink-0 border-t border-solid border-[#1e293b] bg-[#080e0d]">
+        <ErrorBoundary name="PipelineStepper">
+          <div className="flex justify-center">
+            <PipelineStepper />
+          </div>
+        </ErrorBoundary>
+        {expandedStage && (
+          <ErrorBoundary name="BlockDetail">
+            <div className="border-t border-solid border-[#1e293b] max-h-[250px] overflow-y-auto">
+              <BlockDetail blockId={expandedStage} />
+            </div>
+          </ErrorBoundary>
+        )}
       </div>
     </div>
   );

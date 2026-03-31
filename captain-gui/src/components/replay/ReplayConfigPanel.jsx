@@ -39,8 +39,24 @@ const ReplayConfigPanel = () => {
 
   const handleRun = async () => {
     useReplayStore.getState().reset();
+    // Map camelCase frontend keys to snake_case backend keys
+    const overrides = {
+      user_capital: config.capital,
+      budget_divisor: config.budgetDivisor,
+      risk_goal: config.riskGoal,
+      max_positions: config.maxPositions,
+      max_contracts: config.maxContracts,
+      tp_multiple: config.tpMultiple,
+      sl_multiple: config.slMultiple,
+      cb_enabled: config.cbEnabled,
+      mdd_limit: config.mddLimit,
+      mll_limit: config.mllLimit,
+    };
     try {
-      await api.replayStart(config.date, config.session, config, speed);
+      const res = await api.replayStart(config.date, config.session, overrides, speed);
+      if (res?.replay_id) {
+        useReplayStore.getState().handleWsMessage({ type: "replay_started", replay_id: res.replay_id });
+      }
     } catch (err) {
       console.error("Replay start failed:", err);
     }
