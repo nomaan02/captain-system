@@ -89,14 +89,14 @@ const SignalCards = ({ className = "" }) => {
       <div data-testid="signal-session-footer" className="self-stretch bg-[#0a1614] flex items-center justify-between px-3 py-[4px] text-[9px] shrink-0">
         <div className="flex items-center gap-1">
           <span className="text-[#64748b]">P&L</span>
-          <span data-testid="signal-session-pnl" className="text-[12px] text-[#10b981]">
+          <span data-testid="signal-session-pnl" className={`text-[12px] ${(dailyTradeStats?.total_pnl ?? 0) >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
             {formatCurrency(dailyTradeStats?.total_pnl ?? 0, { showSign: true })}
           </span>
         </div>
         <div className="flex items-center gap-3">
           <span>
             <span className="text-[#64748b]">Win </span>
-            <span data-testid="signal-session-win-pct" className="text-[#e2e8f0]">{dailyTradeStats?.win_pct ?? "—"}%</span>
+            <span data-testid="signal-session-win-pct" className="text-[#e2e8f0]">{dailyTradeStats?.win_pct != null ? `${dailyTradeStats.win_pct}%` : '—'}</span>
           </span>
           <span>
             <span className="text-[#64748b]">Signals </span>

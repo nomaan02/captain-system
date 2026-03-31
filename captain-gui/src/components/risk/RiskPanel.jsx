@@ -253,7 +253,7 @@ const RiskPanel = ({ className = "" }) => {
                 R:R Ratio
               </div>
               <div className="relative text-[15.3px] leading-[23px] text-[#e2e8f0]">
-                {dailyTradeStats?.avg_win && dailyTradeStats?.avg_loss ? (dailyTradeStats.avg_win / dailyTradeStats.avg_loss).toFixed(1) : "—"}
+                {dailyTradeStats?.avg_win != null && dailyTradeStats?.avg_loss != null && dailyTradeStats.avg_loss !== 0 ? (Math.abs(dailyTradeStats.avg_win) / Math.abs(dailyTradeStats.avg_loss)).toFixed(1) : "—"}
               </div>
             </div>
             <div className="flex flex-col items-start py-0 pl-0 pr-[49px] gap-[5.9px]">

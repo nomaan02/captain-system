@@ -21,7 +21,7 @@ if (import.meta.env.DEV) {
 
 // ── DEV MOCK DATA (2026-03-30 NY session replay) ──────────────────────
 // Remove this block once live backend data is confirmed working.
-const DEV_MOCK_ENABLED = true;
+const DEV_MOCK_ENABLED = import.meta.env.DEV;
 
 const MOCK_SIGNALS = [
   { signal_id: "SIG-MES-20260330", asset: "MES", direction: "SHORT", strategy_name: "ORB v1.3", entry_price: 6455.00, tp_level: 6443.80, sl_level: 6460.60, quality_score: 0.82, confidence_tier: "HIGH", pnl: 616.00, timestamp: "2026-03-30T09:35:00" },
