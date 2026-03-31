@@ -302,6 +302,93 @@ Quick start:
 
 ---
 
+## Multi-Instance Deployment
+
+Captain System supports running two independent instances on separate machines with different TopstepX accounts. Trades are split deterministically so neither account takes the same trades.
+
+### Architecture
+
+```
+Instance A (PARITY=0, Nomaan)            Instance B (PARITY=1, client)
+Takes signals 1, 3, 5...                 Takes signals 2, 4, 6...
+     |                                        |
+     |--- Both see ALL signals ---|           |
+     |                            |           |
+  Shadow monitor tracks           Shadow monitor tracks
+  theoretical outcomes for        theoretical outcomes for
+  signals 2, 4, 6...              signals 1, 3, 5...
+     |                                        |
+  Category A learning (ALL signals):  DMA, EWMA, Kelly, BOCPD  <- SYNCHRONIZED
+  Category B learning (OWN trades):   CB params, TSM            <- INDEPENDENT
+```
+
+No network connection between instances. Zero cloud linkage. Compliant with TopstepX API ToS.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `captain-command/.../orchestrator.py` | Parity filter (`_check_parity_skip`) — daily Redis counter, deterministic trade splitting |
+| `captain-online/.../b7_shadow_monitor.py` | Tracks theoretical TP/SL outcomes for signals not executed |
+| `captain-offline/.../orchestrator.py` | `_handle_signal_outcome()` — Category A learning from theoretical outcomes |
+| `scripts/captain-setup.sh` | Interactive setup wizard for fresh machine deployment |
+| `scripts/captain-update.sh` | Pull + rebuild script for receiving code updates |
+| `scripts/bootstrap_production.py` | Parameterized via env vars (`BOOTSTRAP_ACCOUNT_ID`, `BOOTSTRAP_USER_ID`, `BOOTSTRAP_STARTING_CAPITAL`) |
+
+### Category A vs B Learning Split
+
+Strategy parameters learn from ALL signals (both instances stay synchronized):
+- **D02** AIM meta-weights (DMA update)
+- **D04** BOCPD changepoint detection
+- **D05** EWMA win rate / avg win / avg loss
+- **D12** Kelly fraction and shrinkage
+
+Account-specific risk parameters learn from TAKEN trades only (each instance adapts to its own account):
+- **D25** Circuit breaker beta_b (loss serial correlation)
+- **D08** TSM state (actual account balance, MDD)
+- **D16** Capital silo (real P&L)
+
+### Setup on a New Machine
+
+```bash
+git clone https://github.com/nomaan02/captain-multi-user.git captain-system
+cd captain-system
+bash scripts/captain-setup.sh
+# Answer prompts: email, API key, account name, account ID, capital, parity=1
+# Wait ~5 minutes for build
+# Done — GUI at http://localhost
+```
+
+### Pushing Updates
+
+```bash
+# On Nomaan's machine: commit + push
+git push multi-user main
+
+# On client machine: pull + rebuild (~2 min)
+bash scripts/captain-update.sh
+```
+
+The update script warns if `.env.template` has new variables that need adding to `.env`.
+
+### Git Remotes
+
+| Remote | URL | Purpose |
+|--------|-----|---------|
+| `origin` | `https://github.com/nomaan02/captain-system.git` | Primary private repo (Nomaan only) |
+| `multi-user` | `https://github.com/nomaan02/captain-multi-user.git` | Shared repo for multi-instance deployment |
+
+### Environment Variables (Multi-Instance)
+
+| Variable | Values | Purpose |
+|----------|--------|---------|
+| `INSTANCE_PARITY` | `0`, `1`, or empty | Trade alternation: 0=odd signals, 1=even signals, empty=all (single instance) |
+| `BOOTSTRAP_ACCOUNT_ID` | TopstepX account ID | Used by bootstrap script for D16/D25 seeding |
+| `BOOTSTRAP_USER_ID` | User identifier | Default: `primary_user` |
+| `BOOTSTRAP_STARTING_CAPITAL` | Dollar amount | Default: `150000` |
+
+---
+
 ## Running Tests
 
 Tests run on the host (not inside containers). Some tests need container-only deps (pysignalr, numpy).
