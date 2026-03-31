@@ -56,106 +56,86 @@ const useReplayStore = create((set, get) => ({
   handleWsMessage: (data) => {
     const state = get();
     const msgType = data.type || data.event;
+
+    // Backend flattens event_data into the message via **event_data,
+    // so fields like direction, asset, entry_price are at top level alongside
+    // type, replay_id, event. Extract a payload object for convenience.
+    const { type: _t, replay_id: _r, event: _e, ...payload } = data;
+
     switch (msgType) {
       case "replay_started":
         set({ replayId: data.replay_id, status: "running", progress: 0 });
         break;
       case "replay_tick": {
         const event = data.event;
+        const asset = payload.asset;
         if (event === "config_loaded") {
-          set({ pipelineStages: { ...state.pipelineStages, B1: { status: "complete", data: data.data } } });
+          set({ pipelineStages: { ...state.pipelineStages, B1: { status: "complete", data: payload } } });
         } else if (event === "auth_complete") {
-          set({ pipelineStages: { ...state.pipelineStages, B1_AUTH: { status: "complete", data: data.data } } });
+          set({ pipelineStages: { ...state.pipelineStages, B1_AUTH: { status: "complete", data: payload } } });
+        } else if (event === "asset_bars_fetched") {
+          // Add asset to order when bars arrive
+          set({
+            currentAsset: asset,
+            assetOrder: state.assetOrder.includes(asset) ? state.assetOrder : [...state.assetOrder, asset],
+            assetResults: {
+              ...state.assetResults,
+              [asset]: { ...state.assetResults[asset], status: "loading", bar_count: payload.bar_count },
+            },
+          });
         } else if (event === "or_computed") {
-          const asset = data.asset;
           set({
             currentAsset: asset,
             assetResults: {
               ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], orResult: data.data, status: "or_complete" },
+              [asset]: { ...state.assetResults[asset], orResult: payload, status: "or_complete" },
             },
             assetOrder: state.assetOrder.includes(asset) ? state.assetOrder : [...state.assetOrder, asset],
             pipelineStages: { ...state.pipelineStages, B2: { status: "complete", summary: "Regime neutral" } },
           });
-        } else if (event === "regime_computed") {
-          set({
-            pipelineStages: { ...state.pipelineStages, B2: { status: "complete", data: data.data, summary: data.data?.summary || "Regime computed" } },
-          });
-        } else if (event === "aim_scored") {
-          const asset = data.asset;
-          set({
-            assetResults: {
-              ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], aimResult: data.data, status: "aim_scored" },
-            },
-            pipelineStages: { ...state.pipelineStages, B3: { status: "complete", data: data.data } },
-          });
         } else if (event === "breakout") {
-          const asset = data.asset;
           set({
             assetResults: {
               ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], breakout: data.data, status: "breakout" },
+              [asset]: { ...state.assetResults[asset], breakout: payload, status: "breakout" },
             },
             activeSimPosition: {
               asset_id: asset,
-              direction: data.data.direction > 0 ? "LONG" : "SHORT",
-              entry_price: data.data.entry_price,
+              direction: payload.direction > 0 ? "LONG" : "SHORT",
+              entry_price: payload.entry_price,
               contracts: null,
-              tp_level: data.data.tp_level,
-              sl_level: data.data.sl_level,
+              tp_level: payload.tp_level,
+              sl_level: payload.sl_level,
             },
           });
         } else if (event === "exit") {
-          const asset = data.asset;
           set({
             assetResults: {
               ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], exitResult: data.data, status: "exited" },
+              [asset]: { ...state.assetResults[asset], exitResult: payload, status: "exited" },
             },
             activeSimPosition: null,
           });
         } else if (event === "sizing_complete") {
-          const asset = data.asset;
           set({
             assetResults: {
               ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], sizing: data.data, status: "sized" },
+              [asset]: { ...state.assetResults[asset], sizing: payload, status: "sized" },
             },
-            pipelineStages: { ...state.pipelineStages, B4: { status: "complete", data: data.data } },
+            pipelineStages: { ...state.pipelineStages, B4: { status: "complete", data: payload } },
           });
         } else if (event === "position_limit_applied") {
           set({
-            pipelineStages: { ...state.pipelineStages, B5: { status: "complete", data: data.data } },
-          });
-        } else if (event === "compliance_check") {
-          set({
-            pipelineStages: { ...state.pipelineStages, B5C: { status: "complete", data: data.data } },
-          });
-        } else if (event === "signal_emitted") {
-          set({
-            pipelineStages: { ...state.pipelineStages, B6: { status: "complete", data: data.data } },
+            pipelineStages: { ...state.pipelineStages, B5: { status: "complete", data: payload } },
           });
         } else if (event === "asset_error") {
-          const asset = data.asset;
           set({
             assetResults: {
               ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], error: data.data?.error, status: "error" },
+              [asset]: { ...state.assetResults[asset], error: payload.error, status: "error" },
             },
             assetOrder: state.assetOrder.includes(asset) ? state.assetOrder : [...state.assetOrder, asset],
           });
-        } else if (event === "asset_blocked") {
-          const asset = data.asset;
-          set({
-            assetResults: {
-              ...state.assetResults,
-              [asset]: { ...state.assetResults[asset], blocked: data.data?.reason, status: "blocked" },
-            },
-            assetOrder: state.assetOrder.includes(asset) ? state.assetOrder : [...state.assetOrder, asset],
-          });
-        } else if (event === "progress") {
-          set({ progress: data.data?.percent ?? state.progress });
         }
         break;
       }
