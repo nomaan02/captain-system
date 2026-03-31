@@ -694,3 +694,113 @@ def api_replay_whatif(req: ReplayStartRequest):
     except Exception as exc:
         logger.error("Replay what-if failed: %s", exc, exc_info=True)
         return JSONResponse({"error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# System: Git Pull + Rebuild
+# ---------------------------------------------------------------------------
+
+@app.post("/api/system/git-pull")
+def api_git_pull():
+    """Pull latest code from GitHub and rebuild containers.
+
+    Runs entirely on the local machine:
+    1. git pull origin main (in /captain/repo)
+    2. docker compose up -d --build (rebuilds all containers)
+
+    The rebuild runs in a background thread because this container will
+    be recreated as part of the rebuild.
+    """
+    import subprocess
+    import threading
+
+    repo_dir = "/captain/repo"
+
+    try:
+        # Mark repo as safe (mounted volume has different owner than container)
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", repo_dir],
+            capture_output=True, timeout=5,
+        )
+
+        # Step 1: git pull
+        pull_result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if pull_result.returncode != 0:
+            logger.error("Git pull failed: %s", pull_result.stderr)
+            return JSONResponse({
+                "status": "error",
+                "phase": "git_pull",
+                "message": pull_result.stderr.strip() or "Git pull failed",
+            })
+
+        pull_output = pull_result.stdout.strip()
+        already_up_to_date = "Already up to date" in pull_output
+
+        # Step 2: Check what changed
+        diff_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        changed_files = diff_result.stdout.strip().split("\n") if diff_result.stdout.strip() else []
+
+        # Determine if rebuild is needed
+        needs_rebuild = not already_up_to_date and any(
+            not f.startswith("shared/") and not f.startswith("config/") and not f.startswith("data/")
+            for f in changed_files
+        )
+
+        if already_up_to_date:
+            return JSONResponse({
+                "status": "up_to_date",
+                "message": "Already up to date. No changes to pull.",
+                "changed_files": [],
+                "rebuild": False,
+            })
+
+        # Step 3: Rebuild in background (this container will be recreated)
+        def _rebuild():
+            try:
+                logger.info("Starting docker compose rebuild...")
+                subprocess.run(
+                    ["docker", "compose",
+                     "-f", "docker-compose.yml",
+                     "-f", "docker-compose.local.yml",
+                     "up", "-d", "--build"],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                logger.info("Docker compose rebuild complete")
+            except Exception as exc:
+                logger.error("Rebuild failed: %s", exc)
+
+        if needs_rebuild:
+            rebuild_thread = threading.Thread(
+                target=_rebuild, daemon=True, name="git-pull-rebuild"
+            )
+            rebuild_thread.start()
+
+        return JSONResponse({
+            "status": "success",
+            "message": pull_output,
+            "changed_files": changed_files,
+            "rebuild": needs_rebuild,
+            "rebuild_started": needs_rebuild,
+        })
+
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"status": "error", "message": "Git pull timed out"})
+    except Exception as exc:
+        logger.error("Git pull failed: %s", exc, exc_info=True)
+        return JSONResponse({"status": "error", "message": str(exc)})

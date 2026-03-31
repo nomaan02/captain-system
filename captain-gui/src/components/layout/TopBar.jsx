@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { NavLink } from "react-router-dom";
 import useDashboardStore from "../../stores/dashboardStore";
 import { formatTime, formatTimeSince } from "../../utils/formatting";
+import api from "../../api/client";
 
 const NAV_BASE =
   "pt-[0.9px] px-[7px] pb-[2.2px] text-[9.1px] leading-[13.7px] font-extralight font-mono cursor-pointer inline-block no-underline";
@@ -21,6 +22,8 @@ const TopBar = ({ className = "" }) => {
   const setSelectedAccount = useDashboardStore((s) => s.setSelectedAccount);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [pullState, setPullState] = useState("idle"); // idle | pulling | success | rebuilding | error
+  const [pullMsg, setPullMsg] = useState("");
   const dropdownRef = useRef(null);
 
   // Close dropdown on outside click
@@ -33,6 +36,38 @@ const TopBar = ({ className = "" }) => {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  const handleGitPull = async () => {
+    if (pullState === "pulling" || pullState === "rebuilding") return;
+    setPullState("pulling");
+    setPullMsg("");
+    try {
+      const res = await api.gitPull();
+      if (res.status === "up_to_date") {
+        setPullState("success");
+        setPullMsg("Already up to date");
+        setTimeout(() => setPullState("idle"), 4000);
+      } else if (res.status === "success") {
+        if (res.rebuild_started) {
+          setPullState("rebuilding");
+          setPullMsg(`${res.changed_files?.length || 0} files changed — rebuilding...`);
+          // Containers will restart; page will reconnect automatically
+        } else {
+          setPullState("success");
+          setPullMsg(`Pulled ${res.changed_files?.length || 0} file(s) — live`);
+          setTimeout(() => setPullState("idle"), 5000);
+        }
+      } else {
+        setPullState("error");
+        setPullMsg(res.message || "Pull failed");
+        setTimeout(() => setPullState("idle"), 6000);
+      }
+    } catch (err) {
+      setPullState("error");
+      setPullMsg("Network error");
+      setTimeout(() => setPullState("idle"), 5000);
+    }
+  };
 
   const currentAccount = accounts.find((a) => a.id === selectedAccount) ?? accounts[0];
 
@@ -111,6 +146,36 @@ const TopBar = ({ className = "" }) => {
         <div data-testid="topbar-trading-badge" className="shrink-0 border-[#55d869] border-solid border bg-[#11300b] flex items-center py-0 px-1.5">
           <span className="text-[8.8px] leading-[13.2px] text-[#0faf7a]">TRADING</span>
         </div>
+
+        {/* Git Pull button */}
+        <button
+          data-testid="topbar-git-pull"
+          onClick={handleGitPull}
+          disabled={pullState === "pulling" || pullState === "rebuilding"}
+          className={`shrink-0 border border-solid flex items-center gap-[4px] py-0 px-[6px] h-[20px] cursor-pointer text-[8.2px] font-mono transition-colors ${
+            pullState === "pulling" || pullState === "rebuilding"
+              ? "bg-[rgba(6,182,212,0.15)] border-[rgba(6,182,212,0.3)] text-[#06b6d4] cursor-wait"
+              : pullState === "success"
+                ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
+                : pullState === "error"
+                  ? "bg-[rgba(239,68,68,0.15)] border-[rgba(239,68,68,0.3)] text-[#ef4444]"
+                  : "bg-[#111827] border-[#2e4e5a] text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#547380]"
+          }`}
+          title={pullMsg || "Pull latest code from GitHub and rebuild"}
+        >
+          {pullState === "pulling" && <span className="animate-spin">&#8635;</span>}
+          {pullState === "rebuilding" && <span className="animate-pulse">&#9881;</span>}
+          {pullState === "success" && <span>&#10003;</span>}
+          {pullState === "error" && <span>&#10007;</span>}
+          {pullState === "idle" && <span>&#8595;</span>}
+          <span>
+            {pullState === "pulling" ? "Pulling..." :
+             pullState === "rebuilding" ? "Rebuilding..." :
+             pullState === "success" ? pullMsg :
+             pullState === "error" ? pullMsg :
+             "Git Pull"}
+          </span>
+        </button>
 
         {/* Status dots */}
         <div data-testid="health-bar" className="flex items-center gap-[6px] shrink-0 ml-2">

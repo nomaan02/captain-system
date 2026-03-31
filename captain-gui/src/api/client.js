@@ -63,6 +63,9 @@ const api = {
     post(`${BASE}/replay/presets`, { name, config, user_id: userId }),
   replayWhatIf: (configOverrides) =>
     post(`${BASE}/replay/whatif`, { config_overrides: configOverrides }),
+
+  // System
+  gitPull: () => post(`${BASE}/system/git-pull`, {}),
 };
 
 export default api;
