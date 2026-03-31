@@ -16,6 +16,22 @@ __pycache__/
 *.pyc
 .env
 
+# Node
+node_modules/
+
+# Old GUI backup
+captain-gui-old/
+
+# Test artifacts
+test-results/
+
+# Images (tracked in docs/Images/ but too large for git)
+docs/Images/
+
+# GUI screenshots (build artifacts)
+captain-gui/*.png
+captain-gui/*.jpg
+
 # Logs (track structure, not content)
 logs/incidents/*
 logs/crash_reports/*
@@ -35,3 +51,8 @@ data/p2_outputs/
 
 # TSM validated copies (auto-generated)
 config/tsm/validated/
+
+# Config copies synced into Docker build contexts by captain-start.sh
+captain-offline/_config/
+captain-online/_config/
+captain-command/_config/

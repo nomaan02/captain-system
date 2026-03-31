@@ -84,13 +84,8 @@ def _set_sizing_override(asset_id: str, reduction_factor: float):
 
 def _set_captain_status_decayed(asset_id: str):
     """Set captain_status = DECAYED in P3-D00."""
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d00_asset_universe
-               (asset_id, captain_status, last_updated)
-               VALUES (%s, 'DECAYED', now())""",
-            (asset_id,),
-        )
+    from shared.questdb_client import update_d00_fields
+    update_d00_fields(asset_id, {"captain_status": "DECAYED"})
 
 
 def _publish_alert(asset_id: str, level: int, severity: float, source: str):

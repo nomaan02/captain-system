@@ -1,5 +1,8 @@
 # region imports
-from AlgorithmImports import *
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
 # endregion
 """
 Task 1.7: Seed P3-D17 system_params with default values.

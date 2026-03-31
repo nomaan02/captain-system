@@ -248,13 +248,8 @@ def update_questdb(results: list[dict]) -> None:
 
         for attempt in range(3):
             try:
-                with get_cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO p3_d00_asset_universe
-                           (asset_id, roll_calendar, last_updated)
-                           VALUES (%s, %s, now())""",
-                        (asset, roll_calendar),
-                    )
+                from shared.questdb_client import update_d00_fields
+                update_d00_fields(asset, {"roll_calendar": roll_calendar})
                 updated += 1
                 break
             except Exception as e:

@@ -1,5 +1,8 @@
 # region imports
-from AlgorithmImports import *
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
 # endregion
 """
 SQLite WAL Journal Initialization — P3-D20 (one per Captain process).

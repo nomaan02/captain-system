@@ -241,13 +241,11 @@ class TransitionPhaser:
     def finalize(self):
         """Complete the transition: update P3-D00 locked strategy."""
         if self.mode == "ADOPT":
-            with get_cursor() as cur:
-                cur.execute(
-                    """INSERT INTO p3_d00_asset_universe
-                       (asset_id, locked_strategy, captain_status, last_updated)
-                       VALUES (%s, %s, 'ACTIVE', now())""",
-                    (self.asset_id, json.dumps(self.new_strategy, default=str)),
-                )
+            from shared.questdb_client import update_d00_fields
+            update_d00_fields(self.asset_id, {
+                "locked_strategy": json.dumps(self.new_strategy, default=str),
+                "captain_status": "ACTIVE",
+            })
             logger.info("Transition complete for %s: new strategy adopted", self.asset_id)
 
         elif self.mode == "PARALLEL_TRACK":

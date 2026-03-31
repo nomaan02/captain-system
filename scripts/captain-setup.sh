@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+# captain-setup.sh — Interactive setup wizard for Captain System on a fresh machine.
+#
+# Checks prerequisites, collects credentials, generates config, and deploys
+# the full 6-container Docker stack with data bootstrap.
+#
+# Usage:
+#   bash scripts/captain-setup.sh
+#
+# This script is idempotent — safe to re-run if a step fails.
+
+set -euo pipefail
+
+# ── Colours ────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[setup]${NC} $*"; }
+warn() { echo -e "${YELLOW}[setup]${NC} $*"; }
+err()  { echo -e "${RED}[setup]${NC} $*" >&2; }
+info() { echo -e "${CYAN}[setup]${NC} $*"; }
+header() { echo -e "\n${BOLD}═══════════════════════════════════════════════════${NC}"; echo -e "${BOLD}  $*${NC}"; echo -e "${BOLD}═══════════════════════════════════════════════════${NC}\n"; }
+
+CAPTAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$CAPTAIN_DIR"
+
+# ── Step 1: Prerequisites ──────────────────────────────────────────────────
+header "Captain System — Setup Wizard"
+echo "This will configure Captain System on this machine."
+echo "You will need your TopstepX credentials ready."
+echo ""
+
+log "Checking prerequisites..."
+
+# Docker
+if ! command -v docker &>/dev/null; then
+    err "Docker is not installed. Install Docker Desktop for Windows with WSL 2 backend."
+    err "  https://docs.docker.com/desktop/install/windows-install/"
+    exit 1
+fi
+log "  Docker: OK"
+
+# Docker daemon
+DOCKER_WAIT=0
+while ! docker info >/dev/null 2>&1; do
+    if [ $DOCKER_WAIT -ge 60 ]; then
+        err "Docker Desktop not available after 60s. Start it manually."
+        exit 1
+    fi
+    if [ $DOCKER_WAIT -eq 0 ]; then
+        warn "  Waiting for Docker Desktop to start..."
+    fi
+    sleep 5
+    DOCKER_WAIT=$((DOCKER_WAIT + 5))
+done
+log "  Docker daemon: running"
+
+# Docker Compose
+if ! docker compose version &>/dev/null; then
+    err "Docker Compose V2 is not available. Update Docker Desktop."
+    exit 1
+fi
+log "  Docker Compose: OK"
+
+# Required files
+for f in docker-compose.yml docker-compose.local.yml nginx/nginx-local.conf .env.template; do
+    if [ ! -f "$f" ]; then
+        err "Missing: $f — is this the captain-system repository?"
+        exit 1
+    fi
+done
+log "  Project files: OK"
+
+# ── Step 2: Collect Credentials ────────────────────────────────────────────
+header "TopstepX Credentials"
+
+if [ -f ".env" ]; then
+    warn ".env already exists. Overwrite? (y/N)"
+    read -r overwrite
+    if [[ ! "$overwrite" =~ ^[yY] ]]; then
+        log "Keeping existing .env"
+        SKIP_ENV=true
+    else
+        SKIP_ENV=false
+    fi
+else
+    SKIP_ENV=false
+fi
+
+if [ "$SKIP_ENV" = "false" ]; then
+    echo "Enter your TopstepX email (username):"
+    read -r TOPSTEP_USERNAME
+    if [ -z "$TOPSTEP_USERNAME" ]; then
+        err "Username is required."
+        exit 1
+    fi
+
+    echo ""
+    echo "Enter your TopstepX API key:"
+    read -rs TOPSTEP_API_KEY
+    echo ""
+    if [ -z "$TOPSTEP_API_KEY" ]; then
+        err "API key is required."
+        exit 1
+    fi
+
+    echo ""
+    echo "Enter your TopstepX account name (e.g., PRAC-V2-XXXXXX-XXXXXXXX):"
+    read -r TOPSTEP_ACCOUNT_NAME
+    if [ -z "$TOPSTEP_ACCOUNT_NAME" ]; then
+        err "Account name is required."
+        exit 1
+    fi
+
+    echo ""
+    echo "Enter your TopstepX account ID (numeric, from dashboard):"
+    read -r TOPSTEP_ACCOUNT_ID
+    if [ -z "$TOPSTEP_ACCOUNT_ID" ]; then
+        err "Account ID is required for bootstrap."
+        exit 1
+    fi
+
+    echo ""
+    echo "Starting capital for this account (default: 150000):"
+    read -r STARTING_CAPITAL
+    STARTING_CAPITAL="${STARTING_CAPITAL:-150000}"
+
+    echo ""
+    echo "Trading environment — PAPER or LIVE (default: PAPER):"
+    read -r TRADING_ENV
+    TRADING_ENV="${TRADING_ENV:-PAPER}"
+
+    echo ""
+    echo "Auto-execute signals? true/false (default: false):"
+    read -r AUTO_EXECUTE
+    AUTO_EXECUTE="${AUTO_EXECUTE:-false}"
+
+    # Instance parity
+    echo ""
+    echo "Multi-instance mode — set INSTANCE_PARITY:"
+    echo "  0 = take signals 1, 3, 5, ... (first instance)"
+    echo "  1 = take signals 2, 4, 6, ... (second instance)"
+    echo "  [empty] = take all signals (single instance)"
+    echo "Enter parity (0, 1, or blank):"
+    read -r INSTANCE_PARITY
+
+    # Telegram (optional)
+    echo ""
+    echo "Telegram Bot Token (optional, press Enter to skip):"
+    read -r TELEGRAM_BOT_TOKEN
+
+    TELEGRAM_CHAT_ID=""
+    if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+        echo "Telegram Chat ID:"
+        read -r TELEGRAM_CHAT_ID
+    fi
+
+    # Generate vault key
+    VAULT_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || openssl rand -base64 32)
+
+    # Write .env
+    cat > .env << ENVEOF
+# Captain System — Generated by captain-setup.sh ($(date '+%Y-%m-%d %H:%M:%S'))
+
+# ── TOPSTEP AUTHENTICATION ──────────────────────────────────────
+TOPSTEP_USERNAME=${TOPSTEP_USERNAME}
+TOPSTEP_API_KEY=${TOPSTEP_API_KEY}
+TOPSTEP_ACCOUNT_NAME=${TOPSTEP_ACCOUNT_NAME}
+TRADING_ENVIRONMENT=${TRADING_ENV}
+AUTO_EXECUTE=${AUTO_EXECUTE}
+
+# ── MULTI-INSTANCE TRADE ALTERNATION ───────────────────────────
+INSTANCE_PARITY=${INSTANCE_PARITY}
+
+# ── VAULT ENCRYPTION ───────────────────────────────────────────
+VAULT_MASTER_KEY=${VAULT_MASTER_KEY}
+
+# ── BOOTSTRAP CONFIG ───────────────────────────────────────────
+BOOTSTRAP_ACCOUNT_ID=${TOPSTEP_ACCOUNT_ID}
+BOOTSTRAP_USER_ID=primary_user
+BOOTSTRAP_STARTING_CAPITAL=${STARTING_CAPITAL}
+
+# ── TELEGRAM NOTIFICATIONS ─────────────────────────────────────
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+ENVEOF
+
+    chmod 600 .env
+    log ".env created (permissions: 600)"
+
+    echo ""
+    warn "IMPORTANT: Save your VAULT_MASTER_KEY somewhere safe!"
+    warn "  ${VAULT_MASTER_KEY}"
+    warn "Losing it means all encrypted vault data becomes unrecoverable."
+    echo ""
+fi
+
+# ── Step 3: System Tuning ──────────────────────────────────────────────────
+header "System Configuration"
+
+REQUIRED_MMC=1048576
+current_mmc=$(cat /proc/sys/vm/max_map_count 2>/dev/null || echo "0")
+if [ "$current_mmc" -lt "$REQUIRED_MMC" ]; then
+    warn "Setting vm.max_map_count=$REQUIRED_MMC (required for QuestDB)"
+    sudo sysctl -w vm.max_map_count=$REQUIRED_MMC >/dev/null 2>&1 || {
+        err "Failed to set vm.max_map_count. Run manually:"
+        err "  sudo sysctl -w vm.max_map_count=$REQUIRED_MMC"
+        exit 1
+    }
+fi
+log "vm.max_map_count: OK ($REQUIRED_MMC)"
+
+# ── Step 4: Build and Start ────────────────────────────────────────────────
+header "Building & Starting Containers"
+
+# Sync config into build contexts
+for svc in captain-offline captain-online captain-command; do
+    rm -rf "$CAPTAIN_DIR/$svc/_config"
+    cp -r "$CAPTAIN_DIR/config" "$CAPTAIN_DIR/$svc/_config"
+done
+log "Config synced into build contexts"
+
+info "Building Docker images (this may take a few minutes on first run)..."
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build 2>&1 | while IFS= read -r line; do
+    echo "  $line"
+done
+
+# ── Step 5: Wait for Infrastructure ────────────────────────────────────────
+header "Waiting for Infrastructure"
+
+TIMEOUT=120
+elapsed=0
+questdb_ready=false
+redis_ready=false
+
+while [ $elapsed -lt $TIMEOUT ]; do
+    if ! $questdb_ready; then
+        if docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T questdb \
+            curl -sf "http://localhost:9000/exec?query=SELECT%201" >/dev/null 2>&1; then
+            log "  QuestDB: ready"
+            questdb_ready=true
+        fi
+    fi
+    if ! $redis_ready; then
+        if docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T redis \
+            redis-cli ping 2>/dev/null | grep -q PONG; then
+            log "  Redis: ready"
+            redis_ready=true
+        fi
+    fi
+    if $questdb_ready && $redis_ready; then break; fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+    printf "\r  Waiting... %ds" "$elapsed"
+done
+echo ""
+
+if ! $questdb_ready || ! $redis_ready; then
+    err "Infrastructure not ready after ${TIMEOUT}s"
+    err "Check: docker compose -f docker-compose.yml -f docker-compose.local.yml logs --tail 30"
+    exit 1
+fi
+
+# ── Step 6: Initialize Database ────────────────────────────────────────────
+header "Initializing Database"
+
+info "Creating QuestDB tables..."
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T \
+    -e PYTHONPATH=/app captain-offline \
+    python /captain/scripts/init_questdb.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
+log "QuestDB tables: created"
+
+# ── Step 7: Bootstrap Production Data ──────────────────────────────────────
+header "Bootstrapping Production Data"
+
+info "Seeding strategies, capital silo, AIM weights, circuit breaker..."
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T \
+    -e PYTHONPATH=/app \
+    -e BOOTSTRAP_ACCOUNT_ID="${TOPSTEP_ACCOUNT_ID:-20319811}" \
+    -e BOOTSTRAP_USER_ID="primary_user" \
+    -e BOOTSTRAP_STARTING_CAPITAL="${STARTING_CAPITAL:-150000}" \
+    captain-offline \
+    python /captain/scripts/bootstrap_production.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
+log "Bootstrap: complete"
+
+# ── Step 8: Health Check ───────────────────────────────────────────────────
+header "Final Health Check"
+
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.local.yml"
+EXPECTED="questdb redis captain-offline captain-online captain-command nginx"
+all_up=true
+
+for svc in $EXPECTED; do
+    if $COMPOSE ps --status running 2>/dev/null | grep -q "$svc"; then
+        log "  $svc: ${GREEN}running${NC}"
+    else
+        err "  $svc: NOT running"
+        all_up=false
+    fi
+done
+
+# API check
+api_ok=false
+for i in $(seq 1 6); do
+    if curl -sf http://localhost/api/health >/dev/null 2>&1; then
+        log "  API: ${GREEN}healthy${NC}"
+        api_ok=true
+        break
+    fi
+    sleep 5
+done
+if ! $api_ok; then
+    warn "  API not responding yet — may need a moment to initialize"
+fi
+
+# ── Done ───────────────────────────────────────────────────────────────────
+header "Setup Complete!"
+
+if $all_up; then
+    echo -e "  ${GREEN}All containers running.${NC}"
+else
+    echo -e "  ${YELLOW}Some containers may still be starting.${NC}"
+fi
+
+echo ""
+echo "  GUI:     http://localhost"
+echo "  API:     http://localhost/api/health"
+echo "  QuestDB: http://localhost:9000"
+echo ""
+
+if [ -n "${INSTANCE_PARITY:-}" ]; then
+    echo -e "  ${CYAN}Multi-instance mode:${NC} INSTANCE_PARITY=${INSTANCE_PARITY}"
+    echo "  This instance will take every OTHER signal."
+fi
+
+echo ""
+echo "  To update later:  bash scripts/captain-update.sh"
+echo "  To stop:          docker compose -f docker-compose.yml -f docker-compose.local.yml down"
+echo "  To view logs:     docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f"
+echo ""

@@ -1,5 +1,8 @@
 # region imports
-from AlgorithmImports import *
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
 # endregion
 """
 Task 1.9: P1/P2 Data Loader — Seeds P3-D00 with at least 1 test asset (ES).

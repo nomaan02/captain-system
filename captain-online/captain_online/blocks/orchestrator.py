@@ -34,6 +34,7 @@ from shared.redis_client import (
     get_redis_client,
     ensure_consumer_group, read_stream, ack_message,
     STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
+    CH_STATUS,
 )
 from shared.journal import write_checkpoint
 from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE
@@ -56,17 +57,23 @@ SESSION_WINDOW_MINUTES = 2
 class OnlineOrchestrator:
     """Event loop for Captain Online process."""
 
-    def __init__(self):
+    def __init__(self, or_tracker=None):
         self.running = False
         self.open_positions = []  # Active positions across all users
+        self.shadow_positions = []  # Shadow positions for theoretical outcome tracking
         self._session_evaluated_today = {}  # {session_id: date} — prevent double-eval
         self._all_signals = []  # Collect signals for B8 concentration
+        self._or_tracker = or_tracker
+        # Pending Phase A results awaiting OR breakout for Phase B (B6)
+        # {session_id: {"data", "regime", "aim", "user_results", "resolved_assets"}}
+        self._pending_sessions = {}
 
     def start(self):
         """Start the orchestrator."""
         self.running = True
         logger.info("Online orchestrator starting...")
         write_checkpoint("ONLINE", "ORCHESTRATOR_START", "init", "session_loop")
+        self._publish_pipeline_stage("WAITING")
 
         # Redis command listener in background
         thread = threading.Thread(target=self._command_listener, daemon=True)
@@ -79,8 +86,21 @@ class OnlineOrchestrator:
         self.running = False
         logger.info("Online orchestrator stopping...")
 
+    def _publish_pipeline_stage(self, stage: str):
+        """Publish pipeline stage transition to Redis for GUI relay."""
+        try:
+            client = get_redis_client()
+            client.publish(CH_STATUS, json.dumps({
+                "role": "ONLINE",
+                "type": "pipeline_stage",
+                "stage": stage,
+                "timestamp": datetime.now(_ET).isoformat(),
+            }))
+        except Exception as e:
+            logger.error("Failed to publish pipeline stage %s: %s", stage, e)
+
     def _session_loop(self):
-        """Main 24/7 loop — check sessions, monitor positions."""
+        """Main 24/7 loop — check sessions, monitor positions, resolve OR."""
         while self.running:
             now = datetime.now(_ET)
 
@@ -88,9 +108,26 @@ class OnlineOrchestrator:
                 if self._is_session_opening(now, session_id, hour, minute):
                     self._run_session(session_id)
 
+            # OR breakout check — run Phase B (B6) for resolved assets
+            if self._pending_sessions and self._or_tracker:
+                try:
+                    self._check_or_breakouts()
+                except Exception as e:
+                    logger.error("OR breakout check error: %s", e, exc_info=True)
+
             # Continuous: B7 position monitoring
             if self.open_positions:
-                self._run_position_monitor()
+                try:
+                    self._run_position_monitor()
+                except Exception as e:
+                    logger.error("Position monitor error: %s", e, exc_info=True)
+
+            # Continuous: Shadow position monitoring (theoretical outcomes)
+            if self.shadow_positions:
+                try:
+                    self._run_shadow_monitor()
+                except Exception as e:
+                    logger.error("Shadow monitor error: %s", e, exc_info=True)
 
             # Heartbeat
             time.sleep(1)
@@ -106,7 +143,12 @@ class OnlineOrchestrator:
         return abs(current_minute - target_minute) <= SESSION_WINDOW_MINUTES
 
     def _run_session(self, session_id: int):
-        """Execute full session evaluation pipeline."""
+        """Execute session evaluation pipeline.
+
+        With OR tracker: Phase A (B1-B5C) runs now; Phase B (B6) deferred
+        until OR breakout is detected in _check_or_breakouts().
+        Without OR tracker: runs full B1-B6 immediately (legacy/test path).
+        """
         session_name = SESSION_IDS.get(session_id, "UNKNOWN")
         logger.info("Session %s (%d) opening — beginning evaluation", session_name, session_id)
         write_checkpoint("ONLINE", f"SESSION_{session_name}", "start", "circuit_breaker")
@@ -139,21 +181,53 @@ class OnlineOrchestrator:
 
             write_checkpoint("ONLINE", f"SESSION_{session_name}", "shared_done", "per_user_loop")
 
-            # ──── PER-USER DEPLOYMENT LOOP ────
+            # ──── PER-USER SIZING LOOP (B4-B5C) ────
             active_users = self._get_active_users()
             self._all_signals = []
 
+            user_results = []
             for user in active_users:
                 user_silo = self._load_user_silo(user["user_id"])
                 if user_silo is None:
                     logger.warning("No capital silo for user %s — skipping", user["user_id"])
                     continue
 
-                self._process_user(
-                    session_id, data, regime, aim, user_silo
-                )
+                if self._or_tracker:
+                    # Phase A only: B4-B5C, defer B6 until OR resolves
+                    result = self._process_user_sizing(
+                        session_id, data, regime, aim, user_silo
+                    )
+                    if result is not None:
+                        user_results.append(result)
+                else:
+                    # Legacy path: full B4-B6 immediately
+                    self._process_user(
+                        session_id, data, regime, aim, user_silo
+                    )
 
-            # ──── POST-LOOP ────
+            # ──── OR TRACKER: register assets and store Phase A results ────
+            if self._or_tracker and user_results:
+                for asset in data["active_assets"]:
+                    self._or_tracker.register_asset(asset)
+
+                self._pending_sessions[session_id] = {
+                    "session_name": session_name,
+                    "data": data,
+                    "regime": regime,
+                    "aim": aim,
+                    "user_results": user_results,
+                    "active_users": active_users,
+                    "resolved_assets": set(),
+                }
+                logger.info("Phase A complete for %s — %d assets registered for OR tracking, "
+                            "%d user(s) pending Phase B",
+                            session_name, len(data["active_assets"]), len(user_results))
+                # Don't run B8/B9 yet — defer until Phase B completes
+                self._publish_pipeline_stage("OR_FORMING")
+                self._session_evaluated_today[session_id] = datetime.now(_ET).date()
+                return
+
+            # ──── POST-LOOP (legacy path without OR tracker) ────
             if len(active_users) > 1:
                 from captain_online.blocks.b8_concentration_monitor import run_concentration_monitor
                 run_concentration_monitor(session_id, active_users, self._all_signals)
@@ -171,8 +245,88 @@ class OnlineOrchestrator:
 
         self._session_evaluated_today[session_id] = datetime.now(_ET).date()
 
-    def _process_user(self, session_id: int, data: dict, regime: dict, aim: dict, user_silo: dict):
-        """Run B4→B5→B5B→B5C→B6 for one user."""
+    def _check_or_breakouts(self):
+        """Check OR states and run Phase B (B6) for newly resolved assets.
+
+        Called every ~1s from _session_loop. For each pending session, checks
+        which assets have breakout or expiry, injects OR data into features,
+        and runs B6 for those assets only.
+        """
+        from captain_online.blocks.or_tracker import ORState
+
+        self._or_tracker.check_expirations()
+
+        completed_sessions = []
+
+        for session_id, pending in self._pending_sessions.items():
+            data = pending["data"]
+            regime = pending["regime"]
+            aim = pending["aim"]
+            all_assets = set(data["active_assets"])
+            resolved = pending["resolved_assets"]
+
+            newly_resolved = []
+
+            for asset in all_assets - resolved:
+                state = self._or_tracker.get_state(asset)
+                if state is None or not state.is_resolved:
+                    continue
+
+                resolved.add(asset)
+
+                if state.state == ORState.EXPIRED:
+                    logger.info("OR expired for %s — no signal generated", asset)
+                    continue
+
+                # Inject OR data into features for this asset
+                if asset not in data["features"]:
+                    data["features"][asset] = {}
+                data["features"][asset]["or_range"] = state.or_range
+                data["features"][asset]["entry_price"] = state.entry_price
+                data["features"][asset]["or_direction"] = state.direction
+                newly_resolved.append(asset)
+
+            # Run Phase B (B6) for newly resolved breakout assets
+            if newly_resolved:
+                self._publish_pipeline_stage("SIGNAL_GEN")
+                for ur in pending["user_results"]:
+                    signals = self._run_b6_for_user(
+                        session_id, data, regime, aim, ur,
+                        assets=newly_resolved,
+                    )
+                    self._all_signals.extend(signals)
+                logger.info("Phase B: generated signals for %s", newly_resolved)
+                self._publish_pipeline_stage("EXECUTED")
+
+            # Session complete when all assets resolved
+            if resolved >= all_assets:
+                session_name = pending["session_name"]
+                active_users = pending["active_users"]
+
+                # Run post-loop blocks (B8, B9)
+                if len(active_users) > 1:
+                    from captain_online.blocks.b8_concentration_monitor import run_concentration_monitor
+                    run_concentration_monitor(session_id, active_users, self._all_signals)
+
+                from captain_online.blocks.b9_capacity_evaluation import run_capacity_evaluation
+                run_capacity_evaluation(session_id, active_users, data["active_assets"])
+
+                logger.info("Session %s Phase B complete — all assets resolved", session_name)
+                write_checkpoint("ONLINE", f"SESSION_{session_name}", "phase_b_done", "monitoring")
+                completed_sessions.append(session_id)
+
+        for sid in completed_sessions:
+            self._pending_sessions.pop(sid, None)
+
+        if completed_sessions:
+            self._publish_pipeline_stage("WAITING")
+
+    def _process_user_sizing(self, session_id: int, data: dict, regime: dict,
+                             aim: dict, user_silo: dict) -> dict | None:
+        """Run B4→B5→B5B→B5C for one user (Phase A — sizing/selection).
+
+        Returns intermediate results dict for Phase B, or None if blocked.
+        """
         user_id = user_silo.get("user_id", "unknown")
         accounts = user_silo.get("accounts", [])
         if isinstance(accounts, str):
@@ -199,7 +353,7 @@ class OnlineOrchestrator:
             )
 
             if sizing is None or sizing.get("silo_blocked"):
-                return
+                return None
 
             from captain_online.blocks.b5_trade_selection import run_trade_selection, apply_hmm_session_allocation
             trades = run_trade_selection(
@@ -244,9 +398,46 @@ class OnlineOrchestrator:
                 assets_detail=data["assets_detail"],
             )
 
+            rec_count = len(cb_result["recommended_trades"])
+            below_count = len(quality["available_not_recommended"])
+            logger.info("Phase A — user %s: %d recommended, %d below threshold",
+                        user_id, rec_count, below_count)
+
+            return {
+                "user_silo": user_silo,
+                "cb_result": cb_result,
+                "quality": quality,
+                "trades": trades,
+            }
+
+        except Exception as e:
+            logger.error("User %s sizing FAILED: %s", user_id, e, exc_info=True)
+            return None
+
+    def _run_b6_for_user(self, session_id: int, data: dict, regime: dict,
+                         aim: dict, user_result: dict,
+                         assets: list[str] | None = None) -> list[dict]:
+        """Run B6 signal output for one user (Phase B).
+
+        If *assets* is provided, only generate signals for those assets
+        (filtering recommended_trades to the resolved subset).
+        """
+        cb_result = user_result["cb_result"]
+        quality = user_result["quality"]
+        trades = user_result["trades"]
+        user_silo = user_result["user_silo"]
+
+        recommended = cb_result["recommended_trades"]
+        if assets is not None:
+            recommended = [a for a in recommended if a in assets]
+
+        if not recommended:
+            return []
+
+        try:
             from captain_online.blocks.b6_signal_output import run_signal_output
             output = run_signal_output(
-                recommended_trades=cb_result["recommended_trades"],
+                recommended_trades=recommended,
                 available_not_recommended=quality["available_not_recommended"],
                 quality_results=quality["quality_results"],
                 final_contracts=cb_result["final_contracts"],
@@ -265,25 +456,51 @@ class OnlineOrchestrator:
                 session_id=session_id,
             )
 
-            self._all_signals.extend(output.get("signals", []))
+            # Register all signals as shadow positions for theoretical tracking.
+            # If TAKEN, the shadow is removed later (_handle_taken_skipped).
+            # If SKIPPED/PARITY_SKIPPED, the shadow resolves → theoretical outcome.
+            signals = output.get("signals", [])
+            from captain_online.blocks.b7_shadow_monitor import register_shadow_position
+            for sig in signals:
+                shadow = register_shadow_position(sig, session_id)
+                self.shadow_positions.append(shadow)
 
-            rec_count = len(cb_result["recommended_trades"])
-            below_count = len(quality["available_not_recommended"])
-            logger.info("Session — user %s: %d recommended, %d below threshold",
-                        user_id, rec_count, below_count)
+            return signals
 
         except Exception as e:
-            logger.error("User %s processing FAILED: %s", user_id, e, exc_info=True)
+            user_id = user_silo.get("user_id", "unknown")
+            logger.error("User %s B6 signal FAILED: %s", user_id, e, exc_info=True)
+            return []
+
+    def _process_user(self, session_id: int, data: dict, regime: dict, aim: dict, user_silo: dict):
+        """Run B4→B5→B5B→B5C→B6 for one user (legacy path when no OR tracker)."""
+        result = self._process_user_sizing(session_id, data, regime, aim, user_silo)
+        if result is None:
+            return
+        signals = self._run_b6_for_user(session_id, data, regime, aim, result)
+        self._all_signals.extend(signals)
 
     def _run_position_monitor(self):
         """Run B7 position monitoring pass."""
         from captain_online.blocks.b7_position_monitor import monitor_positions
-        # Load TSM configs for position resolution
         from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
         tsm_configs = _load_tsm_configs()
         resolved = monitor_positions(self.open_positions, tsm_configs)
         for pos in resolved:
-            self.open_positions.remove(pos)
+            try:
+                self.open_positions.remove(pos)
+            except ValueError:
+                logger.warning("Position already removed from tracking: %s", pos)
+
+    def _run_shadow_monitor(self):
+        """Run shadow position monitoring pass for theoretical outcomes."""
+        from captain_online.blocks.b7_shadow_monitor import monitor_shadow_positions
+        resolved = monitor_shadow_positions(self.shadow_positions)
+        for shadow in resolved:
+            try:
+                self.shadow_positions.remove(shadow)
+            except ValueError:
+                pass
 
     def _circuit_breaker_check(self, session_id: int) -> bool:
         """Per Arch §19.6: DATA_HOLD >= 3 OR VIX > threshold OR manual_halt."""
@@ -439,5 +656,13 @@ class OnlineOrchestrator:
             logger.info("Position opened: %s for user %s (%d contracts)",
                         data.get("asset"), user_id, position["contracts"])
 
+            # Remove shadow position — real B7 supersedes theoretical tracking.
+            # The real trade outcome from B7 will feed into ALL offline blocks
+            # (both Category A and Category B), so the shadow is redundant.
+            self.shadow_positions = [
+                s for s in self.shadow_positions if s.get("signal_id") != signal_id
+            ]
+
         elif action == "SKIPPED":
-            logger.info("Signal %s SKIPPED by user %s", signal_id, user_id)
+            logger.info("Signal %s SKIPPED by user %s — shadow monitor will track outcome",
+                        signal_id, user_id)

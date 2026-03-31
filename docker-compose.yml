@@ -42,7 +42,6 @@ services:
       retries: 3
     volumes:
       - ./shared:/app/shared:ro
-      - ./config:/captain/config:ro
       - ./data:/captain/data:ro
       - ./logs:/captain/logs
       - ./captain-offline/journal.sqlite:/captain/journal.sqlite
@@ -53,6 +52,8 @@ services:
       REDIS_PORT: "6379"
       CAPTAIN_ROLE: OFFLINE
       TZ: America/New_York
+      VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
+      VXV_CSV_PATH: /captain/data/vix/vxv_daily_close.csv
     depends_on:
       questdb:
         condition: service_healthy
@@ -70,7 +71,6 @@ services:
       retries: 3
     volumes:
       - ./shared:/app/shared:ro
-      - ./config:/captain/config:ro
       - ./data:/captain/data:ro
       - ./logs:/captain/logs
       - ./vault:/captain/vault:ro
@@ -84,6 +84,8 @@ services:
       REDIS_PORT: "6379"
       CAPTAIN_ROLE: ONLINE
       TZ: America/New_York
+      VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
+      VXV_CSV_PATH: /captain/data/vix/vxv_daily_close.csv
     depends_on:
       questdb:
         condition: service_healthy
@@ -108,7 +110,6 @@ services:
       net.ipv4.tcp_keepalive_probes: 6
     volumes:
       - ./shared:/app/shared:ro
-      - ./config:/captain/config
       - ./data:/captain/data:ro
       - ./logs:/captain/logs
       - ./vault:/captain/vault:ro
@@ -125,6 +126,8 @@ services:
       TZ: America/New_York
       VAULT_KEY_PATH: /captain/vault/keys.vault
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
+      VXV_CSV_PATH: /captain/data/vix/vxv_daily_close.csv
     depends_on:
       questdb:
         condition: service_healthy

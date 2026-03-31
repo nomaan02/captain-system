@@ -575,12 +575,14 @@ def compute_all_features(
         # AIM-15: Opening volume ratio
         aim15_state = aim_states.get("by_asset_aim", {}).get((asset_id, 15))
         if aim15_state and aim15_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
-            strategy = locked_strategies.get(asset_id, {})
-            or_minutes = get_or_window_minutes(strategy)
-            vol_now = volume_first_N_min(asset_id, or_minutes)
-            vol_avg = avg_volume_first_N_min(asset_id, or_minutes)
-            if vol_now is not None and vol_avg is not None and vol_avg > 0:
-                f["opening_volume_ratio"] = vol_now / vol_avg
+            vol_now = _get_session_volume(asset_id)
+            hist_vols = _get_historical_session_volumes(asset_id, lookback=20)
+            if vol_now and hist_vols and len(hist_vols) >= 5:
+                vol_avg = sum(hist_vols) / len(hist_vols)
+                if vol_avg > 0:
+                    f["opening_volume_ratio"] = vol_now / vol_avg
+                else:
+                    f["opening_volume_ratio"] = None
             else:
                 f["opening_volume_ratio"] = None
 
@@ -665,6 +667,19 @@ def compute_all_features(
         aim12_state = aim_states.get("by_asset_aim", {}).get((asset_id, 12))
         if aim12_state and aim12_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
             f["current_spread"] = get_live_spread(asset_id)
+            # Persist current spread to history for future z-score lookups
+            if f["current_spread"] is not None:
+                try:
+                    from shared.questdb_client import get_cursor as _gc
+                    with _gc() as _cur:
+                        _cur.execute(
+                            """INSERT INTO p3_spread_history
+                               (asset_id, session_id, spread, timestamp)
+                               VALUES (%s, %s, %s, now())""",
+                            (asset_id, 0, f["current_spread"]),
+                        )
+                except Exception:
+                    pass
             trailing_60d_spreads = _get_trailing_spreads(asset_id, lookback=60)
             if f["current_spread"] is not None and trailing_60d_spreads is not None:
                 f["spread_z"] = z_score(f["current_spread"], trailing_60d_spreads)
@@ -810,6 +825,35 @@ def _compute_bsm_gamma(spot, strike, maturity_years, iv, risk_free_rate) -> floa
         return 0.0
 
 def _load_economic_calendar(date) -> list[dict]:
+    """Load economic events for a date from the calendar JSON."""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    for path in [
+        Path("/captain/config/economic_calendar_2026.json"),
+        Path(__file__).resolve().parent.parent.parent / "config" / "economic_calendar_2026.json",
+    ]:
+        if path.exists():
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                events = data.get("events", [])
+                target = date.isoformat() if hasattr(date, 'isoformat') else str(date)
+                return [
+                    {
+                        "name": e["name"],
+                        "time": datetime.fromisoformat(f"{e['date']}T{e['time']}"),
+                        "tier": e.get("tier", 4),
+                        "scope": e.get("scope", "ALL"),
+                        "affected_assets": e.get("affected_assets", []),
+                    }
+                    for e in events
+                    if e.get("date") == target
+                ]
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                logger.warning("Failed to load economic calendar: %s", exc)
+                return []
     return []
 
 def _load_latest_cot(asset_id: str) -> Optional[dict]:
@@ -825,7 +869,7 @@ def _get_daily_returns(asset_id: str, lookback: int = 20) -> Optional[list[float
         return [(closes[i] / closes[i - 1]) - 1 for i in range(1, len(closes))]
     return None
 
-def _get_daily_closes(asset_id: str, lookback: int = 35) -> Optional[list[float]]:
+def _get_daily_closes(asset_id: str, lookback: int = 280) -> Optional[list[float]]:
     """Daily close prices from TopstepX."""
     contract_id = resolve_contract_id(asset_id)
     if not contract_id:
@@ -944,7 +988,49 @@ def _get_cl_front_futures() -> Optional[float]:
     return None
 
 def _get_trailing_spreads(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing session spreads from p3_spread_history."""
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT spread FROM p3_spread_history
+                   WHERE asset_id = %s
+                   ORDER BY timestamp DESC LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if rows and len(rows) >= 5:
+            return [r[0] for r in reversed(rows)]
+    except Exception:
+        pass
     return None
 
 def _get_trailing_correlations(asset1: str, asset2: str, lookback: int = 252) -> Optional[list[float]]:
-    return None
+    """Trailing rolling 20-day correlations for z-score computation."""
+    # Need lookback + 20 (window) + 1 (returns) days of closes
+    total_days = lookback + 21
+    closes1 = _get_daily_closes(asset1, total_days)
+    closes2 = _get_daily_closes(asset2, total_days)
+    if closes1 is None or closes2 is None:
+        return None
+    # Align to same length
+    n = min(len(closes1), len(closes2))
+    if n < 22:  # Need at least 20 returns + 1
+        return None
+    closes1 = closes1[-n:]
+    closes2 = closes2[-n:]
+    # Compute returns
+    ret1 = [(closes1[i] / closes1[i-1]) - 1 for i in range(1, n)]
+    ret2 = [(closes2[i] / closes2[i-1]) - 1 for i in range(1, n)]
+    # Rolling 20-day correlations
+    correlations = []
+    for i in range(20, len(ret1)):
+        window1 = ret1[i-20:i]
+        window2 = ret2[i-20:i]
+        try:
+            corr = float(np.corrcoef(window1, window2)[0, 1])
+            if not np.isnan(corr):
+                correlations.append(corr)
+        except (ValueError, IndexError):
+            continue
+    return correlations if len(correlations) >= 20 else None

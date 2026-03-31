@@ -25,8 +25,12 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
+from captain_online.blocks.or_tracker import ORTracker
 
 ROLE = os.environ.get("CAPTAIN_ROLE", "ONLINE")
+
+# Module-level OR tracker — shared between MarketStream (writer) and orchestrator (reader)
+or_tracker = ORTracker()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +63,7 @@ def _start_market_streams():
         stream = MarketStream(
             token=client.current_token,
             contract_ids=list(contracts.values()),
+            on_quote=or_tracker.on_quote,
         )
         stream.start()
         logger.info("MarketStream STARTED for %d contracts", len(contracts))
@@ -108,9 +113,9 @@ def main():
 
     write_checkpoint(ROLE, "STREAMS_STARTED", "streams_ready", "starting_orchestrator")
 
-    # Start the 24/7 session orchestrator
+    # Start the 24/7 session orchestrator (with OR tracker reference)
     from captain_online.blocks.orchestrator import OnlineOrchestrator
-    orchestrator = OnlineOrchestrator()
+    orchestrator = OnlineOrchestrator(or_tracker=or_tracker)
 
     def shutdown_handler(signum, frame):
         logger.info("Shutdown signal received")

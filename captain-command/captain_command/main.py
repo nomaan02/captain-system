@@ -168,7 +168,7 @@ def _init_topstep():
     """
     from shared.topstep_client import get_topstep_client, TopstepXClientError
     from shared.topstep_stream import UserStream, MarketStream
-    from captain_command.blocks.b2_gui_data_server import set_user_stream
+    from captain_command.blocks.b2_gui_data_server import set_user_stream, set_account_data
     from captain_command.blocks.b3_api_adapter import (
         TopstepXAdapter, register_connection,
     )
@@ -191,6 +191,7 @@ def _init_topstep():
 
         if account:
             account_id = account["id"]
+            set_account_data(account)
             logger.info("TopstepX account: %s (id=%s, balance=%.2f)",
                         account.get("name"), account_id, account.get("balance", 0))
 

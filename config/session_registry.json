@@ -1,0 +1,66 @@
+{
+  "sessions": {
+    "NY": {
+      "or_start": "09:30",
+      "or_end": "09:35",
+      "or_window_minutes": 5,
+      "eod_std": "15:55",
+      "eod_prop": "16:10",
+      "filter_start": "09:25",
+      "filter_end": "16:15",
+      "overnight": false
+    },
+    "LONDON": {
+      "or_start": "03:00",
+      "or_end": "03:05",
+      "or_window_minutes": 5,
+      "eod_std": "11:25",
+      "eod_prop": "11:30",
+      "filter_start": "02:55",
+      "filter_end": "11:35",
+      "overnight": false
+    },
+    "NY_PRE": {
+      "or_start": "06:00",
+      "or_end": "06:05",
+      "or_window_minutes": 5,
+      "eod_std": "13:25",
+      "eod_prop": "13:30",
+      "filter_start": "05:55",
+      "filter_end": "13:35",
+      "overnight": false
+    },
+    "APAC": {
+      "or_start": "18:00",
+      "or_end": "18:05",
+      "or_window_minutes": 5,
+      "eod_std": "02:55",
+      "eod_prop": "03:00",
+      "filter_start": "17:55",
+      "filter_end": "03:05",
+      "overnight": true
+    }
+  },
+  "asset_session_map": {
+    "ES": "NY",
+    "NQ": "NY",
+    "MES": "NY",
+    "MNQ": "NY",
+    "M2K": "NY",
+    "MYM": "NY",
+    "YM": "NY",
+    "RTY": "NY",
+    "NKD": "APAC",
+    "6J": "APAC",
+    "MCL": "NY_PRE",
+    "ZN": "NY_PRE",
+    "ZT": "NY_PRE",
+    "ZB": "NY_PRE",
+    "MGC": "LONDON",
+    "SIL": "LONDON",
+    "M6E": "LONDON",
+    "M6A": "LONDON",
+    "M6B": "LONDON"
+  },
+  "_source": "Mirror of most-production/config.py SESSION_REGISTRY + ASSET_SESSION_MAP (2026-03-27)"
+}

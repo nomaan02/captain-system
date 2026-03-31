@@ -51,6 +51,7 @@ from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
     build_system_overview,
     build_live_market_update,
+    set_pipeline_stage,
 )
 from captain_command.blocks.b3_api_adapter import (
     run_health_checks,
@@ -229,21 +230,53 @@ class CommandOrchestrator:
     # ------------------------------------------------------------------
 
     def _handle_signal(self, data: dict):
-        """Route signal batch from Online B6 to GUI + API (if auto-execute)."""
+        """Route signal batch from Online B6 to GUI + API (if auto-execute).
+
+        When INSTANCE_PARITY is set (multi-instance mode), each signal
+        increments a daily Redis counter. Only signals matching this
+        instance's parity are executed; others are shown in GUI as
+        PARITY_SKIPPED but still tracked by the shadow monitor for
+        theoretical outcome learning.
+        """
         user_id = data.get("user_id", "")
         ts = data.get("timestamp", datetime.now().isoformat())
 
         update_last_signal_time(ts)
 
+        # --- Parity filter (multi-instance trade alternation) ---
+        instance_parity = os.environ.get("INSTANCE_PARITY", "").strip()
+        parity_active = instance_parity in ("0", "1")
+        parity_skip = False
+
+        if parity_active:
+            parity_skip = self._check_parity_skip(int(instance_parity), data)
+
         # Auto-execute: route signals directly to TopstepX API adapter
         auto_execute = os.environ.get("AUTO_EXECUTE", "").lower() in ("1", "true", "yes")
-        api_fn = self._auto_execute_signal if auto_execute else None
 
-        route_signal_batch(
-            payload=data,
-            gui_push_fn=gui_push,
-            api_route_fn=api_fn,
-        )
+        if parity_skip:
+            # Parity mismatch — show in GUI but do NOT execute
+            api_fn = None
+            route_signal_batch(
+                payload=data,
+                gui_push_fn=gui_push,
+                api_route_fn=None,
+            )
+            # Notify GUI that this signal was parity-skipped
+            for signal in data.get("signals", []):
+                gui_push(user_id, {
+                    "type": "parity_skipped",
+                    "signal_id": signal.get("signal_id"),
+                    "asset": signal.get("asset"),
+                    "message": f"Signal for {signal.get('asset')} assigned to other instance (parity filter)",
+                })
+        else:
+            api_fn = self._auto_execute_signal if auto_execute else None
+            route_signal_batch(
+                payload=data,
+                gui_push_fn=gui_push,
+                api_route_fn=api_fn,
+            )
 
         # Send Telegram notification for each signal (Phase 6)
         for signal in data.get("signals", []):
@@ -256,20 +289,63 @@ class CommandOrchestrator:
                     "signal_id": signal.get("signal_id"),
                     "direction": signal.get("direction"),
                     "confidence": signal.get("confidence_tier", ""),
-                    "auto_executed": auto_execute,
+                    "auto_executed": auto_execute and not parity_skip,
+                    "parity_skipped": parity_skip,
                 },
             }, gui_push, telegram_bot=self.telegram_bot)
 
-        logger.debug("Signal routed for user %s at %s (auto_execute=%s)",
-                      user_id, ts, auto_execute)
+        logger.debug("Signal routed for user %s at %s (auto_execute=%s, parity_skip=%s)",
+                      user_id, ts, auto_execute, parity_skip)
+
+    def _check_parity_skip(self, my_parity: int, data: dict) -> bool:
+        """Check if this signal batch should be skipped based on instance parity.
+
+        Uses a daily Redis counter (reset at midnight ET) to deterministically
+        assign each signal batch to parity 0 or 1. Both instances see the same
+        signals in the same order, so the counter stays synchronized without
+        any network connection between them.
+
+        Returns True if this batch should be skipped (parity mismatch).
+        """
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo("America/New_York")
+            today = datetime.now(tz).strftime("%Y-%m-%d")
+        except Exception:
+            today = datetime.now().strftime("%Y-%m-%d")
+
+        counter_key = f"captain:signal_counter:{today}"
+        try:
+            client = get_redis_client()
+            trade_number = client.incr(counter_key)
+            client.expire(counter_key, 86400 * 2)  # TTL: 2 days
+        except Exception as exc:
+            logger.error("Parity counter failed: %s — defaulting to TAKE", exc)
+            return False
+
+        # trade_number starts at 1. Parity 0 takes odd (1,3,5), parity 1 takes even (2,4,6)
+        signal_parity = (trade_number - 1) % 2  # 0 for odd, 1 for even
+        skip = signal_parity != my_parity
+
+        signals = data.get("signals", [])
+        assets = [s.get("asset", "?") for s in signals]
+        logger.info("PARITY CHECK: trade_number=%d, signal_parity=%d, my_parity=%d, skip=%s, assets=%s",
+                     trade_number, signal_parity, my_parity, skip, assets)
+
+        return skip
 
     def _auto_execute_signal(self, account_id: str, sanitised_order: dict):
         """Execute a signal immediately via the TopstepX API adapter."""
         from captain_command.blocks.b3_api_adapter import _active_connections
 
         direction = sanitised_order.get("direction")
-        if direction not in ("BUY", "SELL"):
-            logger.info("AUTO-EXECUTE SKIP: direction=%s for %s (ORB pending breakout)",
+        # Translate integer direction from B6 to TopstepX side string
+        if direction == 1 or direction == "BUY":
+            direction = "BUY"
+        elif direction == -1 or direction == "SELL":
+            direction = "SELL"
+        else:
+            logger.info("AUTO-EXECUTE SKIP: direction=%s for %s (no valid direction)",
                         direction, sanitised_order.get("asset"))
             gui_push("primary_user", {
                 "type": "signal_pending",
@@ -277,6 +353,7 @@ class CommandOrchestrator:
                 "order": sanitised_order,
             })
             return
+        sanitised_order["direction"] = direction
 
         state = _active_connections.get(account_id)
         if not state:
@@ -331,6 +408,18 @@ class CommandOrchestrator:
         handle_status_message(data, self.process_health)
         role = data.get("role", "UNKNOWN")
         update_process_health(role, self.process_health.get(role, {}))
+
+        # Relay pipeline stage from Online to GUI
+        if data.get("type") == "pipeline_stage" and data.get("stage"):
+            stage = data["stage"]
+            set_pipeline_stage(stage)
+            from captain_command.api import _ws_sessions
+            for user_id in list(_ws_sessions.keys()):
+                gui_push(user_id, {
+                    "type": "pipeline_status",
+                    "stage": stage,
+                    "timestamp": data.get("timestamp"),
+                })
 
     # ------------------------------------------------------------------
     # Scheduler (main thread)

@@ -14,6 +14,9 @@ RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 # Copy application code (invalidated by any code change)
 COPY . .
 
+# Bake config into image (avoids WSL2 9p bind-mount issues)
+COPY _config/ /captain/config/
+
 ENV PYTHONUNBUFFERED=1
 ENV TZ=America/New_York
 

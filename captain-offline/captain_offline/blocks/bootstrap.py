@@ -93,13 +93,11 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
         logger.warning("Insufficient trades for %s bootstrap: %d < %d",
                        asset_id, n_trades, MIN_BOOTSTRAP_TRADES)
         # Update warmup progress
-        with get_cursor() as cur:
-            cur.execute(
-                """INSERT INTO p3_d00_asset_universe
-                   (asset_id, captain_status, warm_up_progress, last_updated)
-                   VALUES (%s, 'WARM_UP', %s, now())""",
-                (asset_id, n_trades / MIN_BOOTSTRAP_TRADES),
-            )
+        from shared.questdb_client import update_d00_fields
+        update_d00_fields(asset_id, {
+            "captain_status": "WARM_UP",
+            "warm_up_progress": n_trades / MIN_BOOTSTRAP_TRADES,
+        })
         return
 
     # Get asset timezone for session derivation
@@ -269,24 +267,19 @@ def asset_warmup_check():
         p1p2_ready = p1_status == "VALIDATED" and p2_status == "VALIDATED"
         checks.append(p1p2_ready)
 
+        from shared.questdb_client import update_d00_fields
         if all(checks):
-            with get_cursor() as cur:
-                cur.execute(
-                    """INSERT INTO p3_d00_asset_universe
-                       (asset_id, captain_status, warm_up_progress, last_updated)
-                       VALUES (%s, 'ACTIVE', 1.0, now())""",
-                    (asset_id,),
-                )
+            update_d00_fields(asset_id, {
+                "captain_status": "ACTIVE",
+                "warm_up_progress": 1.0,
+            })
             logger.info("Asset %s: WARM_UP -> ACTIVE (all 4 conditions met)", asset_id)
         else:
             progress = sum(checks) / len(checks)
-            with get_cursor() as cur:
-                cur.execute(
-                    """INSERT INTO p3_d00_asset_universe
-                       (asset_id, captain_status, warm_up_progress, last_updated)
-                       VALUES (%s, 'WARM_UP', %s, now())""",
-                    (asset_id, progress),
-                )
+            update_d00_fields(asset_id, {
+                "captain_status": "WARM_UP",
+                "warm_up_progress": progress,
+            })
             logger.debug("Asset %s warmup progress: %.0f%% (%s)",
                          asset_id, progress * 100,
                          ["EWMA", "AIMs", "Regime", "P1P2"][checks.index(False)] + " failed")

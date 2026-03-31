@@ -204,6 +204,12 @@ def run_kelly_sizing(
             final = max(final, 0)
             final_contracts[u][ac_id] = final
 
+            logger.info("ON-B4: %s ac=%s kelly=%.4f→%.4f(rg)→%.1f(raw) risk/c=%.1f cap=%d tsm=%d topstep=%d scale=%d → %d contracts [%s]",
+                        u, ac_id, kelly_with_aim, account_kelly, kelly_contracts,
+                        risk_per_contract_with_fee, account_capital, tsm_cap,
+                        topstep_daily_cap, scaling_cap, final,
+                        "TRADE" if final > 0 else "SKIP")
+
             # Step 6d: Recommendation
             remaining_mdd = None
             if category in ("PROP_EVAL", "PROP_FUNDED", "PROP_SCALING"):
@@ -312,7 +318,11 @@ def _apply_risk_goal(kelly: float, risk_goal: str, tsm: dict) -> float:
 
 
 def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: float) -> int:
-    """Compute TSM constraint cap on contracts."""
+    """Compute TSM constraint cap on contracts.
+
+    Uses MDD budget divisor to spread remaining drawdown across trading days,
+    plus MLL (daily loss limit) and max_contracts hard cap.
+    """
     if category in ("PROP_EVAL", "PROP_FUNDED", "PROP_SCALING"):
         mdd_limit = tsm.get("max_drawdown_limit")
         current_dd = tsm.get("current_drawdown", 0)
@@ -336,9 +346,9 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
 
         max_daily_loss = tsm.get("max_daily_loss")
         daily_used = tsm.get("daily_loss_used", 0)
-        if max_daily_loss:
+        if max_daily_loss and risk_per_contract > 0:
             remaining_mll = max_daily_loss - daily_used
-            max_by_mll = math.floor(remaining_mll / risk_per_contract) if risk_per_contract > 0 else 0
+            max_by_mll = math.floor(remaining_mll / risk_per_contract)
         else:
             max_by_mll = 999
 

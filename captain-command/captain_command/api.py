@@ -39,6 +39,7 @@ from captain_command.blocks.b10_data_validation import (
 from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
     build_system_overview,
+    build_processes_status,
 )
 from captain_command.blocks.b6_reports import generate_report, REPORT_TYPES
 from captain_command.blocks.b7_notifications import (
@@ -370,6 +371,20 @@ def api_dashboard(user_id: str):
 def api_system_overview():
     """System Overview — ADMIN only."""
     return JSONResponse(_make_json_safe(build_system_overview()))
+
+
+# ---------------------------------------------------------------------------
+# REST: Process Monitoring
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/processes/status")
+def api_processes_status():
+    """Process monitoring for the Processes tab — aggregates block registry,
+    process health, locked strategies, and API connections."""
+    return JSONResponse(_make_json_safe(
+        build_processes_status(_process_health, _api_connections)
+    ))
 
 
 # ---------------------------------------------------------------------------

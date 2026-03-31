@@ -1,5 +1,8 @@
 # region imports
-from AlgorithmImports import *
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
 # endregion
 """Generate D-22 trade log JSON for ES from extracted QC Object Store data.
 

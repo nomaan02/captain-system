@@ -1,5 +1,8 @@
 # region imports
-from AlgorithmImports import *
+try:
+    from AlgorithmImports import *
+except ImportError:
+    pass
 # endregion
 """
 Master initialization script — runs all Phase 1 setup in order.

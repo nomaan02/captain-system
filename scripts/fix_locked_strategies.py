@@ -120,15 +120,14 @@ def main() -> int:
     from shared.questdb_client import get_cursor
 
     print("\n  Writing to QuestDB...")
+    from shared.questdb_client import update_d00_fields
     for asset, locked_strategy, status in fixes:
-        with get_cursor() as cur:
-            cur.execute(
-                """INSERT INTO p3_d00_asset_universe
-                   (asset_id, p1_status, p2_status, captain_status,
-                    locked_strategy, last_updated)
-                   VALUES (%s, 'VALIDATED', 'VALIDATED', %s, %s, now())""",
-                (asset, status, locked_strategy),
-            )
+        update_d00_fields(asset, {
+            "p1_status": "VALIDATED",
+            "p2_status": "VALIDATED",
+            "captain_status": status,
+            "locked_strategy": locked_strategy,
+        })
         print(f"  [OK] {asset} -> {status}")
 
     # Step 3: Verify

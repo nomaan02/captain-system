@@ -38,12 +38,31 @@ _CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.H26")
 
 # Module-level reference to UserStream (set by orchestrator on startup)
 _user_stream = None
+# Module-level account data cache (set from REST at startup, used as fallback
+# when the UserStream hasn't received a GatewayUserAccount push yet)
+_account_data: dict | None = None
 
 
 def set_user_stream(stream) -> None:
     """Register the active UserStream for live account data."""
     global _user_stream
     _user_stream = stream
+
+
+def set_account_data(account: dict) -> None:
+    """Cache account data from REST API for api_status fallback."""
+    global _account_data
+    _account_data = account
+
+
+# Last known pipeline stage from Online (set by command orchestrator status handler)
+_pipeline_stage: str = "WAITING"
+
+
+def set_pipeline_stage(stage: str) -> None:
+    """Update the cached pipeline stage for snapshot inclusion."""
+    global _pipeline_stage
+    _pipeline_stage = stage
 
 # ---------------------------------------------------------------------------
 # Layer 1: Main Dashboard data assembly
@@ -72,11 +91,13 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "tsm_status": _get_tsm_status(user_id),
         "decay_alerts": _get_decay_alerts(),
         "warmup_gauges": _get_warmup_gauges(),
+        "regime_panel": _get_regime_panel(),
         "notifications": _get_recent_notifications(user_id, limit=100),
         "payout_panel": _get_payout_panel(user_id),
         "scaling_display": _get_scaling_display(user_id),
         "live_market": _get_live_market_data(),
         "api_status": _get_api_connection_status(),
+        "pipeline_stage": _pipeline_stage,
     }
 
 
@@ -315,6 +336,14 @@ def _get_pending_signals(user_id: str) -> list[dict]:
     """Fetch recent unacted signals from P3-D17 session_log."""
     try:
         with get_cursor() as cur:
+            # Find signal IDs that have been acted on (TRADE_TAKEN / TRADE_SKIPPED)
+            cur.execute(
+                """SELECT DISTINCT event_id FROM p3_session_event_log
+                   WHERE user_id = %s AND event_type IN ('TRADE_TAKEN', 'TRADE_SKIPPED')""",
+                (user_id,),
+            )
+            actioned_ids = {row[0] for row in cur.fetchall()}
+
             cur.execute(
                 """SELECT event_id, asset, details, ts
                    FROM p3_session_event_log
@@ -324,6 +353,8 @@ def _get_pending_signals(user_id: str) -> list[dict]:
             )
             results = []
             for r in cur.fetchall():
+                if r[0] in actioned_ids:
+                    continue
                 detail = json.loads(r[2]) if r[2] else {}
                 results.append({
                     "signal_id": r[0], "asset": r[1],
@@ -464,6 +495,52 @@ def _get_warmup_gauges() -> list[dict]:
     except Exception as exc:
         logger.error("Warmup gauges query failed: %s", exc, exc_info=True)
     return []
+
+
+def _get_regime_panel() -> dict:
+    """Fetch regime state from P3-D00 locked_strategy for active assets."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT asset_id, captain_status, locked_strategy
+                   FROM p3_d00_asset_universe
+                   WHERE locked_strategy IS NOT NULL
+                     AND locked_strategy != '{}'
+                   LATEST ON last_updated PARTITION BY asset_id
+                   ORDER BY asset_id"""
+            )
+            assets = []
+            for r in cur.fetchall():
+                if r[1] not in ("ACTIVE", "WARM_UP", "TRAINING_ONLY"):
+                    continue
+                strat = json.loads(r[2]) if isinstance(r[2], str) else r[2]
+                assets.append({
+                    "asset_id": r[0],
+                    "regime_class": strat.get("regime_class", "UNKNOWN"),
+                    "model_type": strat.get("confidence_flag", "UNKNOWN"),
+                    "OO": strat.get("OO"),
+                })
+
+            regime_classes = [a["regime_class"] for a in assets]
+            model_types = [a["model_type"] for a in assets]
+            oo_values = [a["OO"] for a in assets if a["OO"] is not None]
+
+            neutral_count = sum(1 for r in regime_classes if r == "REGIME_NEUTRAL")
+            classifier_count = sum(1 for m in model_types if m not in ("NO_CLASSIFIER", "UNKNOWN"))
+
+            return {
+                "assets": assets,
+                "summary": {
+                    "total_active": len(assets),
+                    "regime_neutral": neutral_count,
+                    "classifiers_trained": classifier_count,
+                    "method": "Classifier" if classifier_count > 0 else "Binary Rule",
+                    "avg_oo": round(sum(oo_values) / len(oo_values), 4) if oo_values else None,
+                },
+            }
+    except Exception as exc:
+        logger.error("Regime panel query failed: %s", exc, exc_info=True)
+    return {"assets": [], "summary": {}}
 
 
 def _get_recent_notifications(user_id: str, limit: int = 100) -> list[dict]:
@@ -767,6 +844,11 @@ def _get_api_connection_status() -> dict:
             result["account_id"] = ad.get("id")
             result["account_name"] = ad.get("name")
 
+    # Fallback: use REST account data cached at startup
+    if result["account_id"] is None and _account_data:
+        result["account_id"] = str(_account_data.get("id", ""))
+        result["account_name"] = _account_data.get("name", "")
+
     # Market stream state is tracked by quote_cache freshness
     contract_id = resolve_contract_id("ES") or _CONTRACT_ID
     quote = quote_cache.get(contract_id)
@@ -774,3 +856,470 @@ def _get_api_connection_status() -> dict:
         result["market_stream"] = "CONNECTED"
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Process Monitoring (Processes tab)
+# ---------------------------------------------------------------------------
+
+BLOCK_REGISTRY = [
+    # --- Captain Online (signal engine, session-triggered) ---
+    {
+        "block_id": "online-orchestrator",
+        "name": "Online Orchestrator",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/orchestrator.py",
+        "description": "Session loop: evaluates at NY/LON/APAC opens, sequences B1-B9 per session",
+        "trigger": "always_on",
+        "trigger_label": "24/7 session loop",
+    },
+    {
+        "block_id": "online-b1",
+        "name": "B1 Data Ingestion",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b1_data_ingestion.py",
+        "description": "Loads active assets, validates data quality, resolves contracts, computes features",
+        "trigger": "session_open",
+        "trigger_label": "Session open",
+    },
+    {
+        "block_id": "online-b1f",
+        "name": "B1 Feature Computation",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b1_features.py",
+        "description": "Computes OHLCV, bid-ask spread, VIX, ATR, skew, volatility per asset",
+        "trigger": "per_session",
+        "trigger_label": "Per session",
+    },
+    {
+        "block_id": "online-b2",
+        "name": "B2 Regime Probability",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b2_regime_probability.py",
+        "description": "Classifies market regime (HIGH_VOL / LOW_VOL) via locked classifier or binary rule",
+        "trigger": "per_session",
+        "trigger_label": "Per session",
+    },
+    {
+        "block_id": "online-b3",
+        "name": "B3 AIM Aggregation",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b3_aim_aggregation.py",
+        "description": "Aggregates 15 AIM modifiers via Mixture-of-Experts gating with DMA weights",
+        "trigger": "per_session",
+        "trigger_label": "Per session",
+    },
+    {
+        "block_id": "online-b4",
+        "name": "B4 Kelly Sizing",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b4_kelly_sizing.py",
+        "description": "Computes optimal contract sizing per asset under regime uncertainty and TSM constraints",
+        "trigger": "per_session",
+        "trigger_label": "Per user/session",
+    },
+    {
+        "block_id": "online-b5",
+        "name": "B5 Trade Selection",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b5_trade_selection.py",
+        "description": "Universe-level asset selection using expected edge and correlation filters",
+        "trigger": "per_session",
+        "trigger_label": "Per user/session",
+    },
+    {
+        "block_id": "online-b5b",
+        "name": "B5B Quality Gate",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b5b_quality_gate.py",
+        "description": "Filters trades by quality threshold (edge x modifier x maturity)",
+        "trigger": "per_session",
+        "trigger_label": "Per user/session",
+    },
+    {
+        "block_id": "online-b5c",
+        "name": "B5C Circuit Breaker",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b5c_circuit_breaker.py",
+        "description": "7-layer circuit breaker: scaling cap, halt, budget, expectancy, Sharpe, regime, manual",
+        "trigger": "per_session",
+        "trigger_label": "Per user/session",
+    },
+    {
+        "block_id": "online-b6",
+        "name": "B6 Signal Output",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b6_signal_output.py",
+        "description": "Generates trading signals (direction, TP, SL, sizing) and publishes to Redis",
+        "trigger": "per_session",
+        "trigger_label": "Per user/session",
+    },
+    {
+        "block_id": "online-b7",
+        "name": "B7 Position Monitor",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b7_position_monitor.py",
+        "description": "Monitors open positions (P&L, TP/SL proximity, regime shifts, time exits)",
+        "trigger": "always_on",
+        "trigger_label": "Always-on (10s poll)",
+    },
+    {
+        "block_id": "online-b8",
+        "name": "B8 Concentration Monitor",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b8_concentration_monitor.py",
+        "description": "Aggregates network-level exposure across users (V1: single-user pass-through)",
+        "trigger": "per_session",
+        "trigger_label": "Post-session",
+    },
+    {
+        "block_id": "online-b9",
+        "name": "B9 Capacity Evaluation",
+        "process": "ONLINE",
+        "source_file": "captain-online/captain_online/blocks/b9_capacity_evaluation.py",
+        "description": "Updates capacity metrics (signal supply, demand, constraints, diversity)",
+        "trigger": "per_session",
+        "trigger_label": "Post-session",
+    },
+    # --- Captain Offline (strategic brain, event-driven) ---
+    {
+        "block_id": "offline-orchestrator",
+        "name": "Offline Orchestrator",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/orchestrator.py",
+        "description": "Event-driven scheduler: trade outcomes, daily/weekly/monthly/quarterly tasks",
+        "trigger": "always_on",
+        "trigger_label": "Event-driven + scheduled",
+    },
+    {
+        "block_id": "offline-b1-aim",
+        "name": "B1 AIM Lifecycle",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b1_aim_lifecycle.py",
+        "description": "AIM state machine: INSTALLED -> COLLECTING -> WARM_UP -> ELIGIBLE -> ACTIVE",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade + daily + weekly",
+    },
+    {
+        "block_id": "offline-b1-dma",
+        "name": "B1 DMA Update",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b1_dma_update.py",
+        "description": "Updates AIM inclusion probabilities using Dynamic Model Averaging (lambda=0.99)",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade",
+    },
+    {
+        "block_id": "offline-b1-drift",
+        "name": "B1 Drift Detection",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b1_drift_detection.py",
+        "description": "Daily AutoEncoder + ADWIN check for per-AIM concept drift",
+        "trigger": "scheduled",
+        "trigger_label": "Daily (16:00 ET)",
+    },
+    {
+        "block_id": "offline-b1-hdwm",
+        "name": "B1 HDWM Diversity",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b1_hdwm_diversity.py",
+        "description": "Weekly: force-reactivate best AIM if all of a seed type are suppressed",
+        "trigger": "scheduled",
+        "trigger_label": "Weekly (Monday)",
+    },
+    {
+        "block_id": "offline-b1-hmm",
+        "name": "B1 HMM Training (AIM-16)",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b1_aim16_hmm.py",
+        "description": "Trains 3-state HMM for opportunity regime classification (LOW/NORMAL/HIGH)",
+        "trigger": "scheduled",
+        "trigger_label": "Weekly/on-demand",
+    },
+    {
+        "block_id": "offline-b2-bocpd",
+        "name": "B2 BOCPD Decay",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b2_bocpd.py",
+        "description": "Bayesian Online Changepoint Detection for strategy decay monitoring",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade",
+    },
+    {
+        "block_id": "offline-b2-cusum",
+        "name": "B2 CUSUM Decay",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b2_cusum.py",
+        "description": "Two-sided CUSUM for persistent mean shift detection (complementary to BOCPD)",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade + quarterly recal",
+    },
+    {
+        "block_id": "offline-b2-esc",
+        "name": "B2 Level Escalation",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b2_level_escalation.py",
+        "description": "Decay level 2: sizing reduction. Level 3: halt + P1/P2 rerun + AIM-14",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade",
+    },
+    {
+        "block_id": "offline-b3",
+        "name": "B3 Pseudotrader",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b3_pseudotrader.py",
+        "description": "Signal replay engine for historical trade comparison and parameter sensitivity",
+        "trigger": "on_demand",
+        "trigger_label": "On demand",
+    },
+    {
+        "block_id": "offline-b4",
+        "name": "B4 Injection Comparison",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b4_injection.py",
+        "description": "Compares candidate strategy vs current: ADOPT if 1.2x better AND pbo < 0.5",
+        "trigger": "on_demand",
+        "trigger_label": "On command / Level 3",
+    },
+    {
+        "block_id": "offline-b5",
+        "name": "B5 Sensitivity Scanner",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b5_sensitivity.py",
+        "description": "Monthly perturbation grid for locked strategy parameters; flags FRAGILE",
+        "trigger": "scheduled",
+        "trigger_label": "Monthly (1st)",
+    },
+    {
+        "block_id": "offline-b6",
+        "name": "B6 Auto-Expansion (AIM-14)",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b6_auto_expansion.py",
+        "description": "GA search for replacement strategy on Level 3 decay trigger",
+        "trigger": "on_demand",
+        "trigger_label": "On Level 3 trigger",
+    },
+    {
+        "block_id": "offline-b7",
+        "name": "B7 TSM Simulation",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b7_tsm_simulation.py",
+        "description": "Block bootstrap Monte Carlo (10K paths) for prop firm pass probability",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade + on command",
+    },
+    {
+        "block_id": "offline-b8-cb",
+        "name": "B8 CB Params",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b8_cb_params.py",
+        "description": "Estimates circuit breaker parameters: r_bar, beta_b, sigma, rho_bar",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade",
+    },
+    {
+        "block_id": "offline-b8-kelly",
+        "name": "B8 Kelly Update",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b8_kelly_update.py",
+        "description": "Updates EWMA (win_rate, avg_win, avg_loss) and Kelly formula after each trade",
+        "trigger": "per_trade",
+        "trigger_label": "Per trade",
+    },
+    {
+        "block_id": "offline-b9",
+        "name": "B9 System Diagnostic",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/b9_diagnostic.py",
+        "description": "8-dimension health check: strategy, features, staleness, AIM, edge, data, pipeline",
+        "trigger": "scheduled",
+        "trigger_label": "Weekly + monthly",
+    },
+    {
+        "block_id": "offline-bootstrap",
+        "name": "Asset Bootstrap",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/bootstrap.py",
+        "description": "Initializes new asset: D-22 trades, EWMA, BOCPD/CUSUM, Kelly, Tier 1 AIMs",
+        "trigger": "on_demand",
+        "trigger_label": "On ASSET_ADDED",
+    },
+    {
+        "block_id": "offline-versioning",
+        "name": "Version Snapshot",
+        "process": "OFFLINE",
+        "source_file": "captain-offline/captain_offline/blocks/version_snapshot.py",
+        "description": "Records model versions before updates for auditability and rollback",
+        "trigger": "event_driven",
+        "trigger_label": "On model update",
+    },
+    # --- Captain Command (linking layer, always-on) ---
+    {
+        "block_id": "command-orchestrator",
+        "name": "Command Orchestrator",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/orchestrator.py",
+        "description": "Always-on event loop: signal stream, Redis pub/sub, scheduler, FastAPI server",
+        "trigger": "always_on",
+        "trigger_label": "Always-on",
+    },
+    {
+        "block_id": "command-b1",
+        "name": "B1 Core Routing",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b1_core_routing.py",
+        "description": "Central message bus: signals -> GUI + API, commands -> handlers, alerts -> pub/sub",
+        "trigger": "event_driven",
+        "trigger_label": "Event-driven",
+    },
+    {
+        "block_id": "command-b2",
+        "name": "B2 GUI Data Server",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b2_gui_data_server.py",
+        "description": "Dashboard assembly: capital, positions, signals, AIM, TSM, regime, notifications",
+        "trigger": "scheduled",
+        "trigger_label": "60s refresh + events",
+    },
+    {
+        "block_id": "command-b3",
+        "name": "B3 API Adapter",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b3_api_adapter.py",
+        "description": "TopstepX integration: REST + WebSocket, 30s health monitoring, auto-reconnect",
+        "trigger": "always_on",
+        "trigger_label": "30s health check",
+    },
+    {
+        "block_id": "command-b4",
+        "name": "B4 TSM Manager",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b4_tsm_manager.py",
+        "description": "Loads and validates TSM JSON configs: fee schedule, scaling, payout rules",
+        "trigger": "on_demand",
+        "trigger_label": "On startup",
+    },
+    {
+        "block_id": "command-b5",
+        "name": "B5 Injection Flow",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b5_injection_flow.py",
+        "description": "Routes strategy injection: P1/P2 completion -> comparison -> user decision",
+        "trigger": "on_demand",
+        "trigger_label": "On P1/P2 events",
+    },
+    {
+        "block_id": "command-b6",
+        "name": "B6 Reports",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b6_reports.py",
+        "description": "11 report types: pre-session, weekly, monthly decay, AIM, strategy, prop firm",
+        "trigger": "scheduled",
+        "trigger_label": "Scheduled + on-demand",
+    },
+    {
+        "block_id": "command-b7",
+        "name": "B7 Notifications",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b7_notifications.py",
+        "description": "26 event types, 4 priority levels, Telegram + GUI + email with quiet hours",
+        "trigger": "event_driven",
+        "trigger_label": "Event-driven",
+    },
+    {
+        "block_id": "command-b8",
+        "name": "B8 Reconciliation",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b8_reconciliation.py",
+        "description": "Daily 19:00 EST: broker sync, SOD param computation, payout check, daily reset",
+        "trigger": "scheduled",
+        "trigger_label": "Daily 19:00 EST",
+    },
+    {
+        "block_id": "command-b9",
+        "name": "B9 Incident Response",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b9_incident_response.py",
+        "description": "Auto-generated incident reports with severity routing (P1 -> P4)",
+        "trigger": "event_driven",
+        "trigger_label": "Event-driven",
+    },
+    {
+        "block_id": "command-b10",
+        "name": "B10 Data Validation",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/blocks/b10_data_validation.py",
+        "description": "Validates all user-provided data: asset onboarding, TSM params, decisions",
+        "trigger": "event_driven",
+        "trigger_label": "On user input",
+    },
+    {
+        "block_id": "command-telegram",
+        "name": "Telegram Bot",
+        "process": "COMMAND",
+        "source_file": "captain-command/captain_command/telegram_bot.py",
+        "description": "Telegram integration: notifications + inline decisions (TAKEN/SKIPPED)",
+        "trigger": "always_on",
+        "trigger_label": "Always-on polling",
+    },
+]
+
+
+def _get_locked_strategies() -> list[dict]:
+    """Fetch locked strategies from P3-D00 for the Processes tab."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT asset_id, captain_status, locked_strategy
+                   FROM p3_d00_asset_universe
+                   WHERE locked_strategy IS NOT NULL
+                     AND locked_strategy != '{}'
+                   LATEST ON last_updated PARTITION BY asset_id
+                   ORDER BY asset_id"""
+            )
+            results = []
+            for r in cur.fetchall():
+                strat = json.loads(r[2]) if isinstance(r[2], str) else (r[2] or {})
+                results.append({
+                    "asset": r[0],
+                    "captain_status": r[1],
+                    "m": strat.get("m"),
+                    "k": strat.get("k"),
+                    "oo": strat.get("OO") or strat.get("oo"),
+                    "sessions": strat.get("sessions", []),
+                })
+            return results
+    except Exception as exc:
+        logger.error("Locked strategies query failed: %s", exc, exc_info=True)
+    return []
+
+
+def build_processes_status(process_health: dict, api_connections: dict) -> dict:
+    """Assemble process monitoring data for the Processes tab.
+
+    Parameters
+    ----------
+    process_health : dict
+        Process health state from api module (OFFLINE/ONLINE/COMMAND).
+    api_connections : dict
+        API adapter connection state from api module.
+    """
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "processes": {
+            role: {
+                "status": info.get("status", "unknown"),
+                "timestamp": info.get("timestamp"),
+            }
+            for role, info in process_health.items()
+        },
+        "blocks": BLOCK_REGISTRY,
+        "locked_strategies": _get_locked_strategies(),
+        "api_connections": {
+            "connected": sum(
+                1 for ac in api_connections.values()
+                if ac.get("connected", False)
+            ),
+            "total": len(api_connections),
+        },
+    }

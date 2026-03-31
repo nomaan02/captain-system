@@ -586,22 +586,14 @@ def _has_valid_timestamp(asset_id: str) -> bool:
 
 def _update_asset_status(asset_id: str, status: str, quality_flag: str):
     """Update captain_status and data_quality_flag in P3-D00."""
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d00_asset_universe (asset_id, captain_status, data_quality_flag, last_updated)
-               VALUES (%s, %s, %s, now())""",
-            (asset_id, status, quality_flag),
-        )
+    from shared.questdb_client import update_d00_fields
+    update_d00_fields(asset_id, {"captain_status": status, "data_quality_flag": quality_flag})
 
 
 def _update_asset_quality_flag(asset_id: str, flag: str):
     """Update data_quality_flag in P3-D00."""
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d00_asset_universe (asset_id, data_quality_flag, last_updated)
-               VALUES (%s, %s, now())""",
-            (asset_id, flag),
-        )
+    from shared.questdb_client import update_d00_fields
+    update_d00_fields(asset_id, {"data_quality_flag": flag})
 
 
 def _create_incident(incident_type: str, severity: str, component: str, details: str):

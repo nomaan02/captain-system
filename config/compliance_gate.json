@@ -1,14 +1,14 @@
 {
-    "_comment": "RTS 6 Compliance Gate — all false for V1 (no automated execution)",
-    "rts6_01_order_validation": false,
-    "rts6_02_price_collars": false,
-    "rts6_03_max_order_value": false,
-    "rts6_04_max_order_volume": false,
-    "rts6_05_max_message_rate": false,
-    "rts6_06_market_making_obligations": false,
-    "rts6_07_erroneous_trade_prevention": false,
-    "rts6_08_pre_trade_risk_controls": false,
-    "rts6_09_post_trade_controls": false,
-    "rts6_10_kill_switch": false,
-    "rts6_11_audit_trail": false
+    "_comment": "RTS 6 Compliance Gate — enabled for automated execution (2026-03-27)",
+    "rts6_01_order_validation": true,
+    "rts6_02_price_collars": true,
+    "rts6_03_max_order_value": true,
+    "rts6_04_max_order_volume": true,
+    "rts6_05_max_message_rate": true,
+    "rts6_06_market_making_obligations": true,
+    "rts6_07_erroneous_trade_prevention": true,
+    "rts6_08_pre_trade_risk_controls": true,
+    "rts6_09_post_trade_controls": true,
+    "rts6_10_kill_switch": true,
+    "rts6_11_audit_trail": true
 }

@@ -69,12 +69,14 @@ def signals_channel(user_id: str) -> str:
 STREAM_SIGNALS = "stream:signals"
 STREAM_TRADE_OUTCOMES = "stream:trade_outcomes"
 STREAM_COMMANDS = "stream:commands"
+STREAM_SIGNAL_OUTCOMES = "stream:signal_outcomes"  # Theoretical outcomes from shadow monitor
 
 # Consumer group names (one per consuming process)
 GROUP_COMMAND_SIGNALS = "command_signals"
 GROUP_OFFLINE_OUTCOMES = "offline_outcomes"
 GROUP_OFFLINE_COMMANDS = "offline_commands"
 GROUP_ONLINE_COMMANDS = "online_commands"
+GROUP_OFFLINE_SIGNAL_OUTCOMES = "offline_signal_outcomes"  # Category A learning from theoretical trades
 
 
 def publish_to_stream(stream: str, data: dict) -> str:

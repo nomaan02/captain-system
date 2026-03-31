@@ -343,6 +343,11 @@ def _layer3_basket_expectancy(
     p_value = cb_param.get("p_value", 1.0)
     n_obs = cb_param.get("n_observations", 0)
 
+    # Cold start: spec says "beta_b=0, layers 3-4 disabled" — skip when
+    # no trade observations exist yet (r_bar and beta_b are both zero).
+    if n_obs == 0:
+        return None
+
     # Significance gate: only use beta_b if p < 0.05 AND n >= 100
     if p_value > 0.05 or n_obs < 100:
         beta_b = 0.0  # Cold start / insignificant — basket defaults to "always open"
@@ -387,6 +392,10 @@ def _layer4_correlation_sharpe(
     rho_bar = cb_param.get("rho_bar", 0.0)
     p_value = cb_param.get("p_value", 1.0)
     n_obs = cb_param.get("n_observations", 0)
+
+    # Cold start: spec says "beta_b=0, layers 3-4 disabled"
+    if n_obs == 0:
+        return None
 
     # Significance gate for beta_b
     if p_value > 0.05 or n_obs < 100:

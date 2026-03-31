@@ -160,18 +160,21 @@ def run_signal_output(
 def _determine_direction(strategy: dict, features: dict) -> int:
     """Determine trade direction from strategy and features.
 
-    For ORB strategies: direction is determined by breakout direction
-    at session open. Since we're pre-session, return the strategy's
-    default direction or 0 (to be resolved at OR close).
+    For ORB strategies with live OR tracker: the orchestrator injects
+    ``or_direction`` into features after breakout detection.  Falls back
+    to ``default_direction`` from the locked strategy (0 = pending).
     """
-    # In ORB, direction is only known after OR period closes
-    # Signal carries both potential directions; actual direction resolved at breakout
+    # Live OR breakout direction (injected by orchestrator Phase B)
+    or_direction = features.get("or_direction")
+    if or_direction is not None and or_direction != 0:
+        return int(or_direction)
+
     return strategy.get("default_direction", 0)
 
 
 def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
     """Compute take-profit level from strategy params."""
-    tp_multiple = strategy.get("tp_multiple", 2.0)
+    tp_multiple = strategy.get("tp_multiple", 0.70)
     or_range = features.get("or_range")
     entry = features.get("entry_price")
 
@@ -184,7 +187,7 @@ def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
 
 def _compute_sl(strategy: dict, features: dict, direction: int) -> float | None:
     """Compute stop-loss level from strategy params."""
-    sl_multiple = strategy.get("sl_multiple", 1.0)
+    sl_multiple = strategy.get("sl_multiple", 0.35)
     or_range = features.get("or_range")
     entry = features.get("entry_price")
 

@@ -89,7 +89,15 @@ if [ -n "$missing" ]; then
 fi
 log "Project files OK"
 
-# ── Step 4: Start containers ──────────────────────────────────────────────────
+# ── Step 4: Sync config into build contexts ──────────────────────────────────
+# Docker can't COPY from parent dirs; pre-copy config/ into each service dir.
+for svc in captain-offline captain-online captain-command; do
+    rm -rf "$CAPTAIN_DIR/$svc/_config"
+    cp -r "$CAPTAIN_DIR/config" "$CAPTAIN_DIR/$svc/_config"
+done
+log "Config synced into build contexts"
+
+# ── Step 5: Start containers ──────────────────────────────────────────────────
 if [ -n "$BUILD_FLAG" ]; then
     info "Starting with --build (rebuilding images)..."
 else

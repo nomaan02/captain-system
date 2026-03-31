@@ -33,8 +33,8 @@ from datetime import datetime
 from shared.redis_client import (
     get_redis_client,
     ensure_consumer_group, read_stream, ack_message,
-    STREAM_TRADE_OUTCOMES, STREAM_COMMANDS,
-    GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS,
+    STREAM_TRADE_OUTCOMES, STREAM_COMMANDS, STREAM_SIGNAL_OUTCOMES,
+    GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS, GROUP_OFFLINE_SIGNAL_OUTCOMES,
 )
 from shared.journal import write_checkpoint
 
@@ -81,17 +81,26 @@ class OfflineOrchestrator:
             try:
                 ensure_consumer_group(STREAM_TRADE_OUTCOMES, GROUP_OFFLINE_OUTCOMES)
                 ensure_consumer_group(STREAM_COMMANDS, GROUP_OFFLINE_COMMANDS)
+                ensure_consumer_group(STREAM_SIGNAL_OUTCOMES, GROUP_OFFLINE_SIGNAL_OUTCOMES)
                 logger.info("Offline stream consumer groups ready")
                 backoff = 1
 
                 while self.running:
-                    # Read trade outcomes
+                    # Read trade outcomes (real trades — feed ALL blocks: Category A + B)
                     for msg_id, data in read_stream(
                         STREAM_TRADE_OUTCOMES, GROUP_OFFLINE_OUTCOMES,
                         "offline_1", block=1000,
                     ):
                         self._handle_trade_outcome(data)
                         ack_message(STREAM_TRADE_OUTCOMES, GROUP_OFFLINE_OUTCOMES, msg_id)
+
+                    # Read signal outcomes (theoretical — feed Category A only)
+                    for msg_id, data in read_stream(
+                        STREAM_SIGNAL_OUTCOMES, GROUP_OFFLINE_SIGNAL_OUTCOMES,
+                        "offline_1", block=500,
+                    ):
+                        self._handle_signal_outcome(data)
+                        ack_message(STREAM_SIGNAL_OUTCOMES, GROUP_OFFLINE_SIGNAL_OUTCOMES, msg_id)
 
                     # Read commands
                     for msg_id, data in read_stream(
@@ -161,6 +170,63 @@ class OfflineOrchestrator:
             logger.error("Error processing trade outcome for %s: %s", asset_id, e, exc_info=True)
 
         write_checkpoint("OFFLINE", "TRADE_OUTCOME_COMPLETE", "trade_processed", "waiting")
+
+    def _handle_signal_outcome(self, outcome: dict):
+        """Process a THEORETICAL signal outcome (from shadow monitor).
+
+        Category A learning only: DMA, BOCPD, CUSUM, Kelly/EWMA.
+        Category B (CB params, TSM simulation) is skipped because these
+        must reflect actual account-specific trading history.
+
+        This keeps strategy parameters (win rate, AIM weights, Kelly fraction)
+        synchronized across multi-instance deployments while allowing each
+        instance's risk management to adapt to its own account state.
+        """
+        asset_id = outcome.get("asset", "")
+        pnl = outcome.get("pnl", 0)
+        logger.info("Theoretical signal outcome: %s pnl=%.2f (Category A learning)",
+                     asset_id, pnl)
+
+        write_checkpoint("OFFLINE", "SIGNAL_OUTCOME", "processing",
+                         "category_a_only", {"asset": asset_id, "theoretical": True})
+
+        try:
+            # 1. DMA meta-weight update (Category A)
+            from captain_offline.blocks.b1_dma_update import run_dma_update
+            run_dma_update(outcome)
+
+            # 2. BOCPD decay detection (Category A)
+            from captain_offline.blocks.b2_bocpd import run_bocpd_update
+            pnl_pc = pnl / max(outcome.get("contracts", 1), 1)
+            bocpd_det = self._detectors.get(asset_id, (None, None))[0]
+            cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
+
+            # 3. CUSUM decay detection (Category A)
+            from captain_offline.blocks.b2_cusum import run_cusum_update
+            cusum_det = self._detectors.get(asset_id, (None, None))[1]
+            cusum_signal, cusum_det = run_cusum_update(asset_id, pnl_pc, cusum_det)
+
+            self._detectors[asset_id] = (bocpd_det, cusum_det)
+
+            # 4. Level escalation check (Category A)
+            from captain_offline.blocks.b2_level_escalation import check_level_escalation
+            cp_history = bocpd_det.cp_history if bocpd_det else []
+            check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
+
+            # 5. Kelly/EWMA parameter update (Category A)
+            from captain_offline.blocks.b8_kelly_update import run_kelly_update
+            run_kelly_update(outcome)
+
+            # NOTE: CB params (b8_cb_params) and TSM simulation are INTENTIONALLY
+            # SKIPPED here — they are Category B (account-specific) and must only
+            # learn from real trade outcomes in _handle_trade_outcome().
+
+        except Exception as e:
+            logger.error("Error processing signal outcome for %s: %s",
+                         asset_id, e, exc_info=True)
+
+        write_checkpoint("OFFLINE", "SIGNAL_OUTCOME_COMPLETE",
+                         "theoretical_processed", "waiting")
 
     def _handle_command(self, command: dict):
         """Process commands from Captain Command."""

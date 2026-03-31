@@ -641,6 +641,19 @@ TABLES = [
         ts TIMESTAMP
     ) timestamp(ts) PARTITION BY MONTH;
     """,
+
+    # =====================================================================
+    # p3_spread_history: AIM-12 trailing spread data for z-score
+    # Owner: Online B1 (feature computation)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_spread_history (
+        asset_id SYMBOL,
+        session_id INT,
+        spread DOUBLE,
+        timestamp TIMESTAMP
+    ) timestamp(timestamp) PARTITION BY MONTH;
+    """,
 ]
 
 

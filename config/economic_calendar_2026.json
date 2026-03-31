@@ -1,0 +1,654 @@
+{
+  "description": "2026 US Economic Calendar for Captain AIM-06",
+  "last_updated": "2026-03-30",
+  "events": [
+    {
+      "name": "NFP",
+      "date": "2026-01-02",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-01-14",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-01-27",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-01-29",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "GDP Advance",
+      "date": "2026-01-29",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-02-02",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-02-06",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-02-12",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-02-24",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-03-02",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-03-06",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-03-11",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-03-19",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-03-31",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-04-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-04-01",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "NFP",
+      "date": "2026-04-03",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-04-08",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "CPI",
+      "date": "2026-04-14",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-04-15",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-04-22",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-04-28",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "GDP Advance",
+      "date": "2026-04-29",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-04-29",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "NFP",
+      "date": "2026-05-01",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-05-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-05-06",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-05-07",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-05-13",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-05-13",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-05-20",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-05-26",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-05-27",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-06-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-06-03",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "NFP",
+      "date": "2026-06-05",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-06-10",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-06-10",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-06-17",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-06-18",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "EIA Petroleum",
+      "date": "2026-06-24",
+      "time": "10:30",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ENERGY",
+      "affected_assets": ["CL", "MCL"]
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-06-30",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-07-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-07-03",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-07-14",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-07-28",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "GDP Advance",
+      "date": "2026-07-29",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-07-30",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-08-03",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-08-07",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-08-12",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-08-25",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-09-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-09-04",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-09-10",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-09-17",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-09-29",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-10-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-10-02",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-10-13",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "GDP Advance",
+      "date": "2026-10-28",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-10-27",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-11-02",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-11-05",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-11-06",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-11-10",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-11-24",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "ISM Manufacturing",
+      "date": "2026-12-01",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 3,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "NFP",
+      "date": "2026-12-04",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "CPI",
+      "date": "2026-12-09",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "FOMC Rate Decision",
+      "date": "2026-12-17",
+      "time": "14:00",
+      "timezone": "America/New_York",
+      "tier": 1,
+      "scope": "ALL",
+      "affected_assets": []
+    },
+    {
+      "name": "Consumer Confidence",
+      "date": "2026-12-29",
+      "time": "10:00",
+      "timezone": "America/New_York",
+      "tier": 2,
+      "scope": "ALL",
+      "affected_assets": []
+    }
+  ]
+}

@@ -354,15 +354,12 @@ def _promote_to_active(asset_id: str, dry_run: bool = False) -> None:
         print(f"  [DRY-RUN] Would set {asset_id} captain_status=ACTIVE")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import update_d00_fields
 
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d00_asset_universe
-               (asset_id, captain_status, warm_up_progress, last_updated)
-               VALUES (%s, 'ACTIVE', 1.0, now())""",
-            (asset_id,),
-        )
+    update_d00_fields(asset_id, {
+        "captain_status": "ACTIVE",
+        "warm_up_progress": 1.0,
+    })
     print(f"  [OK] P3-D00: {asset_id} captain_status -> ACTIVE")
 
 

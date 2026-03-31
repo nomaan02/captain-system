@@ -39,14 +39,14 @@ RECOVERY_CONSECUTIVE = 10
 
 
 def _load_aim_states(asset_id: str) -> list[dict]:
-    """Load all AIM states for an asset from P3-D01."""
+    """Load latest AIM states for an asset from P3-D01."""
     with get_cursor() as cur:
         cur.execute(
             """SELECT aim_id, asset_id, status, model_object, warmup_progress,
                       current_modifier, last_retrained, missing_data_rate_30d
                FROM p3_d01_aim_model_states
                WHERE asset_id = %s
-               ORDER BY aim_id""",
+               ORDER BY aim_id, last_updated DESC""",
             (asset_id,),
         )
         rows = cur.fetchall()
@@ -101,20 +101,11 @@ def _update_warmup_progress(aim_id: int, asset_id: str, progress: float):
             (aim_id, asset_id, "WARM_UP", clamped),
         )
         # P3-D00: asset-level aim_warmup_progress (per spec requirement)
-        cur.execute(
-            """SELECT aim_warmup_progress FROM p3_d00_asset_universe
-               WHERE asset_id = %s ORDER BY last_updated DESC LIMIT 1""",
-            (asset_id,),
-        )
-        row = cur.fetchone()
-        existing = json.loads(row[0]) if row and row[0] else {}
+        from shared.questdb_client import read_d00_row, update_d00_fields
+        current = read_d00_row(asset_id, cur=cur)
+        existing = json.loads(current["aim_warmup_progress"]) if current and current.get("aim_warmup_progress") else {}
         existing[str(aim_id)] = clamped
-        cur.execute(
-            """INSERT INTO p3_d00_asset_universe
-               (asset_id, aim_warmup_progress, last_updated)
-               VALUES (%s, %s, now())""",
-            (asset_id, json.dumps(existing)),
-        )
+        update_d00_fields(asset_id, {"aim_warmup_progress": json.dumps(existing)}, cur=cur)
 
 
 def data_pipeline_connected(aim_id: int, asset_id: str) -> bool:

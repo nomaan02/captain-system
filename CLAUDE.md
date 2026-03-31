@@ -90,9 +90,10 @@ captain-system/
 |   |-- init_questdb.py        # Create QuestDB tables
 |   |-- init_sqlite.py         # Create SQLite journals
 |   |-- init_all.py            # Combined initialisation
+|   |-- bootstrap_production.py # Production data bootstrap (strategies, capital, AIM, CB)
+|   |-- seed_all_assets.py     # Full 17-asset seed from P1/P2 files
 |   |-- seed_test_asset.py     # Seed test data
-|   |-- verify_questdb.py      # Verify table state
-|   |-- paper_trader.py        # Paper trading mode
+|   |-- seed_system_params.py  # Seed D17 system parameters
 |   |-- ...
 |-- tests/                     # Test suite
 |   |-- test_pipeline_e2e.py   # Full pipeline end-to-end
@@ -230,28 +231,93 @@ These files are locked by spec. If a task requires changing them, STOP and ask N
 
 ---
 
+## Current System State (2026-03-27)
+
+**Status: DATA BOOTSTRAPPED -- ready for live session evaluation at NY open (09:30 ET).**
+
+All 28 blocks implemented. All 6 containers healthy. Data bootstrap complete:
+
+| Table | State | Details |
+|-------|-------|---------|
+| D00 (asset_universe) | 10 active, 1 P2-elim, 6 P1-elim | locked_strategy + specs populated for all 10 |
+| D01 (aim_model_states) | 270 rows | Tier 1 AIMs installed per asset |
+| D02 (aim_meta_weights) | 60 rows | Equal initial weights (6 AIMs x 10 assets) |
+| D05 (ewma_states) | 60 rows | Bootstrapped from P1 trade history |
+| D08 (tsm_state) | 1 account | 20319811 (150K Trading Combine) |
+| D12 (kelly_params) | 60 rows | Bootstrapped from P1 trade history |
+| D16 (capital_silos) | primary_user | $150K, account 20319811 linked, max 5 positions |
+| D25 (circuit_breaker) | 1 row | Cold-start (beta_b=0, layers 3-4 disabled) |
+
+**Active account:** 20319811 (TopstepX PRAC-V2-551001-43861321, $150K Trading Combine)
+**AUTO_EXECUTE:** true
+
+### Locked Strategies (from P2-D06)
+
+Each asset has its own (m,k) pair. **Never use a single pair for all assets.**
+
+| Asset | m | k | OO | Sessions |
+|-------|---|---|-----|----------|
+| ES | 7 | 33 | 0.8832 | NY |
+| MES | 7 | 32 | 0.8879 | NY |
+| NQ | 3 | 32 | 0.8242 | NY |
+| MNQ | 5 | 32 | 0.8236 | NY |
+| M2K | 5 | 32 | 0.9245 | NY |
+| MYM | 9 | 115 | 0.7705 | NY |
+| NKD | 6 | 6 | 0.8533 | APAC |
+| MGC | 2 | 29 | 0.8892 | NY |
+| ZB | 10 | 113 | 0.8054 | NY |
+| ZN | 4 | 37 | 0.9058 | NY |
+
+### Bootstrap Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/bootstrap_production.py` | Populates all 5 data gaps (D00 strategies/specs, D16 silo, D02 AIM weights, D25 CB). Run after init_all.py. |
+| `scripts/seed_all_assets.py` | Full 17-asset seed from P1/P2 data files (includes bootstrap runner). |
+| `scripts/init_all.py` | Phase 1 init: tables + params + test asset + user. |
+
+---
+
 ## P1/P2 Research Data
 
-P1 and P2 research pipelines are **not part of this repo**. They live in the original `most-production` repository at `C:\Users\nomaa\QuantConnect\most-production\`.
+P1/P2 pipelines live in the `most-production` repo (`C:\Users\nomaa\QuantConnect\most-production\`).
 
-- Per-asset locked strategies: `most-production/data/p2_outputs/{ASSET}/p2_d06_locked_strategy.json`
+- P2 locked strategies are ALSO copied to `data/p2_outputs/{ASSET}/p2_d06_locked_strategy.json` in this repo
+- P1 D-22 trade logs are at `data/p1_outputs/{ASSET}/d22_trade_log_{asset}.json`
 - Each of 10 surviving assets has its OWN best (m,k) pair from P2
 - **WARNING:** m=4,k=017 was the original single-asset ES-only run -- NEVER use it for all assets
-- P1/P2 datasets (D-00..D-24, P2-D00..P2-D09) are in QC Object Store (cloud-only)
 
-If Captain decay detection (Level 3) triggers a P1/P2 rerun, refer to the `most-production` repo CLAUDE.md for those pipelines.
+If Captain decay detection (Level 3) triggers a P1/P2 rerun, refer to the `most-production` repo CLAUDE.md.
 
 ---
 
 ## Dev Setup
 
-See `DEVELOPER_WORKFLOW.md` for full development environment setup instructions (if available).
-
 Quick start:
 1. Copy `.env.template` to `.env` and fill in credentials
 2. Run `bash captain-start.sh --build` (WSL 2 required)
-3. Access GUI at `http://localhost:80`
-4. Access QuestDB console at `http://localhost:9000`
+3. Run `bootstrap_production.py` inside captain-command container (see Bootstrap Scripts above)
+4. Access GUI at `http://localhost:80`
+5. Access QuestDB console at `http://localhost:9000`
+
+---
+
+## Running Tests
+
+Tests run on the host (not inside containers). Some tests need container-only deps (pysignalr, numpy).
+
+```bash
+# Block-level unit tests (64 tests, no container deps needed)
+PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
+  python3 -B -m pytest tests/ \
+  --ignore=tests/test_integration_e2e.py \
+  --ignore=tests/test_pipeline_e2e.py \
+  --ignore=tests/test_pseudotrader_account.py \
+  --ignore=tests/test_offline_feedback.py \
+  --ignore=tests/test_stress.py \
+  --ignore=tests/test_account_lifecycle.py \
+  -v
+```
 
 ---
 

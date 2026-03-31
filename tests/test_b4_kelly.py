@@ -75,7 +75,7 @@ class TestSiloDrawdownBlocked:
 class TestMddConstraintBinding:
     """Scenario 9: MDD constraint limits contracts."""
 
-    def test_mdd_caps_to_one(self):
+    def test_mdd_caps_to_zero(self):
         tsm = make_tsm_mdd_tight("acc_eval_1")  # remaining=$200, SL*pv=$200 -> 1
         result = run_kelly_sizing(
             active_assets=["ES"],
@@ -94,7 +94,7 @@ class TestMddConstraintBinding:
 
         contracts = result["final_contracts"]["ES"]["acc_eval_1"]
         # MDD remaining=$200, budget_divisor=20 -> daily=$10, risk_per=$200 -> max_by_mdd=0
-        # This is correct: tight MDD correctly limits to 0 contracts
+        # Tight MDD correctly limits to 0 contracts
         assert contracts == 0
 
 
