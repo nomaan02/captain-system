@@ -38,7 +38,7 @@ logs/crash_reports/*
 !logs/incidents/.gitkeep
 !logs/crash_reports/.gitkeep
 
-# Data (external files, not tracked)
+# Data (external market data, not tracked)
 data/market/
 data/vix/
 data/macro/
@@ -46,8 +46,9 @@ data/options/
 data/cot/
 data/calendar/
 data/roll_calendar/
-data/p1_outputs/
-data/p2_outputs/
+# P1/P2 outputs ARE tracked — required for Kelly/EWMA bootstrap on all instances
+# data/p1_outputs/
+# data/p2_outputs/
 
 # TSM validated copies (auto-generated)
 config/tsm/validated/

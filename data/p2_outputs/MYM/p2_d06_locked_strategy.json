@@ -1,0 +1,25 @@
+{
+  "asset": "MYM",
+  "m": 9,
+  "k": 115,
+  "threshold": 65.873016,
+  "regime_method": 1,
+  "regime_class": "REGIME_NEUTRAL",
+  "composite_score": 4.7339538578443445,
+  "dominant_regime": "HIGH",
+  "OO": 0.7704770232773109,
+  "complexity_tier": "C1",
+  "prediction_model_ref": {
+    "asset": "MYM",
+    "complexity_tier": "C4",
+    "model_type": "BINARY_ONLY",
+    "model_object": null,
+    "feature_list": [],
+    "training_period": "2009-01-01 to 2020-12-31",
+    "n_training_obs": 0,
+    "best_hyperparams": null,
+    "cv_score": 0.0,
+    "pettersson_threshold": null
+  },
+  "timestamp": "2026-03-21T11:39:32.078329"
+}

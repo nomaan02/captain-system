@@ -1,0 +1,10 @@
+{
+  "asset": "ZN",
+  "accuracy_OOS": 0.0,
+  "precision_OOS": 0.0,
+  "recall_OOS": 0.0,
+  "f1_OOS": 0.0,
+  "confidence_flag": "NO_CLASSIFIER",
+  "model_type": "BINARY_ONLY",
+  "complexity_tier": "C1"
+}

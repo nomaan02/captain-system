@@ -1,0 +1,25 @@
+{
+  "asset": "ZT",
+  "m": 1,
+  "k": 25,
+  "threshold": 28.992753712173908,
+  "regime_method": 1,
+  "regime_class": "REGIME_NEUTRAL",
+  "composite_score": 2.1769313587610855,
+  "dominant_regime": "HIGH",
+  "OO": 0.36583130973215894,
+  "complexity_tier": "C1",
+  "prediction_model_ref": {
+    "asset": "ZT",
+    "complexity_tier": "C4",
+    "model_type": "BINARY_ONLY",
+    "model_object": null,
+    "feature_list": [],
+    "training_period": "2009-01-01 to 2020-12-31",
+    "n_training_obs": 0,
+    "best_hyperparams": null,
+    "cv_score": 0.0,
+    "pettersson_threshold": null
+  },
+  "timestamp": "2026-03-21T11:50:06.802107"
+}

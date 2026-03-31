@@ -1,0 +1,25 @@
+{
+  "asset": "NKD",
+  "m": 6,
+  "k": 6,
+  "threshold": 0.174242,
+  "regime_method": 1,
+  "regime_class": "REGIME_NEUTRAL",
+  "composite_score": 5.358762722671273,
+  "dominant_regime": "HIGH",
+  "OO": 0.8532523840978928,
+  "complexity_tier": "C1",
+  "prediction_model_ref": {
+    "asset": "NKD",
+    "complexity_tier": "C4",
+    "model_type": "BINARY_ONLY",
+    "model_object": null,
+    "feature_list": [],
+    "training_period": "2009-01-01 to 2020-12-31",
+    "n_training_obs": 0,
+    "best_hyperparams": null,
+    "cv_score": 0.0,
+    "pettersson_threshold": null
+  },
+  "timestamp": "2026-03-22T14:24:04.853439"
+}

@@ -1,0 +1,25 @@
+{
+  "asset": "MNQ",
+  "m": 5,
+  "k": 32,
+  "threshold": -0.03150486330935251,
+  "regime_method": 1,
+  "regime_class": "REGIME_NEUTRAL",
+  "composite_score": 5.221783357256825,
+  "dominant_regime": "HIGH",
+  "OO": 0.8235784609535818,
+  "complexity_tier": "C1",
+  "prediction_model_ref": {
+    "asset": "MNQ",
+    "complexity_tier": "C4",
+    "model_type": "BINARY_ONLY",
+    "model_object": null,
+    "feature_list": [],
+    "training_period": "2009-01-01 to 2020-12-31",
+    "n_training_obs": 0,
+    "best_hyperparams": null,
+    "cv_score": 0.0,
+    "pettersson_threshold": null
+  },
+  "timestamp": "2026-03-21T11:36:49.776883"
+}
