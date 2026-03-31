@@ -6,7 +6,7 @@ const PIPELINE_STAGES = [
   { id: "B3", label: "AIM Score" },
   { id: "B4", label: "Kelly Size" },
   { id: "B5", label: "Selection" },
-  { id: "B5C", label: "Compliance" },
+  { id: "B5C", label: "Circuit Brk" },
   { id: "B6", label: "Signal" },
 ];
 
@@ -36,27 +36,42 @@ const PipelineStepper = () => {
   const status = useReplayStore((s) => s.status);
 
   const getStageStatus = (stageId) => {
+    // B1 is complete if B1 or B1_AUTH has data
+    if (stageId === "B1" && (pipelineStages.B1 || pipelineStages.B1_AUTH)) return "complete";
     const stage = pipelineStages[stageId];
-    if (!stage) {
-      if (status === "idle") return "pending";
-      // If replay is running but this stage has no data yet, it's pending
-      return "pending";
-    }
+    if (!stage) return status === "running" ? "pending" : "pending";
     return stage.status || "complete";
   };
 
-  return (
-    <div data-testid="pipeline-stepper" className="px-3 py-2">
-      <div className="text-[9px] uppercase tracking-[1px] text-[#0faf7a] font-mono mb-2">Pipeline</div>
+  const getStageSummary = (stageId) => {
+    const stage = pipelineStages[stageId];
+    if (!stage) return null;
+    if (stage.summary) return stage.summary;
+    // Generate summary from data
+    const d = stage.data;
+    if (!d) return "Done";
+    if (stageId === "B1" || stageId === "B1_AUTH") return `${d.contracts_resolved || d.strategies_loaded || "?"} assets`;
+    if (stageId === "B4") return `${d.contracts ?? "?"} cts`;
+    if (stageId === "B5") {
+      const sel = d.selected?.length ?? d.trades_taken ?? "?";
+      const exc = d.excluded?.length ?? "0";
+      return `${sel} taken, ${exc} excl`;
+    }
+    return "Done";
+  };
 
-      {/* Horizontal stepper */}
-      <div className="flex items-start gap-0 overflow-x-auto">
+  return (
+    <div data-testid="pipeline-stepper" className="px-4 py-3">
+      <div className="text-[11px] uppercase tracking-[1px] text-[#0faf7a] font-mono mb-3 text-center">Pipeline</div>
+
+      {/* Horizontal stepper — enlarged 50% */}
+      <div className="flex items-start justify-center gap-0">
         {PIPELINE_STAGES.map((stage, idx) => {
           const stageStatus = getStageStatus(stage.id);
-          const styles = STATUS_STYLES[stageStatus];
+          const styles = STATUS_STYLES[stageStatus] || STATUS_STYLES.pending;
           const isExpanded = expandedStage === stage.id;
-          const hasData = !!pipelineStages[stage.id];
-          const summary = pipelineStages[stage.id]?.summary;
+          const hasData = !!pipelineStages[stage.id] || (stage.id === "B1" && pipelineStages.B1_AUTH);
+          const summary = getStageSummary(stage.id);
 
           return (
             <div key={stage.id} className="flex items-start">
@@ -64,23 +79,27 @@ const PipelineStepper = () => {
               <button
                 data-testid={`pipeline-stage-${stage.id}`}
                 data-status={stageStatus}
-                onClick={() => hasData && setExpandedStage(stage.id)}
-                className={`flex flex-col items-center gap-[3px] px-[6px] py-1 border-none bg-transparent cursor-pointer min-w-[48px] ${
-                  hasData ? "hover:bg-[rgba(255,255,255,0.03)]" : "cursor-default"
-                } ${isExpanded ? "bg-[rgba(6,182,212,0.08)]" : ""}`}
+                onClick={() => setExpandedStage(stage.id)}
+                className={`flex flex-col items-center gap-[4px] px-[10px] py-2 border-none bg-transparent cursor-pointer min-w-[72px] transition-colors ${
+                  hasData ? "hover:bg-[rgba(255,255,255,0.05)]" : ""
+                } ${isExpanded ? "bg-[rgba(6,182,212,0.1)]" : ""}`}
               >
                 {/* Circle indicator */}
-                <div className={`w-[10px] h-[10px] rounded-full border border-solid ${styles.circle}`} />
+                <div className={`w-[14px] h-[14px] rounded-full border-[1.5px] border-solid ${styles.circle}`}>
+                  {stageStatus === "complete" && (
+                    <div className="w-full h-full flex items-center justify-center text-[8px] text-[#10b981]">&#10003;</div>
+                  )}
+                </div>
                 {/* Label */}
-                <div className={`text-[7px] font-mono leading-[9px] tracking-[0.4px] ${styles.text}`}>
+                <div className={`text-[10px] font-mono font-semibold leading-[13px] tracking-[0.5px] ${styles.text}`}>
                   {stage.id}
                 </div>
-                <div className={`text-[6px] font-mono leading-[8px] ${styles.text} opacity-70`}>
+                <div className={`text-[8px] font-mono leading-[10px] ${styles.text} opacity-80`}>
                   {stage.label}
                 </div>
                 {/* One-line summary */}
                 {summary && (
-                  <div className="text-[6px] font-mono leading-[8px] text-[#94a3b8] max-w-[60px] truncate">
+                  <div className="text-[8px] font-mono leading-[10px] text-[#94a3b8] max-w-[80px] truncate">
                     {summary}
                   </div>
                 )}
@@ -88,8 +107,8 @@ const PipelineStepper = () => {
 
               {/* Connector line */}
               {idx < PIPELINE_STAGES.length - 1 && (
-                <div className="flex items-center pt-[6px]">
-                  <div className={`w-[8px] h-[1px] ${
+                <div className="flex items-center pt-[9px]">
+                  <div className={`w-[12px] h-[2px] ${
                     getStageStatus(PIPELINE_STAGES[idx + 1].id) !== "pending"
                       ? "bg-[#10b981]"
                       : "bg-[#374151]"

@@ -136,11 +136,22 @@ const useReplayStore = create((set, get) => ({
             },
             assetOrder: state.assetOrder.includes(asset) ? state.assetOrder : [...state.assetOrder, asset],
           });
+        } else if (event === "replay_complete") {
+          // replay_complete arrives as type:"replay_tick" event:"replay_complete"
+          set({
+            status: "complete",
+            summary: payload.summary || payload,
+            progress: 100,
+            pipelineStages: { ...state.pipelineStages, B6: { status: "complete", summary: "Done" } },
+          });
+        } else if (event === "error") {
+          set({ status: "complete", summary: { error: payload.error || "Unknown error" } });
         }
         break;
       }
       case "replay_complete":
-        set({ status: "complete", summary: data.summary || data.data, progress: 100 });
+        // Fallback for direct type:"replay_complete" messages
+        set({ status: "complete", summary: payload.summary || payload, progress: 100 });
         break;
       case "replay_error":
         set({ status: "complete", summary: { error: data.error || data.message } });

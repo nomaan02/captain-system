@@ -974,6 +974,8 @@ def run_replay(
             "direction_str": result["direction_str"],
             "entry_price": result["entry_price"],
             "breakout_time": result.get("breakout_time"),
+            "tp_level": result.get("tp_level"),
+            "sl_level": result.get("sl_level"),
         })
 
         # Emit exit

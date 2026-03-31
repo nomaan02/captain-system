@@ -13,18 +13,27 @@ const ReplaySummary = () => {
   const isComplete = status === "complete";
   const hasError = summary?.error;
 
+  // Helper to get actual PnL for a trade (pnl_per_contract * contracts)
+  const getTradePnl = (ar) => {
+    const ppc = ar?.exitResult?.pnl_per_contract ?? ar?.exitResult?.pnl ?? 0;
+    const cts = ar?.sizing?.contracts ?? 0;
+    return ppc * cts;
+  };
+
   // Compute stats from asset results
   const trades = assetOrder
     .map((a) => ({ asset: a, ...assetResults[a] }))
-    .filter((t) => t.status === "exited" || t.exitResult);
+    .filter((t) => (t.sizing?.contracts ?? 0) > 0 && (t.exitResult || t.status === "exited"));
 
-  const wins = trades.filter((t) => (t.exitResult?.pnl ?? 0) >= 0);
-  const losses = trades.filter((t) => (t.exitResult?.pnl ?? 0) < 0);
-  const blockedCount = assetOrder.filter((a) => assetResults[a]?.status === "blocked").length;
+  const wins = trades.filter((t) => getTradePnl(t) >= 0);
+  const losses = trades.filter((t) => getTradePnl(t) < 0);
+  const blockedCount = assetOrder.filter((a) => (assetResults[a]?.sizing?.contracts ?? 0) === 0 && assetResults[a]?.exitResult).length;
   const errorCount = assetOrder.filter((a) => assetResults[a]?.status === "error").length;
-  const totalPnl = trades.reduce((sum, t) => sum + (t.exitResult?.pnl ?? 0), 0);
 
-  const tradesSorted = [...trades].sort((a, b) => (b.exitResult?.pnl ?? 0) - (a.exitResult?.pnl ?? 0));
+  // Use summary.total_pnl if available (from replay_complete), else compute
+  const totalPnl = summary?.total_pnl ?? trades.reduce((sum, t) => sum + getTradePnl(t), 0);
+
+  const tradesSorted = [...trades].sort((a, b) => getTradePnl(b) - getTradePnl(a));
 
   const handleSave = async () => {
     if (!replayId) return;
@@ -140,8 +149,8 @@ const ReplaySummary = () => {
           <div className="text-[8px] uppercase tracking-[0.5px] text-[#64748b] font-mono mb-1">All Trades</div>
           <div className="max-h-[160px] overflow-y-auto">
             {tradesSorted.map((t) => {
-              const pnl = t.exitResult?.pnl ?? 0;
-              const reason = t.exitResult?.reason || t.exitResult?.exit_reason || "--";
+              const pnl = getTradePnl(t);
+              const reason = t.exitResult?.exit_reason || t.exitResult?.reason || "--";
               return (
                 <div key={t.asset} className="flex items-center justify-between py-[2px] text-[9px] font-mono border-b border-[#1e293b]">
                   <div className="flex items-center gap-2">
