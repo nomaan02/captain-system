@@ -5,11 +5,12 @@ except ImportError:
     pass
 # endregion
 """
-QuestDB Schema Initialization — 28 tables for Captain Function (Program 3).
+QuestDB Schema Initialization — 30 tables for Captain Function (Program 3).
 
 23 original tables (P3-D00 through P3-D22, excluding D20 = SQLite WAL)
 + 3 V3 tables (P3-D23, P3-D25, P3-D26)
 + 2 auxiliary tables (p3_session_event_log, p3_d28_account_lifecycle)
++ 2 replay tables (p3_replay_results, p3_replay_presets)
 
 Run this script after QuestDB container is healthy to create all tables.
 Usage: python scripts/init_questdb.py
@@ -654,11 +655,44 @@ TABLES = [
         timestamp TIMESTAMP
     ) timestamp(timestamp) PARTITION BY MONTH;
     """,
+
+    # =====================================================================
+    # p3_replay_results: Signal replay analysis results
+    # Owner: Command (replay engine)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_replay_results (
+        replay_id STRING,
+        user_id SYMBOL,
+        replay_date STRING,
+        session_type SYMBOL,
+        config STRING,
+        results STRING,
+        summary STRING,
+        comparison STRING,
+        created TIMESTAMP,
+        ts TIMESTAMP
+    ) timestamp(ts) PARTITION BY MONTH;
+    """,
+
+    # =====================================================================
+    # p3_replay_presets: Saved replay configuration presets
+    # Owner: Command (replay engine)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_replay_presets (
+        preset_id STRING,
+        user_id SYMBOL,
+        name STRING,
+        config STRING,
+        ts TIMESTAMP
+    ) timestamp(ts) PARTITION BY YEAR;
+    """,
 ]
 
 
 def init_questdb():
-    """Create all 29 QuestDB tables (D00-D22 excl D20, plus D23, D25, D26, D27, D28, session_event_log, job_queue)."""
+    """Create all 31 QuestDB tables (D00-D22 excl D20, plus D23, D25, D26, D27, D28, session_event_log, job_queue, spread_history, replay_results, replay_presets)."""
     with get_cursor() as cur:
         created = 0
         for i, ddl in enumerate(TABLES):
@@ -677,7 +711,7 @@ def init_questdb():
 if __name__ == "__main__":
     print("=" * 60)
     print("CAPTAIN FUNCTION — QuestDB Schema Initialization")
-    print("28 tables (23 original + 3 V3 + 2 auxiliary)")
+    print("30 tables (23 original + 3 V3 + 2 auxiliary + 2 replay)")
     print("=" * 60)
     success = init_questdb()
     sys.exit(0 if success else 1)
