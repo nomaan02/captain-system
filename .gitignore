@@ -17,6 +17,12 @@ __pycache__/
 *.pyc
 .env
 
+# Claude Code local config
+.claude/
+
+# Windows/WSL metadata
+*:Zone.Identifier
+
 # Node
 node_modules/
 

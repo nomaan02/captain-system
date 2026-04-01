@@ -11,7 +11,7 @@ const STATUS_CONFIG = {
   loading: { label: "LOADING", bg: "bg-[rgba(100,116,139,0.05)]", border: "border-[#1e293b]", badge: "text-[#64748b]" },
 };
 
-const AssetCard = ({ asset, data }) => {
+const AssetCard = ({ asset, data, aimModifier }) => {
   const status = data?.status || "loading";
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.loading;
 
@@ -52,6 +52,15 @@ const AssetCard = ({ asset, data }) => {
           {orResult?.session && (
             <span className="px-1 py-[1px] text-[6px] leading-[9px] border border-solid border-[#374151] text-[#64748b] uppercase">
               {orResult.session}
+            </span>
+          )}
+          {aimModifier != null && aimModifier !== 1.0 && (
+            <span className={`px-1 py-[1px] text-[7px] leading-[10px] border border-solid ${
+              aimModifier > 1.0
+                ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
+                : "bg-[rgba(239,68,68,0.15)] border-[rgba(239,68,68,0.3)] text-[#ef4444]"
+            }`}>
+              AIM {aimModifier.toFixed(2)}x
             </span>
           )}
         </div>
@@ -138,6 +147,7 @@ const AssetCard = ({ asset, data }) => {
 AssetCard.propTypes = {
   asset: PropTypes.string.isRequired,
   data: PropTypes.object,
+  aimModifier: PropTypes.number,
 };
 
 export default AssetCard;

@@ -22,7 +22,7 @@ import pytest
 
 # Online blocks
 from captain_online.blocks.b2_regime_probability import run_regime_probability
-from captain_online.blocks.b3_aim_aggregation import run_aim_aggregation
+from shared.aim_compute import run_aim_aggregation
 from captain_online.blocks.b4_kelly_sizing import run_kelly_sizing
 from captain_online.blocks.b5_trade_selection import run_trade_selection
 from captain_online.blocks.b5b_quality_gate import run_quality_gate
@@ -240,7 +240,7 @@ class TestTwoDayLifecycle:
     @patch("captain_online.blocks.b5b_quality_gate._log_quality_results")
     @patch("captain_online.blocks.b5_trade_selection._load_correlation_matrix", return_value={})
     @patch("captain_online.blocks.b5_trade_selection._get_correlation", return_value=0.0)
-    @patch("captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+    @patch("shared.aim_compute.compute_aim_modifier",
            side_effect=_mock_compute_aim_modifier)
     @patch("captain_online.blocks.b6_signal_output._publish_signals")
     @patch("captain_online.blocks.b6_signal_output._log_signal_output")

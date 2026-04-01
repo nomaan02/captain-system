@@ -21,6 +21,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.questdb_client import get_cursor
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Our 10 active assets and their session types + OR minutes from locked strategies
 ASSET_CONFIG = {
     "ES":  {"session": "NY", "or_min": 7},
@@ -37,7 +39,7 @@ ASSET_CONFIG = {
 
 DATA_DIR = os.environ.get(
     "QC_OR_VOLUME_DIR",
-    "/home/nomaan/captain-system-data-extracts/or_volume_data",
+    os.path.join(_REPO_ROOT, "data", "seed", "or_volume_data"),
 )
 
 

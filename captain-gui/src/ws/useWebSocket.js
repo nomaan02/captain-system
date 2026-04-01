@@ -13,6 +13,7 @@ export default function useWebSocket(userId = "primary_user") {
   const wsRef = useRef(null);
   const retryCount = useRef(0);
   const retryTimer = useRef(null);
+  const mountedRef = useRef(true);
 
   const {
     setConnected,
@@ -32,6 +33,7 @@ export default function useWebSocket(userId = "primary_user") {
   }, [userId]);
 
   const connect = useCallback(() => {
+    if (!mountedRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const ws = new WebSocket(getWsUrl());
@@ -46,8 +48,9 @@ export default function useWebSocket(userId = "primary_user") {
       setConnected(false);
       wsRef.current = null;
 
-      // Don't reconnect if evicted
+      // Don't reconnect if evicted or unmounted
       if (event.code === EVICTION_CODE) return;
+      if (!mountedRef.current) return;
 
       // Exponential backoff
       const delay = Math.min(BASE_DELAY * Math.pow(2, retryCount.current), MAX_DELAY);
@@ -168,8 +171,10 @@ export default function useWebSocket(userId = "primary_user") {
   }, [userId]);
 
   useEffect(() => {
+    mountedRef.current = true;
     connect();
     return () => {
+      mountedRef.current = false;
       if (retryTimer.current) clearTimeout(retryTimer.current);
       if (wsRef.current) wsRef.current.close();
     };

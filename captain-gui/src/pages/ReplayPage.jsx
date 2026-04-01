@@ -48,6 +48,7 @@ const ReplayPage = () => {
 
   const assetOrder = useReplayStore((s) => s.assetOrder);
   const assetResults = useReplayStore((s) => s.assetResults);
+  const combinedModifier = useReplayStore((s) => s.combinedModifier);
   const expandedStage = useReplayStore((s) => s.expandedStage);
   const status = useReplayStore((s) => s.status);
 
@@ -107,7 +108,7 @@ const ReplayPage = () => {
               <div data-testid="asset-card-grid" className="grid grid-cols-2 gap-2">
                 {assetOrder.map((asset) => (
                   <ErrorBoundary key={asset} name={`AssetCard-${asset}`}>
-                    <AssetCard asset={asset} data={assetResults[asset]} />
+                    <AssetCard asset={asset} data={assetResults[asset]} aimModifier={combinedModifier[asset]} />
                   </ErrorBoundary>
                 ))}
               </div>

@@ -18,7 +18,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from captain_online.blocks.b2_regime_probability import run_regime_probability
-from captain_online.blocks.b3_aim_aggregation import run_aim_aggregation
+from shared.aim_compute import run_aim_aggregation
 from captain_online.blocks.b4_kelly_sizing import run_kelly_sizing
 from captain_online.blocks.b5c_circuit_breaker import (
     run_circuit_breaker_screen, _layer5_session_halt,

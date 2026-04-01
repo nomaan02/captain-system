@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from captain_online.blocks.b3_aim_aggregation import (
+from shared.aim_compute import (
     run_aim_aggregation, MODIFIER_FLOOR, MODIFIER_CEILING,
 )
 from tests.fixtures.synthetic_data import make_features
@@ -47,7 +47,7 @@ class TestAllAimsActive:
     """Scenario 4: All Tier-1 AIMs active with known modifiers."""
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_combined_modifier_in_bounds(self, mock_cam):
@@ -64,7 +64,7 @@ class TestAllAimsActive:
         assert "ES" in result["aim_breakdown"]
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_weighted_average_correctness(self, mock_cam):
@@ -113,7 +113,7 @@ class TestMixedActiveAims:
     """Scenario 6: Mix of ACTIVE and SUPPRESSED AIMs."""
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_only_active_contribute(self, mock_cam):
@@ -160,7 +160,7 @@ class TestColdStartFewActiveAims:
     """
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_two_aims_active_combined_reasonable(self, mock_cam):
@@ -178,7 +178,7 @@ class TestColdStartFewActiveAims:
         assert abs(cm - expected) < 0.01
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_three_aims_active_combined_in_bounds(self, mock_cam):
@@ -195,7 +195,7 @@ class TestColdStartFewActiveAims:
         assert abs(cm - expected) < 0.01
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
         side_effect=_mock_compute_aim_modifier,
     )
     def test_few_aims_breakdown_only_contains_active(self, mock_cam):
@@ -264,7 +264,7 @@ class TestColdStartSingleExtremeAim:
     """
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
     )
     def test_single_aim_extreme_low(self, mock_cam):
         """One AIM returns 0.65 (IVTS severe backwardation) → dominates at 0.65."""
@@ -279,7 +279,7 @@ class TestColdStartSingleExtremeAim:
         assert cm == 0.65  # Single AIM, 100% weight → its modifier is the combined
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
     )
     def test_single_aim_extreme_high(self, mock_cam):
         """One AIM returns 1.45 → dominates at 1.45 (within ceiling 1.5)."""
@@ -294,7 +294,7 @@ class TestColdStartSingleExtremeAim:
         assert cm == 1.45
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
     )
     def test_single_aim_beyond_ceiling_clamped(self, mock_cam):
         """One AIM returns 1.80 → clamped to ceiling 1.5."""
@@ -309,7 +309,7 @@ class TestColdStartSingleExtremeAim:
         assert cm == MODIFIER_CEILING  # 1.5
 
     @patch(
-        "captain_online.blocks.b3_aim_aggregation.compute_aim_modifier",
+        "shared.aim_compute.compute_aim_modifier",
     )
     def test_single_aim_below_floor_clamped(self, mock_cam):
         """One AIM returns 0.30 → clamped to floor 0.5."""

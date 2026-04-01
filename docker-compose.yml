@@ -1,6 +1,12 @@
 services:
   questdb:
-    image: questdb/questdb:latest
+    # PINNED — never use :latest. QuestDB major version upgrades can silently
+    # wipe data by changing the on-disk storage format. To upgrade:
+    #   1. Back up questdb/db/  (tar czf backup.tar.gz questdb/db/)
+    #   2. Change the tag below
+    #   3. docker compose up -d --build
+    #   4. Verify tables: SELECT count() FROM p3_d00_asset_universe
+    image: questdb/questdb@sha256:e3643adc18f68bc02f3074c841d3f765f6c299443f8e4ca57b3bcac1a05e224d
     ports:
       - "127.0.0.1:9000:9000"    # Web console (ADMIN only)
       - "127.0.0.1:8812:8812"    # PostgreSQL wire protocol

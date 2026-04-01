@@ -37,36 +37,94 @@ const B2Detail = () => (
   </div>
 );
 
-// B3: AIM — all 1.0x modifier for now
-const B3Detail = () => (
-  <div className="p-2 space-y-1 text-[9px] font-mono">
-    <div className="text-[#f59e0b] mb-1">Combined AIM modifier: 1.0x (cold-start)</div>
-    <div className="text-[#64748b]">6 Tier 1 AIMs active with equal inclusion probability (0.167 each). All current_modifier = 0.0 (initial). No sizing adjustment applied.</div>
-    <table className="w-full border-collapse mt-2">
-      <thead>
-        <tr>
-          <TableHeader>AIM</TableHeader>
-          <TableHeader>Name</TableHeader>
-          <TableHeader>Modifier</TableHeader>
-          <TableHeader>Vote</TableHeader>
-        </tr>
-      </thead>
-      <tbody>
-        {[
-          [4, "Trend Strength"], [6, "Mean Reversion"], [8, "Momentum Quality"],
-          [11, "Vol Regime"], [12, "Correlation"], [15, "Micro Regime"],
-        ].map(([id, name]) => (
-          <tr key={id}>
-            <TableCell className="text-[#06b6d4]">{id}</TableCell>
-            <TableCell>{name}</TableCell>
-            <TableCell>1.0000</TableCell>
-            <TableCell><span className="text-[#64748b]">&mdash;</span></TableCell>
-          </tr>
+const AIM_NAMES = {
+  1: "VRP", 2: "Skew", 3: "GEX", 4: "IVTS", 5: "Deferred",
+  6: "Calendar", 7: "COT", 8: "Correlation", 9: "Momentum",
+  10: "Calendar Fx", 11: "Regime Warn", 12: "Dyn Costs",
+  13: "Sensitivity", 14: "Expansion", 15: "Volume", 16: "HMM",
+};
+
+const modColor = (v) => {
+  if (v == null) return "text-[#64748b]";
+  if (v > 1.0) return "text-[#10b981]";
+  if (v < 1.0) return "text-[#ef4444]";
+  return "text-[#e2e8f0]";
+};
+
+// B3: AIM — dynamic when scored, static fallback
+const B3Detail = () => {
+  const aimBreakdown = useReplayStore((s) => s.aimBreakdown);
+  const combinedModifier = useReplayStore((s) => s.combinedModifier);
+  const aimEnabled = useReplayStore((s) => s.config.aimEnabled);
+
+  if (!aimEnabled) {
+    return (
+      <div className="p-2 space-y-1 text-[9px] font-mono">
+        <div className="text-[#64748b]">AIM scoring disabled. All modifiers = 1.0x (pure Kelly).</div>
+      </div>
+    );
+  }
+
+  const assets = Object.keys(aimBreakdown);
+  if (assets.length === 0) {
+    return (
+      <div className="p-2 space-y-1 text-[9px] font-mono">
+        <div className="text-[#f59e0b]">AIM scoring enabled. Waiting for results...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-2 space-y-3 text-[9px] font-mono">
+      {/* Per-asset combined modifier */}
+      <div className="flex flex-wrap gap-3 mb-1">
+        {Object.entries(combinedModifier).map(([asset, mod]) => (
+          <div key={asset} className="flex items-center gap-1">
+            <span className="text-[#06b6d4]">{asset}</span>
+            <span className={modColor(mod)}>{mod?.toFixed(3) ?? "--"}x</span>
+          </div>
         ))}
-      </tbody>
-    </table>
-  </div>
-);
+      </div>
+
+      {/* Breakdown table for first asset with data */}
+      {assets.map((asset) => {
+        const breakdown = aimBreakdown[asset];
+        if (!breakdown || Object.keys(breakdown).length === 0) return null;
+        return (
+          <div key={asset}>
+            <div className="text-[#06b6d4] mb-1">{asset} AIM Breakdown</div>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <TableHeader>AIM</TableHeader>
+                  <TableHeader>Name</TableHeader>
+                  <TableHeader>Modifier</TableHeader>
+                  <TableHeader>Conf</TableHeader>
+                  <TableHeader>Weight</TableHeader>
+                  <TableHeader>Reason</TableHeader>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(breakdown)
+                  .sort(([a], [b]) => Number(a) - Number(b))
+                  .map(([aimId, info]) => (
+                    <tr key={aimId}>
+                      <TableCell className="text-[#06b6d4]">{String(aimId).padStart(2, "0")}</TableCell>
+                      <TableCell>{AIM_NAMES[Number(aimId)] || `AIM-${aimId}`}</TableCell>
+                      <TableCell className={modColor(info.modifier)}>{info.modifier?.toFixed(4) ?? "--"}</TableCell>
+                      <TableCell>{info.confidence?.toFixed(2) ?? "--"}</TableCell>
+                      <TableCell>{info.dma_weight?.toFixed(3) ?? "--"}</TableCell>
+                      <TableCell className="text-[#94a3b8] max-w-[120px] truncate">{info.reason_tag || "--"}</TableCell>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 // B4: Show accumulated sizing results from assetResults
 const B4Detail = () => {

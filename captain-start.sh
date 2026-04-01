@@ -197,7 +197,65 @@ cur.close(); conn.close()
     fi
 fi
 
-# ── Step 6b: Update VIX/VXV daily close CSVs ─────────────────────────────────
+# ── Step 6b: Data Integrity Check ────────────────────────────────────────
+info "Verifying QuestDB data integrity..."
+COMPOSE_CMD="docker compose $COMPOSE_FILES"
+DATA_OK=true
+$COMPOSE_CMD exec -T -e PYTHONPATH=/app captain-offline python -c "
+import psycopg2, os, sys
+conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user='admin', password='quest', dbname='qdb')
+conn.autocommit = True
+cur = conn.cursor()
+critical = {
+    'p3_d00_asset_universe': 10,
+    'p3_d01_aim_model_states': 50,
+    'p3_d02_aim_meta_weights': 50,
+    'p3_d12_kelly_parameters': 10,
+    'p3_d16_user_capital_silos': 1
+}
+empty = []
+for table, min_rows in critical.items():
+    try:
+        cur.execute(f'SELECT count() FROM {table}')
+        count = cur.fetchone()[0]
+        if count < min_rows:
+            empty.append(f'{table}: {count} rows (expected >= {min_rows})')
+    except Exception as e:
+        empty.append(f'{table}: MISSING ({e})')
+cur.close(); conn.close()
+if empty:
+    print('INTEGRITY_FAIL')
+    for e in empty:
+        print(f'  EMPTY: {e}')
+    sys.exit(1)
+else:
+    print('INTEGRITY_OK')
+" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+
+if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+    DATA_OK=false
+    err ""
+    err "DATA INTEGRITY CHECK FAILED — critical tables are empty or missing."
+    err "This usually means QuestDB data was wiped (version upgrade or crash)."
+    err ""
+    if ls "$BACKUP_DIR"/questdb-*.tar.gz >/dev/null 2>&1; then
+        latest_backup=$(ls -t "$BACKUP_DIR"/questdb-*.tar.gz | head -1)
+        err "A backup was just created: $latest_backup"
+        err "To restore:"
+        err "  1. docker compose $COMPOSE_FILES down"
+        err "  2. rm -rf questdb/db/*"
+        err "  3. tar xzf $latest_backup -C $CAPTAIN_DIR"
+        err "  4. docker compose $COMPOSE_FILES up -d"
+        err "  5. Re-run: bash captain-start.sh"
+    else
+        err "No backups found. Run bootstrap_production.py to re-seed."
+    fi
+    err ""
+    err "Containers are running but DATA IS MISSING. DO NOT TRADE until resolved."
+    err ""
+fi
+
+# ── Step 6c: Update VIX/VXV daily close CSVs ────────────────────────────────
 info "Updating VIX/VXV daily close data..."
 if docker compose $COMPOSE_FILES exec -T -e PYTHONPATH=/app captain-command \
     python /captain/scripts/update_vix_daily.py 2>&1 | while IFS= read -r line; do echo "  $line"; done

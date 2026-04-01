@@ -93,6 +93,24 @@ for svc in captain-offline captain-online captain-command; do
 done
 log "Config synced"
 
+# ── Step 3b: Backup QuestDB data before rebuild ──────────────────────────
+BACKUP_DIR="$CAPTAIN_DIR/backups/questdb"
+QDB_DATA="$CAPTAIN_DIR/questdb/db"
+
+if [ -d "$QDB_DATA" ] && [ "$(ls -A "$QDB_DATA" 2>/dev/null)" ]; then
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_FILE="$BACKUP_DIR/questdb-pre-update-$(date '+%Y%m%d-%H%M%S').tar.gz"
+    info "Backing up QuestDB data → $BACKUP_FILE"
+    tar czf "$BACKUP_FILE" -C "$CAPTAIN_DIR" questdb/db/ 2>/dev/null && \
+        log "  QuestDB backup complete ($(du -h "$BACKUP_FILE" | cut -f1))" || \
+        warn "  QuestDB backup failed (non-fatal, continuing)"
+
+    # Keep only the 7 most recent backups (pre-update + daily)
+    ls -t "$BACKUP_DIR"/questdb-*.tar.gz 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null
+else
+    info "No existing QuestDB data to back up (fresh install)"
+fi
+
 # ── Step 4: Rebuild and Restart ───────────────────────────────────────────
 info "Rebuilding and restarting containers..."
 $COMPOSE up -d --build 2>&1 | while IFS= read -r line; do echo "  $line"; done
@@ -119,6 +137,86 @@ info "Ensuring QuestDB tables are up to date..."
 $COMPOSE exec -T -e PYTHONPATH=/app captain-offline \
     python /captain/scripts/init_questdb.py 2>&1 | tail -5 | while IFS= read -r line; do echo "  $line"; done
 log "Schema: up to date"
+
+# ── Step 6a: Seed data (idempotent — safe to re-run) ────────────────────
+# These scripts INSERT new rows; QuestDB's append-only model + LATEST ON
+# queries means re-running is harmless (duplicate inserts are superseded).
+info "Seeding data (idempotent)..."
+
+# Core asset bootstrap (reads git-tracked P1/P2 data)
+$COMPOSE exec -T -e PYTHONPATH=/app captain-offline \
+    python /captain/scripts/seed_all_assets.py 2>&1 | tail -3 | while IFS= read -r line; do echo "  $line"; done
+
+# AIM historical data (reads git-tracked data/seed/ CSVs)
+for seed_script in \
+    seed_iv_rv_from_extract.py \
+    seed_skew_from_extract.py \
+    seed_ohlcv_from_qc.py \
+    seed_or_volumes_from_qc.py \
+    seed_opening_vol_from_qc.py; do
+    $COMPOSE exec -T -e PYTHONPATH=/app captain-offline \
+        python "/captain/scripts/$seed_script" 2>&1 | tail -1 | while IFS= read -r line; do echo "  $line"; done
+done
+
+log "Data seeding: complete"
+
+# ── Step 6b: Data Integrity Check ────────────────────────────────────────
+info "Verifying QuestDB data integrity..."
+DATA_OK=true
+$COMPOSE exec -T -e PYTHONPATH=/app captain-offline python -c "
+import psycopg2, os, sys
+conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user='admin', password='quest', dbname='qdb')
+conn.autocommit = True
+cur = conn.cursor()
+critical = {
+    'p3_d00_asset_universe': 10,   # 10 active assets
+    'p3_d01_aim_model_states': 50, # ~270 rows
+    'p3_d02_aim_meta_weights': 50, # 60 rows
+    'p3_d12_kelly_parameters': 10, # 60 rows
+    'p3_d16_user_capital_silos': 1 # at least 1 silo
+}
+empty = []
+for table, min_rows in critical.items():
+    try:
+        cur.execute(f'SELECT count() FROM {table}')
+        count = cur.fetchone()[0]
+        if count < min_rows:
+            empty.append(f'{table}: {count} rows (expected >= {min_rows})')
+    except Exception as e:
+        empty.append(f'{table}: MISSING ({e})')
+cur.close(); conn.close()
+if empty:
+    print('INTEGRITY_FAIL')
+    for e in empty:
+        print(f'  EMPTY: {e}')
+    sys.exit(1)
+else:
+    print('INTEGRITY_OK')
+" 2>&1 | while IFS= read -r line; do echo "  $line"; done
+
+if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+    DATA_OK=false
+    err ""
+    err "DATA INTEGRITY CHECK FAILED — critical tables are empty or missing."
+    err "This usually means QuestDB data was wiped during the update."
+    err ""
+    if ls "$BACKUP_DIR"/questdb-*.tar.gz >/dev/null 2>&1; then
+        latest_backup=$(ls -t "$BACKUP_DIR"/questdb-*.tar.gz | head -1)
+        err "A backup exists: $latest_backup"
+        err "To restore:"
+        err "  1. docker compose -f docker-compose.yml -f docker-compose.local.yml down"
+        err "  2. rm -rf questdb/db/*"
+        err "  3. tar xzf $latest_backup -C $CAPTAIN_DIR"
+        err "  4. docker compose -f docker-compose.yml -f docker-compose.local.yml up -d"
+    else
+        err "No backups found in $BACKUP_DIR"
+    fi
+    err ""
+    err "Containers are running but DATA IS MISSING. DO NOT TRADE until resolved."
+    err ""
+else
+    log "Data integrity: OK"
+fi
 
 # ── Step 7: Health Check ─────────────────────────────────────────────────
 info "Health check..."

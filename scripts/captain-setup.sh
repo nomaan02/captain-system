@@ -287,6 +287,25 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T \
     python /captain/scripts/bootstrap_production.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
 log "Bootstrap: complete"
 
+# Seed all assets (EWMA, Kelly, AIM states from P1/P2 data)
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.local.yml"
+info "Seeding asset data (EWMA, Kelly, AIM states)..."
+$COMPOSE exec -T -e PYTHONPATH=/app captain-offline \
+    python /captain/scripts/seed_all_assets.py 2>&1 | tail -3 | while IFS= read -r line; do echo "  $line"; done
+
+# Seed AIM historical data from git-tracked CSVs
+info "Seeding AIM historical data..."
+for seed_script in \
+    seed_iv_rv_from_extract.py \
+    seed_skew_from_extract.py \
+    seed_ohlcv_from_qc.py \
+    seed_or_volumes_from_qc.py \
+    seed_opening_vol_from_qc.py; do
+    $COMPOSE exec -T -e PYTHONPATH=/app captain-offline \
+        python "/captain/scripts/$seed_script" 2>&1 | tail -1 | while IFS= read -r line; do echo "  $line"; done
+done
+log "All seed data: complete"
+
 # ── Step 8: Health Check ───────────────────────────────────────────────────
 header "Final Health Check"
 

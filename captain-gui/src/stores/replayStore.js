@@ -23,6 +23,7 @@ const useReplayStore = create((set, get) => ({
     tpMultiple: 0.70,
     slMultiple: 0.35,
     cbEnabled: true,
+    aimEnabled: false,
     mddLimit: 4500,
     mllLimit: 2250,
   },
@@ -42,6 +43,8 @@ const useReplayStore = create((set, get) => ({
   // Summary
   summary: null,
   comparison: null, // what-if overlay
+  aimBreakdown: {}, // {asset_id: {aim_id: {modifier, confidence, reason_tag, dma_weight}}}
+  combinedModifier: {}, // {asset_id: float}
   replayHistory: [],
 
   // Batch (period) replay state
@@ -62,6 +65,7 @@ const useReplayStore = create((set, get) => ({
     replayId: null, status: "idle", progress: 0, currentAsset: null,
     pipelineStages: {}, assetResults: {}, assetOrder: [],
     activeSimPosition: null, summary: null, comparison: null,
+    aimBreakdown: {}, combinedModifier: {},
     expandedStage: null,
     batchStatus: "idle", batchDayResults: [], batchSummary: null,
     batchCurrentDay: null, batchTotalDays: 0, batchCompletedDays: 0,
@@ -141,6 +145,12 @@ const useReplayStore = create((set, get) => ({
             activeSimPosition: state.activeSimPosition?.asset_id === asset
               ? { ...state.activeSimPosition, contracts: payload.contracts ?? payload.final ?? null }
               : state.activeSimPosition,
+          });
+        } else if (event === "aim_scored") {
+          set({
+            aimBreakdown: payload.aim_breakdown || {},
+            combinedModifier: payload.combined_modifier || {},
+            pipelineStages: { ...state.pipelineStages, B3: { status: "complete", data: payload } },
           });
         } else if (event === "position_limit_applied") {
           set({

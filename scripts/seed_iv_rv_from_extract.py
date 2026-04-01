@@ -19,9 +19,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.questdb_client import get_cursor
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get(
     "QC_AIM_DATA_DIR",
-    "/home/nomaan/captain-system-data-extracts/aim_data",
+    os.path.join(_REPO_ROOT, "data", "seed", "aim_data"),
 )
 
 

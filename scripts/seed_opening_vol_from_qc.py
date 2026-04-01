@@ -25,9 +25,10 @@ from shared.questdb_client import get_cursor
 
 ACTIVE_ASSETS = {"ES", "MES", "NQ", "MNQ", "M2K", "MYM", "NKD", "MGC", "ZB", "ZN"}
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get(
     "QC_OR_DATA_DIR",
-    "/home/nomaan/captain-system-data-extracts/or_volume_data",
+    os.path.join(_REPO_ROOT, "data", "seed", "or_volume_data"),
 )
 
 

@@ -50,6 +50,7 @@ const ReplayConfigPanel = () => {
       tp_multiple: config.tpMultiple,
       sl_multiple: config.slMultiple,
       cb_enabled: config.cbEnabled,
+      aim_enabled: config.aimEnabled,
       mdd_limit: config.mddLimit,
       mll_limit: config.mllLimit,
     };
@@ -300,6 +301,23 @@ const ReplayConfigPanel = () => {
           >
             <div className={`h-[16px] w-[32px] relative rounded-full transition-colors ${config.cbEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
               <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[12px] h-[12px] transition-all ${config.cbEnabled ? "left-[18px]" : "left-[2px]"}`} />
+            </div>
+          </button>
+        </div>
+
+        {/* AIM Toggle */}
+        <div className="flex items-center justify-between">
+          <Label>AIM Scoring</Label>
+          <button
+            data-testid="replay-config-aim-toggle"
+            onClick={() => setConfig({ aimEnabled: !config.aimEnabled })}
+            disabled={isRunning}
+            className="cursor-pointer border-none bg-transparent p-0"
+            role="switch"
+            aria-checked={config.aimEnabled}
+          >
+            <div className={`h-[16px] w-[32px] relative rounded-full transition-colors ${config.aimEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
+              <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[12px] h-[12px] transition-all ${config.aimEnabled ? "left-[18px]" : "left-[2px]"}`} />
             </div>
           </button>
         </div>

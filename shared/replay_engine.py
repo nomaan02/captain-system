@@ -650,6 +650,7 @@ def compute_contracts(
     config: dict,
     strategy: dict,
     session_id: int = 1,
+    aim_modifier: float = 1.0,
 ) -> dict:
     """Compute contract count matching real B4 Kelly pipeline.
 
@@ -684,8 +685,8 @@ def compute_contracts(
     # Step 2: Shrinkage
     adjusted = blended * shrinkage
 
-    # Step 3: AIM modifier (1.0 = neutral since AIMs just activated)
-    aim_mod = 1.0
+    # Step 3: AIM modifier
+    aim_mod = aim_modifier
     kelly_with_aim = adjusted * aim_mod
 
     # Step 4: Risk goal (PASS_EVAL)
@@ -863,6 +864,8 @@ def run_replay(
         now_et = datetime.now(ZoneInfo("America/New_York"))
         target_date = (now_et - timedelta(days=1)).date()
 
+    aim_enabled = config.get("aim_enabled", False)
+
     # Emit config loaded
     _emit(on_event, "config_loaded", {
         "user_capital": config.get("user_capital"),
@@ -873,6 +876,7 @@ def run_replay(
         "mdd_limit": config.get("mdd_limit"),
         "mll_limit": config.get("mll_limit"),
         "cb_enabled": config.get("cb_enabled"),
+        "aim_enabled": aim_enabled,
         "strategies_count": len(config.get("strategies", {})),
         "kelly_count": len(config.get("kelly_params", {})),
         "ewma_count": len(config.get("ewma_states", {})),
@@ -915,6 +919,38 @@ def run_replay(
     active_assets = ACTIVE_ASSETS
     if sessions:
         active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
+
+    # --- AIM scoring ---
+    aim_combined_modifier = {}
+    aim_breakdown = {}
+    if aim_enabled:
+        try:
+            from shared.aim_compute import run_aim_aggregation
+            from shared.aim_feature_loader import load_replay_features
+
+            replay_features, aim_states, aim_weights = load_replay_features(
+                target_date, active_assets,
+            )
+            aim_output = run_aim_aggregation(
+                active_assets=active_assets,
+                features=replay_features,
+                aim_states=aim_states,
+                aim_weights=aim_weights,
+            )
+            aim_combined_modifier = aim_output.get("combined_modifier", {})
+            aim_breakdown = aim_output.get("aim_breakdown", {})
+
+            _emit(on_event, "aim_scored", {
+                "combined_modifier": aim_combined_modifier,
+                "aim_breakdown": aim_breakdown,
+            })
+        except Exception as exc:
+            logger.warning("AIM scoring failed, falling back to neutral: %s", exc)
+            _emit(on_event, "aim_scored", {
+                "combined_modifier": {},
+                "aim_breakdown": {},
+                "error": str(exc),
+            })
 
     for asset_id in active_assets:
         session_type = ASSET_SESSION_MAP[asset_id]
@@ -1000,6 +1036,7 @@ def run_replay(
 
         # --- Compute contracts ---
         session_id = SESSION_ID_MAP.get(session_type, 1)
+        asset_aim_mod = aim_combined_modifier.get(asset_id, 1.0)
         try:
             sizing = compute_contracts(
                 asset_id,
@@ -1010,6 +1047,7 @@ def run_replay(
                 config,
                 strategy,
                 session_id,
+                aim_modifier=asset_aim_mod,
             )
         except Exception as exc:
             logger.warning("compute_contracts failed for %s: %s", asset_id, exc)
@@ -1024,6 +1062,7 @@ def run_replay(
 
         _emit(on_event, "sizing_complete", {
             "asset": asset_id,
+            "aim_modifier": asset_aim_mod,
             **sizing,
         })
 
