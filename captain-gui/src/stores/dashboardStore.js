@@ -23,13 +23,9 @@ const useDashboardStore = create((set, get) => ({
   autoExecute: false,
   orStatus: null, // { or_high, or_low, or_state, or_direction, session }
 
-  // Account selection
-  // TODO: Replace with dynamic account discovery from GET /api/accounts
-  selectedAccount: "PRAC-V2-551001-43861321",
-  accounts: [
-    { id: "PRAC-V2-551001-43861321", label: "Practice 150K", type: "practice" },
-    { id: "150KTC-V2-551001-19064435", label: "Live Prop 150K", type: "live" },
-  ],
+  // Account selection — loaded dynamically from GET /api/accounts
+  selectedAccount: "",
+  accounts: [],
 
   // Service health (populated from dashboard snapshot if backend sends it)
   serviceHealth: { questdb: "unknown", redis: "unknown" },
@@ -123,6 +119,19 @@ const useDashboardStore = create((set, get) => ({
     api.setAccount(id).catch((err) => {
       console.warn("Failed to persist account selection:", err);
     });
+  },
+  fetchAccounts: async () => {
+    try {
+      const data = await api.accounts();
+      const list = data.accounts || [];
+      set({ accounts: list });
+      // Auto-select first account if none selected yet
+      if (!get().selectedAccount && list.length > 0) {
+        set({ selectedAccount: list[0].id });
+      }
+    } catch (err) {
+      console.warn("Failed to fetch accounts:", err);
+    }
   },
 }));
 

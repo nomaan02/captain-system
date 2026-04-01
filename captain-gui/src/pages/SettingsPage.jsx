@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+import useDashboardStore from "../stores/dashboardStore";
 
 const SettingsPage = () => {
+  const selectedAccount = useDashboardStore((s) => s.selectedAccount);
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem("captain-theme") || "dark";
   });
@@ -24,8 +26,8 @@ const SettingsPage = () => {
         </h2>
         <div className="bg-surface-card border border-border-subtle p-3 font-mono text-xs">
           <div className="flex items-center justify-between py-1.5 border-b border-border-subtle">
-            <span className="text-[#64748b] uppercase tracking-wider">User ID</span>
-            <span className="text-white">primary_user</span>
+            <span className="text-[#64748b] uppercase tracking-wider">Account</span>
+            <span className="text-white">{selectedAccount || "Loading..."}</span>
           </div>
           <div className="flex items-center justify-between py-1.5">
             <span className="text-[#64748b] uppercase tracking-wider">Role</span>

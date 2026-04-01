@@ -39,6 +39,7 @@ const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  accounts: () => fetchJson(`${BASE}/accounts`),
   setAccount: (accountName) =>
     fetchJson(`${BASE}/set-account`, {
       method: "POST",

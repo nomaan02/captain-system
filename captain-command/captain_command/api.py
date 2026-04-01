@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -141,6 +142,28 @@ async def health():
         },
         "last_heartbeat": _process_health.get("COMMAND", {}).get("timestamp"),
     })
+
+
+@app.get("/api/accounts")
+async def get_accounts():
+    """Return the account list derived from environment variables.
+
+    Each instance reads TOPSTEP_ACCOUNT_NAME from its own .env,
+    so this endpoint returns the correct account per deployment.
+    """
+    account_name = os.environ.get("TOPSTEP_ACCOUNT_NAME", "")
+    trading_env = os.environ.get("TRADING_ENVIRONMENT", "PAPER").upper()
+    account_type = "live" if trading_env == "LIVE" else "practice"
+
+    accounts = []
+    if account_name:
+        accounts.append({
+            "id": account_name,
+            "label": f"{'Live' if account_type == 'live' else 'Practice'} Account",
+            "type": account_type,
+        })
+
+    return JSONResponse({"accounts": accounts})
 
 
 @app.get("/api/status")

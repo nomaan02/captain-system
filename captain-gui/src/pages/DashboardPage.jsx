@@ -68,6 +68,7 @@ const MOCK_NOTIFICATIONS = [
 
 function injectMockData() {
   const store = useDashboardStore.getState();
+  const mockAccount = store.selectedAccount || "LOADING...";
   store.setSnapshot({
     timestamp: "2026-03-30T09:42:00",
     capital_silo: {
@@ -80,8 +81,8 @@ function injectMockData() {
     pending_signals: MOCK_SIGNALS,
     tsm_status: [
       {
-        account_id: 20319811,
-        account_name: "PRAC-V2-551001-43861321",
+        account_id: 0,
+        account_name: mockAccount,
         current_balance: 150000,
         starting_balance: 150000,
         mdd_used_pct: 0,
@@ -111,7 +112,7 @@ function injectMockData() {
       api_authenticated: true,
       market_stream: true,
       user_stream: true,
-      account_name: "PRAC-V2-551001-43861321",
+      account_name: mockAccount,
     },
     or_status: {
       or_high: 6471.00,
@@ -178,6 +179,9 @@ const DashboardPage = () => {
   const { defaultLayout: rightLayout, onLayoutChanged: onRightChanged } = useRightLayout();
 
   useEffect(() => {
+    // Load account list from backend (.env-driven, not hardcoded)
+    useDashboardStore.getState().fetchAccounts();
+
     if (DEV_MOCK_ENABLED) {
       injectMockData();
       return;
