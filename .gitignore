@@ -57,3 +57,9 @@ config/tsm/validated/
 captain-offline/_config/
 captain-online/_config/
 captain-command/_config/
+
+# Playwright
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
