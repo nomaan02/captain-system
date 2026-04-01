@@ -33,17 +33,33 @@ _vix_data: list[tuple[date, float]] = []
 _vxv_data: list[tuple[date, float]] = []
 _loaded = False
 _lock = threading.Lock()
+_last_mtime: float = 0.0  # mtime of VIX CSV at last load
 
 
 def _ensure_loaded():
-    """Load CSVs on first access (lazy, thread-safe)."""
-    global _loaded
+    """Load CSVs on first access (lazy, thread-safe). Reloads if CSV changed."""
+    global _loaded, _last_mtime
     if _loaded:
+        # Check if CSV has been updated since last load
+        try:
+            current_mtime = os.path.getmtime(_VIX_CSV_PATH)
+            if current_mtime > _last_mtime:
+                logger.info("VIX CSV modified (mtime %.0f > %.0f), reloading",
+                            current_mtime, _last_mtime)
+                with _lock:
+                    _load_all()
+                    _last_mtime = current_mtime
+        except OSError:
+            pass
         return
     with _lock:
         if _loaded:
             return
         _load_all()
+        try:
+            _last_mtime = os.path.getmtime(_VIX_CSV_PATH)
+        except OSError:
+            pass
         _loaded = True
 
 

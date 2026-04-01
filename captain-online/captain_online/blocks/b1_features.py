@@ -818,17 +818,72 @@ def _get_historical_session_volumes(asset_id: str, lookback: int = 20) -> Option
     return None
 
 def _get_atm_implied_vol(asset_id: str, maturity: str = "30d") -> Optional[float]:
+    """Latest ATM 30-day implied vol from P3-D31 (ES only, from QC extract)."""
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT atm_iv_30d FROM p3_d31_implied_vol
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT 1""",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    except Exception:
+        pass
     return None
 
 def _get_realised_vol(asset_id: str) -> Optional[float]:
+    """Latest 20-day realised vol from P3-D31 (ES only, from QC extract)."""
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT realized_vol_20d FROM p3_d31_implied_vol
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT 1""",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    except Exception:
+        pass
     return None
 
 def _get_overnight_range(asset_id: str) -> Optional[float]:
     return None
 
 def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
-    """Trailing overnight VRP values for z-score computation (spec: 60d)."""
-    return None
+    """Trailing VRP (IV - RV) values for z-score computation (spec: 60d).
+
+    Reads from P3-D31 implied_vol table. VRP = atm_iv_30d - realized_vol_20d.
+    """
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT atm_iv_30d, realized_vol_20d FROM p3_d31_implied_vol
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if not rows or len(rows) < 10:
+            return None
+        # VRP = IV - RV per day, reversed to ascending order
+        vrp_values = []
+        for iv, rv in reversed(rows):
+            if iv is not None and rv is not None:
+                vrp_values.append(float(iv) - float(rv))
+        return vrp_values if len(vrp_values) >= 10 else None
+    except Exception:
+        return None
 
 def _get_trailing_overnight_returns(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing |overnight_return| values for AIM-04 gap z-score (spec: 60d).
@@ -866,8 +921,27 @@ def _get_trailing_pcr(asset_id: str, lookback: int = 30) -> Optional[list[float]
     return None
 
 def _get_trailing_skew(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
-    """Trailing DOTM-OTM put spread values for z-score computation (spec: 60d)."""
-    return None
+    """Trailing skew_spread_proxy values for z-score computation (spec: 60d).
+
+    Reads from P3-D32 options_skew table (ES only, from QC CBOE SKEW extract).
+    """
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT skew_spread_proxy FROM p3_d32_options_skew
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if not rows or len(rows) < 10:
+            return None
+        # Reverse to ascending order for z-score
+        return [float(r[0]) for r in reversed(rows) if r[0] is not None]
+    except Exception:
+        return None
 
 def _get_options_volume(asset_id: str, option_type: str = "PUT") -> Optional[int]:
     return None
@@ -1093,6 +1167,32 @@ def store_opening_volume(asset_id: str, session_type: str, or_minutes: int, volu
     except Exception as e:
         logger.warning("Failed to store opening volume for %s: %s", asset_id, e)
 
+def store_opening_volatility(asset_id: str):
+    """Persist today's 5-min opening volatility into P3-D33.
+
+    Called from orchestrator after OR close. Computes vol from today's
+    live 1-min bars via _get_recent_5min_vol() and stores for AIM-12.
+    """
+    vol = _get_recent_5min_vol(asset_id)
+    if vol is None:
+        return
+    from shared.questdb_client import get_cursor
+    import pytz
+    et = pytz.timezone("America/New_York")
+    today_str = datetime.now(et).strftime("%Y-%m-%d")
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO p3_d33_opening_volatility
+                   (asset_id, session_date, vol_5min)
+                   VALUES (%s, %s, %s)""",
+                (asset_id, today_str, vol),
+            )
+        logger.info("Stored opening vol for %s: %.6f", asset_id, vol)
+    except Exception as e:
+        logger.warning("Failed to store opening vol for %s: %s", asset_id, e)
+
+
 def store_daily_ohlcv(asset_id: str):
     """Persist today's daily OHLCV bar into P3-D30 for feature baselines.
 
@@ -1181,12 +1281,61 @@ def _get_trailing_spreads(asset_id: str, lookback: int = 60) -> Optional[list[fl
     return None
 
 def _get_recent_5min_vol(asset_id: str) -> Optional[float]:
-    """Recent 5-min opening volatility (spec: AIM_Extractions.md:2406)."""
-    return None
+    """Today's 5-min opening volatility from TopstepX 1-min bars.
+
+    Fetches 1-min bars for the first 5 minutes after session open,
+    computes std dev of close-to-close log returns.
+    """
+    contract_id = resolve_contract_id(asset_id)
+    if not contract_id:
+        return None
+    try:
+        client = get_topstep_client()
+        import pytz
+        et = pytz.timezone("America/New_York")
+        now = datetime.now(et)
+        # Session open: 09:30 ET for NY assets
+        session_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        session_5min = session_open + timedelta(minutes=5)
+        if now < session_5min:
+            return None  # OR not finished yet
+        bars = client.get_bars(
+            contract_id, 2, 1,
+            session_open.isoformat(), session_5min.isoformat(),
+        )
+        if not bars or len(bars) < 3:
+            return None
+        closes = [float(b["close"]) for b in bars]
+        returns = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] > 0:
+                returns.append(math.log(closes[i] / closes[i - 1]))
+        if len(returns) < 2:
+            return None
+        mean = sum(returns) / len(returns)
+        variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+        return math.sqrt(variance)
+    except Exception:
+        return None
 
 def _get_trailing_open_vol(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
-    """Trailing 5-min opening vol values for z-score computation (spec: 60d)."""
-    return None
+    """Trailing 5-min opening vol values from P3-D33 for z-score (spec: 60d)."""
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT vol_5min FROM p3_d33_opening_volatility
+                   WHERE asset_id = %s
+                   ORDER BY session_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if not rows or len(rows) < 5:
+            return None
+        return [float(r[0]) for r in reversed(rows) if r[0] is not None]
+    except Exception:
+        return None
 
 def _get_trailing_correlations(asset1: str, asset2: str, lookback: int = 252) -> Optional[list[float]]:
     """Trailing rolling 20-day correlations for z-score computation."""

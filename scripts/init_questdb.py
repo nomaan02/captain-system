@@ -722,6 +722,46 @@ TABLES = [
         ts TIMESTAMP
     ) timestamp(ts) PARTITION BY YEAR;
     """,
+    # =====================================================================
+    # P3-D31: implied_vol — ATM IV + realised vol for AIM-01 VRP
+    # Owner: Bootstrap (QC extract) + future daily append
+    # Powers: AIM-01 VRP modifier (IV - RV z-score)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_d31_implied_vol (
+        asset_id SYMBOL,
+        trade_date TIMESTAMP,
+        atm_iv_30d DOUBLE,
+        realized_vol_20d DOUBLE
+    ) timestamp(trade_date) PARTITION BY MONTH;
+    """,
+
+    # =====================================================================
+    # P3-D32: options_skew — CBOE SKEW for AIM-02
+    # Owner: Bootstrap (QC extract) + future daily append
+    # Powers: AIM-02 skew half (60d z-score)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_d32_options_skew (
+        asset_id SYMBOL,
+        trade_date TIMESTAMP,
+        cboe_skew DOUBLE,
+        skew_spread_proxy DOUBLE
+    ) timestamp(trade_date) PARTITION BY MONTH;
+    """,
+
+    # =====================================================================
+    # P3-D33: opening_volatility — 5-min OR vol for AIM-12 vol_z
+    # Owner: Online orchestrator (post-OR-close) + bootstrap from QC
+    # Powers: AIM-12 vol_z half (60d z-score)
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_d33_opening_volatility (
+        asset_id SYMBOL,
+        session_date TIMESTAMP,
+        vol_5min DOUBLE
+    ) timestamp(session_date) PARTITION BY MONTH;
+    """,
 ]
 
 

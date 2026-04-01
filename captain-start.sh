@@ -197,6 +197,16 @@ cur.close(); conn.close()
     fi
 fi
 
+# ── Step 6b: Update VIX/VXV daily close CSVs ─────────────────────────────────
+info "Updating VIX/VXV daily close data..."
+if docker compose $COMPOSE_FILES exec -T -e PYTHONPATH=/app captain-command \
+    python /captain/scripts/update_vix_daily.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
+then
+    log "  VIX/VXV update complete"
+else
+    warn "  VIX/VXV update failed (non-fatal — stale data still usable)"
+fi
+
 # ── Step 7: Wait for all 6 services to be running ─────────────────────────────
 EXPECTED="questdb redis captain-offline captain-online captain-command nginx"
 elapsed=0

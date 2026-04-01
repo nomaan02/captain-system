@@ -295,6 +295,13 @@ class OnlineOrchestrator:
                 except Exception as e:
                     logger.debug("Daily OHLCV store skipped for %s: %s", asset, e)
 
+                # Persist today's 5-min opening volatility for AIM-12 (P3-D33)
+                try:
+                    from captain_online.blocks.b1_features import store_opening_volatility
+                    store_opening_volatility(asset)
+                except Exception as e:
+                    logger.debug("Opening vol store skipped for %s: %s", asset, e)
+
                 newly_resolved.append(asset)
 
             # Run Phase B (B6) for newly resolved breakout assets

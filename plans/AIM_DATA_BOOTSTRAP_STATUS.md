@@ -41,6 +41,48 @@
 - **Scripts:** `scripts/seed_ohlcv_from_qc.py`, `scripts/init_questdb.py` (P3-D30 table def)
 - **Code changes:** `b1_features.py` — `_get_daily_closes()` checks DB first; `_get_trailing_overnight_returns()` implemented; `store_daily_ohlcv()` added. `orchestrator.py` — calls `store_daily_ohlcv()` in Phase B.
 
+### AIM-04/11: VIX/VXV Daily Auto-Update
+
+- **Status:** AUTO-REFRESHED
+- **Script:** `scripts/update_vix_daily.py` — fetches from Yahoo Finance v8 chart API (no API key)
+- **Integration:** `captain-start.sh` Step 6b — runs on every system startup before containers finish init
+- **Reload:** `vix_provider.py` detects CSV mtime change and reloads automatically
+- **VIX last date:** 2026-04-01 (24.76)
+- **Self-sustaining:** YES — every `captain-start.sh` invocation refreshes data
+
+### AIM-01: ES Implied Vol / Realised Vol — P3-D31
+
+- **Status:** SEEDED (ES only)
+- **Source:** QuantConnect extract → `aim_data/es_iv_rv.csv`
+- **Table:** `p3_d31_implied_vol`
+- **Rows:** 122 (2025-08-22 → 2026-03-27, ES only)
+- **Exceeds minimum:** 122 days > 120 days required for feature gate
+- **Self-sustaining:** NO — requires options chain access for daily IV updates
+- **Script:** `scripts/seed_iv_rv_from_extract.py`
+- **Code changes:** `b1_features.py` — `_get_atm_implied_vol()`, `_get_realised_vol()`, `_get_trailing_overnight_vrp()` read P3-D31
+
+### AIM-02: ES CBOE SKEW — P3-D32
+
+- **Status:** SEEDED (ES skew half only)
+- **Source:** QuantConnect extract → `aim_data/es_skew.csv`
+- **Table:** `p3_d32_options_skew`
+- **Rows:** 81 (2025-12-03 → 2026-03-31, ES only)
+- **Exceeds minimum:** 81 days > 60 days required for skew z-score
+- **Graceful degradation:** AIM-02 operates at 0.4 confidence (skew only) instead of 0.7 (skew + PCR)
+- **Self-sustaining:** NO — requires daily CBOE SKEW fetch
+- **Script:** `scripts/seed_skew_from_extract.py`
+- **Code changes:** `b1_features.py` — `_get_trailing_skew()` reads P3-D32
+
+### AIM-12: Opening Volatility (vol_z) — P3-D33
+
+- **Status:** SEEDED + WIRED
+- **Source:** QuantConnect 1-min OR bars → `or_volume_data/{ASSET}_or_volume.csv`
+- **Table:** `p3_d33_opening_volatility`
+- **Rows:** ~240 (24 sessions × 10 assets, 2026-02-25 → 2026-03-30)
+- **Self-sustaining:** YES — `store_opening_volatility()` called from Online orchestrator after OR close
+- **Script:** `scripts/seed_opening_vol_from_qc.py`
+- **Code changes:** `b1_features.py` — `_get_recent_5min_vol()` computes from live bars, `_get_trailing_open_vol()` reads P3-D33, `store_opening_volatility()` persists daily. `orchestrator.py` — calls `store_opening_volatility()` in Phase B.
+
 ---
 
 ## Outstanding Data Gaps — AIM-by-AIM Breakdown
@@ -55,7 +97,7 @@ This section documents every AIM that is currently degraded or inactive due to m
 
 **Modifier range:** z > +1.5 → 0.70 (reduce), z > +0.5 → 0.85, z < -1.0 → 1.10 (boost), else → 1.00
 
-**Current state:** INACTIVE — `_get_atm_implied_vol()` and `_get_realised_vol()` return None. AIM-01 always outputs modifier 1.0 with tag `VRP_MISSING`.
+**Current state:** ACTIVE (ES only) — `_get_atm_implied_vol()` and `_get_realised_vol()` read from P3-D31 (122 days, ES). `_get_trailing_overnight_vrp()` computes IV-RV series for z-score. Other 9 assets still return None (no IV/RV data).
 
 **Data extracted (needs wiring):**
 - File: `captain-system-data-extracts/aim_data/es_iv_rv.csv`
@@ -87,7 +129,7 @@ This section documents every AIM that is currently degraded or inactive due to m
 **Modifier range:** combined > +1.5 → 0.75, > +0.5 → 0.90, < -1.0 → 1.10, else → 1.00
 **Combination:** combined = 0.6 × z_score(PCR, 30d) + 0.4 × z_score(skew, 60d)
 
-**Current state:** INACTIVE — both `pcr_z` and `skew_z` return None. AIM-02 always outputs modifier 1.0 with tag `SKEW_MISSING`.
+**Current state:** PARTIAL (ES skew half) — `_get_trailing_skew()` reads from P3-D32 (81 days, ES). AIM-02 operates at 0.4 confidence for ES (skew only, no PCR). Other assets still return None.
 
 **Data extracted (skew half — needs wiring):**
 - File: `captain-system-data-extracts/aim_data/es_skew.csv`
@@ -183,7 +225,7 @@ This section documents every AIM that is currently degraded or inactive due to m
 
 **Modifier (full):** spread_z > 1.5 OR vol_z > 1.5 → 0.85, spread_z > 0.5 OR vol_z > 0.5 → 0.95, spread_z < -0.5 AND vol_z < -0.5 → 1.05, else → 1.00. VIX overlay: VIX_z > 1.0 → ×0.95.
 
-**Current state:** PARTIAL — spread_z works (from TopstepX quote cache + `p3_spread_history`). vol_z is always None. The OR logic means AIM-12 only fires on spread spikes, missing volatility-driven cost events. VIX overlay works.
+**Current state:** FULL — spread_z works (from TopstepX quote cache + `p3_spread_history`). vol_z now reads from P3-D33 (`_get_trailing_open_vol()`) and live 1-min bars (`_get_recent_5min_vol()`). Bootstrapped with 24 sessions per asset from QC OR bars. Self-sustaining via `store_opening_volatility()` in orchestrator. VIX overlay works.
 
 **Data needed:**
 - Standard deviation of 1-min bar returns during the first 5 minutes of the session, per asset per day
@@ -206,7 +248,7 @@ This section documents every AIM that is currently degraded or inactive due to m
 - **AIM-04 (IVTS):** VIX/VXV ratio determines the volatility term structure regime — the single most critical regime filter in the system. The [0.93, 1.0] optimal zone (Paper 67 validated) is where ORB breakouts have the highest edge.
 - **AIM-11 (Regime Warning):** VIX z-score (252-day trailing) flags stress regime probability — high VIX z means elevated transition probability to crisis.
 
-**Current state:** WORKING but data is STATIC. VIX/VXV CSVs end at 2026-03-31. After this date, `_get_vix_close_yesterday()` returns stale data, and z-scores will gradually become inaccurate.
+**Current state:** WORKING + AUTO-REFRESHED. VIX CSV updated to 2026-04-01 (24.76) via `scripts/update_vix_daily.py`. Auto-runs on every system startup via `captain-start.sh`. `vix_provider.py` detects CSV mtime changes and reloads automatically.
 
 **Data needed:**
 - VIX daily close (CBOE Volatility Index)
@@ -248,15 +290,15 @@ This section documents every AIM that is currently degraded or inactive due to m
 
 | AIM | Status | Modifier Output | Impact on Signal Quality |
 |-----|--------|----------------|--------------------------|
-| AIM-01 VRP | INACTIVE | Always 1.0 | No IV/RV risk adjustment. Trades at full size in high-uncertainty environments. |
-| AIM-02 Skew | INACTIVE | Always 1.0 | No institutional positioning read. Misses fear/greed extremes. |
+| AIM-01 VRP | **ACTIVE (ES only)** | IV-RV z-score for ES | ES gets VRP adjustment; other 9 assets still 1.0 (no IV/RV data). |
+| AIM-02 Skew | **PARTIAL (ES skew half)** | 0.4 × skew_z for ES | ES gets skew-based fear/greed read at reduced confidence (0.4 vs 0.7). PCR half still missing. |
 | AIM-03 GEX | INACTIVE | Always 1.0 | No gamma regime awareness. Most impactful gap for ORB strategy. |
 | AIM-07 COT | INACTIVE | Always 1.0 | No institutional flow signal. Misses crowded/contrarian setups. |
-| AIM-12 vol_z | PARTIAL (50%) | spread_z only | Misses volatility-driven cost events. Spread detection still works. |
-| AIM-04/11 VIX | STALE AFTER 2026-03-31 | Correct until data expires | Highest urgency — these are the two most influential AIMs. |
+| AIM-12 vol_z | **FULL (spread_z + vol_z)** | Both signals active | Full OR-logic cost detection: spread spikes OR volatility spikes trigger sizing reduction. |
+| AIM-04/11 VIX | **AUTO-REFRESHED** | Current VIX/VXV data | Daily auto-update via Yahoo Finance on system startup. No longer stale. |
 | AIM-11 CL basis | INACTIVE (overlay) | VIX z-score still works | Zero impact — CL not in active universe. |
 
-**Net effect:** The combined_modifier currently reflects only the AIMs that have live data: AIM-04 (IVTS zones), AIM-06 (calendar), AIM-08 (correlation), AIM-09 (momentum), AIM-10 (OPEX), AIM-11 (VIX z-score + spike), AIM-12 (spread_z), and AIM-15 (volume). That's 8 of 12 active AIMs contributing. The DMA meta-learning system will upweight these 8 and effectively ignore the 4 inactive ones (01, 02, 03, 07). The system still makes intelligent sizing decisions — it just lacks options-market context and institutional positioning data.
+**Net effect:** The combined_modifier now reflects 10 of 12 active AIMs: AIM-01 (VRP, ES only), AIM-02 (skew half, ES only), AIM-04 (IVTS zones), AIM-06 (calendar), AIM-08 (correlation), AIM-09 (momentum), AIM-10 (OPEX), AIM-11 (VIX z-score + spike), AIM-12 (spread_z + vol_z), and AIM-15 (volume). Only AIM-03 (GEX) and AIM-07 (COT) remain inactive — both blocked on external data sources (options chain / CFTC report).
 
 ---
 
@@ -265,10 +307,10 @@ This section documents every AIM that is currently degraded or inactive due to m
 | Priority | Action | AIMs Unlocked | Effort | Status |
 |----------|--------|---------------|--------|--------|
 | ~~1~~ | ~~Wire OHLCV data → QuestDB table + update stubs~~ | ~~AIM-08, AIM-09, overnight returns~~ | ~~Medium~~ | **DONE** (2026-04-01) |
-| 2 | Set up VIX/VXV daily auto-update (cron + Yahoo Finance) | AIM-04, AIM-11 longevity | Small | TODO — highest urgency |
-| 3 | Wire ES IV/RV data → b1_features stubs | AIM-01 (ES only) | Small — 2 stub functions | TODO |
-| 4 | Wire ES skew data → b1_features stub | AIM-02 (skew half) | Small — 1 stub function | TODO |
-| 5 | Compute vol_z from TopstepX live 1-min bars | AIM-12 (vol_z half) | Small — no external data needed | TODO |
+| ~~2~~ | ~~VIX/VXV daily auto-update (Yahoo Finance + captain-start.sh)~~ | ~~AIM-04, AIM-11 longevity~~ | ~~Small~~ | **DONE** (2026-04-01) |
+| ~~3~~ | ~~Wire ES IV/RV data → b1_features stubs~~ | ~~AIM-01 (ES only)~~ | ~~Small~~ | **DONE** (2026-04-01, ES only, no daily refresh) |
+| ~~4~~ | ~~Wire ES skew data → b1_features stub~~ | ~~AIM-02 (skew half)~~ | ~~Small~~ | **DONE** (2026-04-01, ES skew half only) |
+| ~~5~~ | ~~Compute vol_z from TopstepX live 1-min bars~~ | ~~AIM-12 (vol_z half)~~ | ~~Small~~ | **DONE** (2026-04-01, bootstrap + live persistence) |
 | 6 | Extract PCR from CBOE daily report | AIM-02 (PCR half) | Medium — daily scrape + store | BLOCKED on source |
 | 7 | Extract COT from CFTC/Quandl | AIM-07 | Medium — weekly pipeline | BLOCKED on source |
 | 8 | Compute GEX from options chain | AIM-03 | Hard — needs full chain + Greeks | BLOCKED on source |
@@ -286,5 +328,13 @@ This section documents every AIM that is currently degraded or inactive due to m
 | VXV daily | `captain-system-data-extracts/aim_data/vxv_daily.csv` | date, close |
 | ES IV/RV | `captain-system-data-extracts/aim_data/es_iv_rv.csv` | date, atm_iv_30d, realized_vol_20d |
 | ES Skew | `captain-system-data-extracts/aim_data/es_skew.csv` | date, cboe_skew, skew_spread_proxy |
-| Bundled VIX | `data/vix/vix_daily_close.csv` | date, vix_close (9155 rows, 1990-2026) |
-| Bundled VXV | `data/vix/vxv_daily_close.csv` | date, vxv_close (4159 rows, 2007-2026) |
+| Bundled VIX | `data/vix/vix_daily_close.csv` | date, vix_close (9156 rows, 1990-2026, auto-updated) |
+| Bundled VXV | `data/vix/vxv_daily_close.csv` | date, vxv_close (4159 rows, 2007-2026, auto-updated) |
+
+### QuestDB Tables Added (2026-04-01)
+
+| Table | Source | Rows | Purpose |
+|-------|--------|------|---------|
+| `p3_d31_implied_vol` | ES IV/RV extract | 122 | AIM-01 VRP (ES only) |
+| `p3_d32_options_skew` | ES SKEW extract | 81 | AIM-02 skew half (ES only) |
+| `p3_d33_opening_volatility` | QC OR bars + live | ~240 | AIM-12 vol_z (all 10 assets) |
