@@ -3,6 +3,7 @@ import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panel
 import TopBar from "../components/layout/TopBar";
 import MarketTicker from "../components/layout/MarketTicker";
 import RiskPanel from "../components/risk/RiskPanel";
+import AimRegistryPanel from "../components/aim/AimRegistryPanel";
 import ChartPanel from "../components/chart/ChartPanel";
 import ActivePosition from "../components/trading/ActivePosition";
 import SignalExecutionBar from "../components/signals/SignalExecutionBar";
@@ -170,6 +171,9 @@ const useCenterLayout = () =>
 const useRightLayout = () =>
   useDefaultLayout({ id: "captain-right-layout" });
 
+const useLeftLayout = () =>
+  useDefaultLayout({ id: "captain-left-layout" });
+
 const DashboardPage = () => {
   useWebSocket("primary_user");
   const connected = useDashboardStore((s) => s.connected);
@@ -177,6 +181,7 @@ const DashboardPage = () => {
   const { defaultLayout: mainLayout, onLayoutChanged: onMainChanged } = useMainLayout();
   const { defaultLayout: centerLayout, onLayoutChanged: onCenterChanged } = useCenterLayout();
   const { defaultLayout: rightLayout, onLayoutChanged: onRightChanged } = useRightLayout();
+  const { defaultLayout: leftLayout, onLayoutChanged: onLeftChanged } = useLeftLayout();
 
   useEffect(() => {
     // Load account list from backend (.env-driven, not hardcoded)
@@ -217,9 +222,26 @@ const DashboardPage = () => {
       >
         {/* Left Column — Risk Panel */}
         <Panel id="left" defaultSize={30} minSize={10}>
-          <div className="h-full overflow-y-auto">
-            <RiskPanel />
-          </div>
+          <Group
+            orientation="vertical"
+            defaultLayout={leftLayout}
+            onLayoutChanged={onLeftChanged}
+            className="h-full"
+          >
+            <Panel id="risk" defaultSize={60} minSize={15}>
+              <div className="h-full overflow-y-auto">
+                <RiskPanel />
+              </div>
+            </Panel>
+
+            <ResizeHandle orientation="vertical" />
+
+            <Panel id="aim-registry" defaultSize={40} minSize={10}>
+              <div className="h-full overflow-y-auto">
+                <AimRegistryPanel />
+              </div>
+            </Panel>
+          </Group>
         </Panel>
 
         <ResizeHandle orientation="horizontal" />

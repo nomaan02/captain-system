@@ -41,6 +41,7 @@ from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
     build_system_overview,
     build_processes_status,
+    get_aim_detail,
 )
 from captain_command.blocks.b6_reports import generate_report, REPORT_TYPES
 from captain_command.blocks.b7_notifications import (
@@ -388,6 +389,32 @@ def api_dashboard(user_id: str):
     the uvicorn event loop (which would stall all WebSocket sends).
     """
     return JSONResponse(_make_json_safe(build_dashboard_snapshot(user_id)))
+
+
+@app.get("/api/aim/{aim_id}/detail")
+def api_aim_detail(aim_id: int):
+    """AIM detail for the registry modal — per-asset breakdown + validation."""
+    return JSONResponse(_make_json_safe(get_aim_detail(aim_id)))
+
+
+@app.post("/api/aim/{aim_id}/activate")
+def api_aim_activate(aim_id: int):
+    """Activate an AIM — routes ACTIVATE_AIM command to Offline via Redis."""
+    route_command(
+        {"type": "ACTIVATE_AIM", "aim_id": aim_id, "user_id": "primary_user"},
+        gui_push_fn=lambda *_a, **_kw: None,
+    )
+    return JSONResponse({"ok": True, "aim_id": aim_id, "action": "ACTIVATE_AIM"})
+
+
+@app.post("/api/aim/{aim_id}/deactivate")
+def api_aim_deactivate(aim_id: int):
+    """Deactivate (suppress) an AIM — routes DEACTIVATE_AIM command to Offline."""
+    route_command(
+        {"type": "DEACTIVATE_AIM", "aim_id": aim_id, "user_id": "primary_user"},
+        gui_push_fn=lambda *_a, **_kw: None,
+    )
+    return JSONResponse({"ok": True, "aim_id": aim_id, "action": "DEACTIVATE_AIM"})
 
 
 @app.get("/api/system-overview")

@@ -24,3 +24,31 @@ body {
 [data-separator]:focus-visible > .resize-handle-bar {
   background-color: #06b6d4 !important;
 }
+
+/* Custom scrollbars — thin, dark, square to match captain palette */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1a3038 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1a3038;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2e4e5a;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

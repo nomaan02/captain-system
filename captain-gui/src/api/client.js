@@ -75,6 +75,11 @@ const api = {
   testNotification: (userId, message, priority = "HIGH") =>
     post(`${BASE}/notifications/test`, { user_id: userId, priority, message }),
 
+  // AIM Registry
+  aimDetail: (aimId) => get(`${BASE}/aim/${aimId}/detail`),
+  aimActivate: (aimId) => post(`${BASE}/aim/${aimId}/activate`, {}),
+  aimDeactivate: (aimId) => post(`${BASE}/aim/${aimId}/deactivate`, {}),
+
   // System
   gitPull: () => post(`${BASE}/system/git-pull`, {}),
 };

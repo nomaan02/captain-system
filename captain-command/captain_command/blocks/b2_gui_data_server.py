@@ -388,10 +388,22 @@ def _get_pending_signals(user_id: str) -> list[dict]:
 
 _AIM_NAMES = {
     1: "VRP", 2: "Options Skew", 3: "Gamma Exposure", 4: "IVTS",
-    6: "Economic Calendar", 7: "COT Positioning", 8: "Cross-Asset Corr",
-    9: "Cross-Asset Momentum", 10: "Calendar Effects", 11: "Regime Warning",
-    12: "Dynamic Costs", 13: "Sensitivity", 14: "Auto-Expansion",
-    15: "Opening Volume", 16: "HMM Opportunity",
+    5: "Order Book Depth", 6: "Economic Calendar", 7: "COT Positioning",
+    8: "Cross-Asset Corr", 9: "Cross-Asset Momentum", 10: "Calendar Effects",
+    11: "Regime Warning", 12: "Dynamic Costs", 13: "Sensitivity",
+    14: "Auto-Expansion", 15: "Opening Volume", 16: "HMM Opportunity",
+}
+
+_AIM_TIERS = {
+    1: 2, 2: 2, 3: 2, 4: 1, 5: 0, 6: 1, 7: 2,
+    8: 1, 9: 2, 10: 2, 11: 1, 12: 1, 13: 3, 14: 3, 15: 1, 16: 0,
+}
+
+# AIMs whose external data adapters return None (per F5.9 reconciliation)
+_AIM_FEATURE_CONNECTED = {
+    1: True, 2: True, 3: False, 4: True, 5: False, 6: True, 7: False,
+    8: True, 9: True, 10: True, 11: True, 12: True, 13: True, 14: True,
+    15: True, 16: True,
 }
 
 
@@ -429,6 +441,133 @@ def _get_aim_states(user_id: str) -> list[dict]:
     except Exception as exc:
         logger.error("AIM states query failed: %s", exc, exc_info=True)
     return []
+
+
+def get_aim_detail(aim_id: int) -> dict:
+    """Fetch enriched AIM detail for the modal overlay.
+
+    Joins P3-D01 (model states) and P3-D02 (meta weights) per asset
+    for the given aim_id.  For AIM-16, also checks P3-D26.
+    """
+    name = _AIM_NAMES.get(aim_id, f"AIM-{aim_id:02d}")
+    tier = _AIM_TIERS.get(aim_id, 0)
+    feature_connected = _AIM_FEATURE_CONNECTED.get(aim_id, False)
+
+    per_asset: list[dict] = []
+    d01_populated = False
+    d02_populated = False
+
+    # --- D01: model states ---
+    d01_by_asset: dict[str, dict] = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT asset_id, status, current_modifier, warmup_progress,
+                          last_retrained
+                   FROM p3_d01_aim_model_states
+                   WHERE aim_id = %s
+                   ORDER BY last_updated DESC""",
+                (aim_id,),
+            )
+            for r in cur.fetchall():
+                asset = r[0]
+                if asset in d01_by_asset:
+                    continue
+                d01_by_asset[asset] = {
+                    "status": r[1],
+                    "modifier": r[2],
+                    "warmup_progress": r[3],
+                    "last_retrained": r[4],
+                }
+            if d01_by_asset:
+                d01_populated = True
+    except Exception as exc:
+        logger.error("AIM detail D01 query failed: %s", exc, exc_info=True)
+
+    # --- D02: meta weights ---
+    d02_by_asset: dict[str, dict] = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT asset_id, inclusion_flag, inclusion_probability,
+                          recent_effectiveness, days_below_threshold
+                   FROM p3_d02_aim_meta_weights
+                   WHERE aim_id = %s
+                   ORDER BY last_updated DESC""",
+                (aim_id,),
+            )
+            for r in cur.fetchall():
+                asset = r[0]
+                if asset in d02_by_asset:
+                    continue
+                d02_by_asset[asset] = {
+                    "inclusion_flag": r[1],
+                    "inclusion_probability": r[2],
+                    "recent_effectiveness": r[3],
+                    "days_below_threshold": r[4],
+                }
+            if d02_by_asset:
+                d02_populated = True
+    except Exception as exc:
+        logger.error("AIM detail D02 query failed: %s", exc, exc_info=True)
+
+    # --- D26 check (AIM-16 only) ---
+    d26_populated = False
+    if aim_id == 16:
+        try:
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT count() FROM p3_d26_hmm_opportunity_state"
+                )
+                row = cur.fetchone()
+                d26_populated = bool(row and row[0] > 0)
+        except Exception:
+            pass
+
+    # --- Merge per-asset ---
+    all_assets = sorted(set(d01_by_asset.keys()) | set(d02_by_asset.keys()))
+    for asset in all_assets:
+        d01 = d01_by_asset.get(asset, {})
+        d02 = d02_by_asset.get(asset, {})
+        # Parse modifier — stored as STRING in QuestDB
+        mod_raw = d01.get("modifier")
+        try:
+            mod_val = float(mod_raw) if mod_raw is not None else None
+        except (ValueError, TypeError):
+            mod_val = None
+
+        per_asset.append({
+            "asset_id": asset,
+            "d01_status": d01.get("status"),
+            "d01_modifier": mod_val,
+            "d01_warmup_progress": d01.get("warmup_progress"),
+            "d01_last_retrained": (
+                d01["last_retrained"].isoformat()
+                if d01.get("last_retrained") else None
+            ),
+            "d02_inclusion_flag": d02.get("inclusion_flag"),
+            "d02_inclusion_probability": d02.get("inclusion_probability"),
+            "d02_recent_effectiveness": d02.get("recent_effectiveness"),
+            "d02_days_below_threshold": d02.get("days_below_threshold"),
+        })
+
+    all_checks = d01_populated and d02_populated and feature_connected
+    if aim_id == 16:
+        all_checks = all_checks and d26_populated
+
+    return {
+        "aim_id": aim_id,
+        "aim_name": name,
+        "tier": tier,
+        "per_asset": per_asset,
+        "validation": {
+            "d01_populated": d01_populated,
+            "d02_populated": d02_populated,
+            "d26_populated": d26_populated if aim_id == 16 else None,
+            "feature_data_connected": feature_connected,
+            "all_checks_pass": all_checks,
+        },
+    }
 
 
 def _get_tsm_status(user_id: str) -> list[dict]:
