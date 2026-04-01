@@ -54,9 +54,24 @@ const ReplayConfigPanel = () => {
       mll_limit: config.mllLimit,
     };
     try {
-      const res = await api.replayStart(config.date, config.session, overrides, speed);
-      if (res?.replay_id) {
-        useReplayStore.getState().handleWsMessage({ type: "replay_started", replay_id: res.replay_id });
+      if (config.mode === "period") {
+        if (!config.dateFrom || !config.dateTo) return;
+        if (config.dateFrom > config.dateTo) return;
+        const res = await api.replayBatchStart(
+          config.dateFrom, config.dateTo, config.sessions, overrides, speed
+        );
+        if (res?.replay_id) {
+          useReplayStore.getState().handleWsMessage({
+            type: "batch_started",
+            replay_id: res.replay_id,
+            total_days: 0,
+          });
+        }
+      } else {
+        const res = await api.replayStart(config.date, config.sessions, overrides, speed);
+        if (res?.replay_id) {
+          useReplayStore.getState().handleWsMessage({ type: "replay_started", replay_id: res.replay_id });
+        }
       }
     } catch (err) {
       console.error("Replay start failed:", err);
@@ -66,8 +81,11 @@ const ReplayConfigPanel = () => {
   const handleResetToLive = () => {
     reset();
     setConfig({
+      mode: "single",
       date: new Date().toISOString().slice(0, 10),
-      session: "NY",
+      dateFrom: "",
+      dateTo: "",
+      sessions: ["NY", "LONDON", "APAC", "NY_PRE"],
       capital: 150000,
       budgetDivisor: 20,
       riskGoal: "PASS_EVAL",
@@ -103,11 +121,33 @@ const ReplayConfigPanel = () => {
 
   return (
     <div data-testid="replay-config-panel" className="p-3 space-y-3">
-      {/* Section: Session */}
+      {/* Section: Replay Mode */}
+      <div className="space-y-2">
+        <div className="text-[9px] uppercase tracking-[1px] text-[#0faf7a] font-mono border-b border-[#1e293b] pb-1">Replay Mode</div>
+        <div className="flex gap-1">
+          {["single", "period"].map((m) => (
+            <button
+              key={m}
+              data-testid={`replay-mode-${m}`}
+              onClick={() => setConfig({ mode: m })}
+              disabled={isRunning}
+              className={`flex-1 py-[3px] text-[9px] font-mono border border-solid cursor-pointer transition-colors ${
+                config.mode === m
+                  ? "bg-[rgba(15,175,122,0.2)] border-[rgba(15,175,122,0.4)] text-[#0faf7a]"
+                  : "bg-[#111827] border-[#1e293b] text-[#64748b] hover:text-[#94a3b8]"
+              }`}
+            >
+              {m === "single" ? "Single Day" : "Period"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Section: Date & Sessions */}
       <div className="space-y-2">
         <div className="text-[9px] uppercase tracking-[1px] text-[#0faf7a] font-mono border-b border-[#1e293b] pb-1">Session Config</div>
 
-        <div className="grid grid-cols-2 gap-2">
+        {config.mode === "single" ? (
           <div>
             <Label>Date</Label>
             <input
@@ -119,17 +159,70 @@ const ReplayConfigPanel = () => {
               className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none"
             />
           </div>
-          <div>
-            <Label>Session</Label>
-            <select
-              data-testid="replay-config-session"
-              value={config.session}
-              onChange={(e) => setConfig({ session: e.target.value })}
-              disabled={isRunning}
-              className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none"
-            >
-              {SESSIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>From</Label>
+                <input
+                  data-testid="replay-config-date-from"
+                  type="date"
+                  value={config.dateFrom}
+                  onChange={(e) => setConfig({ dateFrom: e.target.value })}
+                  disabled={isRunning}
+                  className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none"
+                />
+              </div>
+              <div>
+                <Label>To</Label>
+                <input
+                  data-testid="replay-config-date-to"
+                  type="date"
+                  value={config.dateTo}
+                  onChange={(e) => setConfig({ dateTo: e.target.value })}
+                  disabled={isRunning}
+                  className="w-full bg-[#111827] border border-solid border-[#1e293b] text-[10px] text-[#e2e8f0] font-mono px-2 py-[3px] focus:border-[#0faf7a] focus:outline-none"
+                />
+              </div>
+            </div>
+            {config.dateFrom && config.dateTo && config.dateFrom <= config.dateTo && (
+              <div className="text-[8px] text-[#64748b] font-mono text-center">
+                {(() => {
+                  let count = 0;
+                  const d = new Date(config.dateFrom);
+                  const end = new Date(config.dateTo);
+                  while (d <= end) {
+                    if (d.getDay() !== 0 && d.getDay() !== 6) count++;
+                    d.setDate(d.getDate() + 1);
+                  }
+                  return `${count} weekday${count !== 1 ? "s" : ""}`;
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div>
+          <Label>Sessions</Label>
+          <div className="flex gap-2 mt-1">
+            {SESSIONS.map((s) => (
+              <label key={s} className="flex items-center gap-1 text-[9px] font-mono text-[#e2e8f0] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  data-testid={`replay-session-${s}`}
+                  checked={(config.sessions || []).includes(s)}
+                  disabled={isRunning}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                      ? [...(config.sessions || []), s]
+                      : (config.sessions || []).filter((x) => x !== s);
+                    if (next.length > 0) setConfig({ sessions: next });
+                  }}
+                  className="accent-[#0faf7a]"
+                />
+                {s}
+              </label>
+            ))}
           </div>
         </div>
       </div>

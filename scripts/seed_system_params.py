@@ -51,6 +51,7 @@ SYSTEM_PARAMS = {
     "aim_modifier_floor": {"value": 0.5, "category": "aim"},
     "aim_modifier_ceiling": {"value": 1.5, "category": "aim"},
     "aim_minimum_evaluation_period": {"value": 50, "category": "aim"},
+    "aim_inclusion_threshold": {"value": 0.02, "category": "aim"},
     "aim_dormancy_threshold": {"value": 0.05, "category": "aim"},
     "aim_dormancy_days": {"value": 30, "category": "aim"},
     "aim_dominance_threshold": {"value": 0.30, "category": "aim"},

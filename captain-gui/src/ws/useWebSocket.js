@@ -143,7 +143,11 @@ export default function useWebSocket(userId = "primary_user") {
         case "replay_complete":
         case "replay_error":
         case "replay_paused":
-        case "replay_resumed": {
+        case "replay_resumed":
+        case "batch_started":
+        case "batch_day_started":
+        case "batch_day_completed":
+        case "batch_complete": {
           const { handleWsMessage } = useReplayStore.getState();
           handleWsMessage(data);
           break;

@@ -9,6 +9,10 @@ const ReplaySummary = () => {
   const assetResults = useReplayStore((s) => s.assetResults);
   const assetOrder = useReplayStore((s) => s.assetOrder);
   const config = useReplayStore((s) => s.config);
+  const batchStatus = useReplayStore((s) => s.batchStatus);
+
+  // Hide during batch mode -- BatchPnlReport handles the summary
+  if (batchStatus !== "idle") return null;
 
   const isComplete = status === "complete";
   const hasError = summary?.error;

@@ -30,7 +30,7 @@ AIM modifiers per AIMRegistry.md Part J:
   AIM-13: Sensitivity — modifier from Offline B5 (fragile → 0.85)
   AIM-14: Auto-Expansion — always outputs 1.0
   AIM-15: Opening Volume — modifier based on volume ratio
-  AIM-16: HMM Opportunity — modifier from Offline B1 (HMM state)
+  AIM-16: HMM Opportunity — REMOVED from B3 per DEC-06; now in Block 5 session budget
 
 Reads: P3-D01 (aim_states), P3-D02 (aim_weights), features (from B1)
 Writes: nothing (pure computation)
@@ -146,7 +146,8 @@ def compute_aim_modifier(aim_id: int, features: dict, asset_id: str, state: dict
         13: _aim13_sensitivity,
         14: _aim14_expansion,
         15: _aim15_volume,
-        16: _aim16_hmm,
+        # AIM-16 removed from B3 dispatch per DEC-06: session budget allocator
+        # now handled by apply_hmm_session_allocation() in Block 5 (b5_trade_selection.py)
     }
 
     handler = dispatch.get(aim_id)
@@ -161,46 +162,82 @@ def compute_aim_modifier(aim_id: int, features: dict, asset_id: str, state: dict
 
 
 def _aim01_vrp(f: dict, state: dict) -> dict:
-    """AIM-01: VRP modifier. Positive VRP (IV cheap) → boost; negative → reduce."""
-    vrp = f.get("vrp")
-    if vrp is None:
+    """AIM-01: VRP modifier — z-scored overnight VRP per AIM_Extractions.md:217-228.
+
+    Thresholds (DEC-01 spec authoritative):
+      z > +1.5 → 0.70  (high uncertainty, reduce sizing)
+      z > +0.5 → 0.85
+      z < -1.0 → 1.10  (low uncertainty, slight increase)
+      else     → 1.00  (neutral)
+
+    Monday adjustment (F1.2): modifier *= 0.95 on Monday mornings.
+    """
+    vrp_z = f.get("vrp_overnight_z")
+    if vrp_z is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "VRP_MISSING"}
 
-    if vrp > 0.02:
-        return {"modifier": 1.15, "confidence": 0.8, "reason_tag": "VRP_POSITIVE_STRONG"}
-    elif vrp > 0:
-        return {"modifier": 1.05, "confidence": 0.6, "reason_tag": "VRP_POSITIVE_WEAK"}
-    elif vrp > -0.02:
-        return {"modifier": 0.95, "confidence": 0.6, "reason_tag": "VRP_NEGATIVE_WEAK"}
+    if vrp_z > 1.5:
+        modifier = 0.70
+        confidence = 0.8
+        tag = "VRP_HIGH_UNCERTAINTY"
+    elif vrp_z > 0.5:
+        modifier = 0.85
+        confidence = 0.7
+        tag = "VRP_ELEVATED"
+    elif vrp_z < -1.0:
+        modifier = 1.10
+        confidence = 0.6
+        tag = "VRP_LOW_UNCERTAINTY"
     else:
-        return {"modifier": 0.85, "confidence": 0.8, "reason_tag": "VRP_NEGATIVE_STRONG"}
+        modifier = 1.0
+        confidence = 0.5
+        tag = "VRP_NEUTRAL"
+
+    # Monday adjustment: weekend uncertainty accumulation (AIM_Extractions.md:227)
+    dow = f.get("day_of_week")
+    if dow == 0:  # Monday
+        modifier *= 0.95
+        tag += "_MONDAY"
+
+    return {"modifier": modifier, "confidence": confidence, "reason_tag": tag}
 
 
 def _aim02_skew(f: dict, state: dict) -> dict:
-    """AIM-02: Options skew. High PCR + steep skew → bearish caution."""
-    pcr = f.get("pcr")
-    put_skew = f.get("put_skew")
+    """AIM-02: Skew — weighted z-score combination per AIM_Extractions.md:470-481.
 
-    if pcr is None and put_skew is None:
+    combined = 0.6 × z_score(PCR, 30d) + 0.4 × z_score(skew, 60d)
+
+    Thresholds (DEC-01 spec authoritative):
+      combined > +1.5 → 0.75  (heavy put buying + steep skew = high fear)
+      combined > +0.5 → 0.90
+      combined < -1.0 → 1.10  (call-heavy + flat skew = bullish)
+      else            → 1.00
+    """
+    pcr_z = f.get("pcr_z")
+    skew_z = f.get("skew_z")
+
+    if pcr_z is None and skew_z is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "SKEW_MISSING"}
 
-    modifier = 1.0
-    tag = "SKEW_NEUTRAL"
+    # Weighted combination — degrade gracefully if one signal missing
+    if pcr_z is not None and skew_z is not None:
+        combined = 0.6 * pcr_z + 0.4 * skew_z
+        confidence = 0.7
+    elif pcr_z is not None:
+        combined = pcr_z
+        confidence = 0.5
+    else:
+        combined = skew_z
+        confidence = 0.4
 
-    if pcr is not None:
-        if pcr > 1.5:
-            modifier -= 0.10
-            tag = "PCR_HIGH"
-        elif pcr < 0.7:
-            modifier += 0.05
-            tag = "PCR_LOW"
-
-    if put_skew is not None:
-        if put_skew > 0.05:
-            modifier -= 0.05
-            tag = "SKEW_STEEP" if tag == "SKEW_NEUTRAL" else tag + "_STEEP"
-
-    return {"modifier": modifier, "confidence": 0.6, "reason_tag": tag}
+    if combined > 1.5:
+        return {"modifier": 0.75, "confidence": confidence, "reason_tag": "SKEW_FEAR_HIGH"}
+    elif combined > 0.5:
+        return {"modifier": 0.90, "confidence": confidence, "reason_tag": "SKEW_FEAR_ELEVATED"}
+    elif combined < -1.0:
+        return {"modifier": 1.10, "confidence": confidence, "reason_tag": "SKEW_BULLISH"}
+    else:
+        return {"modifier": 1.0, "confidence": confidence, "reason_tag": "SKEW_NEUTRAL"}
 
 
 def _aim03_gex(f: dict, state: dict) -> dict:
@@ -219,24 +256,71 @@ def _aim03_gex(f: dict, state: dict) -> dict:
 def _aim04_ivts(f: dict, state: dict) -> dict:
     """AIM-04: IVTS (CRITICAL regime filter).
 
-    IVTS < 1 → contango (normal), IVTS > 1 → backwardation (stress).
+    Merged 5-zone per DEC-03 (Paper 67 validated optimal zone):
+      >1.10       → 0.65  severe backwardation (turmoil)
+      (1.0, 1.10] → 0.80  backwardation
+      [0.93, 1.0] → 1.10  optimal (Paper 67 validated)
+      [0.85, 0.93)→ 0.90  quiet
+      <0.85       → 0.80  deep quiet (costs dominate)
+
+    Overnight return gap overlay (AIM_Extractions.md:947-952):
+      overnight_z > 2.0 → ×0.85  (extreme gap, expect reversal/volatility)
+      overnight_z > 1.0 → ×0.95
+      else               → ×1.0
+
+    IVTS = VIX/VXV — inherently normalised, no z-score needed.
     """
     ivts = f.get("ivts")
     if ivts is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "IVTS_MISSING"}
 
+    # IVTS zone (primary)
     if ivts > 1.10:
-        return {"modifier": 0.70, "confidence": 0.9, "reason_tag": "IVTS_BACKWARDATION_SEVERE"}
+        modifier = 0.65
+        confidence = 0.9
+        tag = "IVTS_SEVERE_BACKWARDATION"
     elif ivts > 1.0:
-        return {"modifier": 0.85, "confidence": 0.7, "reason_tag": "IVTS_BACKWARDATION"}
-    elif ivts < 0.85:
-        return {"modifier": 1.10, "confidence": 0.6, "reason_tag": "IVTS_CONTANGO_DEEP"}
+        modifier = 0.80
+        confidence = 0.8
+        tag = "IVTS_BACKWARDATION"
+    elif ivts >= 0.93:
+        modifier = 1.10
+        confidence = 0.9
+        tag = "IVTS_OPTIMAL"
+    elif ivts >= 0.85:
+        modifier = 0.90
+        confidence = 0.6
+        tag = "IVTS_QUIET"
     else:
-        return {"modifier": 1.0, "confidence": 0.5, "reason_tag": "IVTS_NORMAL"}
+        modifier = 0.80
+        confidence = 0.6
+        tag = "IVTS_DEEP_QUIET"
+
+    # Overnight return gap overlay (spec: AIM_Extractions.md:947-952)
+    overnight_z = f.get("overnight_return_z")
+    if overnight_z is not None:
+        if overnight_z > 2.0:
+            modifier *= 0.85
+            tag += "_EXTREME_GAP"
+        elif overnight_z > 1.0:
+            modifier *= 0.95
+            tag += "_GAP"
+
+    # CL EIA Wednesday overlay (spec: AIM_Extractions.md:954)
+    if f.get("is_eia_wednesday"):
+        modifier *= 0.90
+        tag += "_EIA_WEDNESDAY"
+
+    return {"modifier": modifier, "confidence": confidence, "reason_tag": tag}
 
 
 def _aim06_calendar(f: dict, state: dict) -> dict:
-    """AIM-06: Economic calendar. Events nearby → reduce sizing."""
+    """AIM-06: Economic calendar — per AIM_Extractions.md:1327-1343.
+
+    Tier 1 within ±30min → 0.70 (DEC-01 spec authoritative).
+    Tier 1 later in day  → 1.05 (pre-announcement risk premium, Paper 88).
+    Tier 2 within ±30min → 0.85 (matches spec).
+    """
     event_proximity = f.get("event_proximity")
     events = f.get("events_today", [])
 
@@ -250,10 +334,11 @@ def _aim06_calendar(f: dict, state: dict) -> dict:
     abs_proximity = abs(event_proximity) if event_proximity else 999
 
     if max_tier <= 1 and abs_proximity < 30:
-        # Major event (NFP/FOMC) within 30 min
-        return {"modifier": 0.60, "confidence": 0.9, "reason_tag": "MAJOR_EVENT_IMMINENT"}
-    elif max_tier <= 1 and abs_proximity < 120:
-        return {"modifier": 0.80, "confidence": 0.7, "reason_tag": "MAJOR_EVENT_NEAR"}
+        # Major event (NFP/FOMC) within 30 min — spec: 0.70
+        return {"modifier": 0.70, "confidence": 0.9, "reason_tag": "MAJOR_EVENT_IMMINENT"}
+    elif max_tier <= 1:
+        # Tier 1 later in day — pre-announcement risk premium (spec: AIM_Extractions.md:1333-1334)
+        return {"modifier": 1.05, "confidence": 0.6, "reason_tag": "MAJOR_EVENT_PREMIUM"}
     elif max_tier <= 2 and abs_proximity < 30:
         return {"modifier": 0.85, "confidence": 0.6, "reason_tag": "MID_EVENT_IMMINENT"}
     elif max_tier <= 2:
@@ -263,43 +348,65 @@ def _aim06_calendar(f: dict, state: dict) -> dict:
 
 
 def _aim07_cot(f: dict, state: dict) -> dict:
-    """AIM-07: COT positioning. SMI alignment with strategy direction."""
+    """AIM-07: COT positioning — per AIM_Extractions.md:1541-1559.
+
+    SMI polarity: POSITIVE→1.05, NEGATIVE→0.90.
+    Extreme overlay (DEC-01 spec authoritative):
+      spec_z > 1.5  → ×0.95 (crowded long, elevated risk)
+      spec_z < -1.5 → ×1.10 (extreme bearishness, contrarian opportunity)
+    modifier = smi_mod × extreme_mod
+    """
     smi = f.get("cot_smi")
     spec_z = f.get("cot_speculator_z")
 
     if smi is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "COT_MISSING"}
 
-    # Positive SMI (institutional net long) → bullish alignment
-    modifier = 1.0
+    # SMI polarity (spec: lines 1547-1550)
     if smi == 1:
-        modifier = 1.05
+        smi_mod = 1.05
         tag = "COT_INSTITUTIONAL_LONG"
     elif smi == -1:
-        modifier = 0.95
+        smi_mod = 0.90
         tag = "COT_INSTITUTIONAL_SHORT"
     else:
+        smi_mod = 1.0
         tag = "COT_NEUTRAL"
 
-    # Extreme speculator positioning adds caution
-    if spec_z is not None and abs(spec_z) > 2.0:
-        modifier -= 0.05
-        tag += "_EXTREME_SPEC"
+    # Extreme positioning overlay — direction-aware (spec: lines 1552-1557)
+    extreme_mod = 1.0
+    if spec_z is not None:
+        if spec_z > 1.5:
+            extreme_mod = 0.95
+            tag += "_CROWDED_LONG"
+        elif spec_z < -1.5:
+            extreme_mod = 1.10
+            tag += "_CONTRARIAN"
 
+    modifier = smi_mod * extreme_mod
     return {"modifier": modifier, "confidence": 0.5, "reason_tag": tag}
 
 
 def _aim08_correlation(f: dict, state: dict) -> dict:
-    """AIM-08: Cross-asset correlation. High correlation z → reduce diversification benefit."""
+    """AIM-08: Cross-asset correlation — 4-tier per AIM_Extractions.md:1713-1725.
+
+    Thresholds (DEC-01 spec authoritative):
+      corr_z > 1.5  → 0.80  (stress: correlation spike, diversification collapsed)
+      corr_z > 0.5  → 0.90  (elevated, caution)
+      corr_z < -0.5 → 1.05  (below average, diversification benefit strong)
+      else          → 1.00
+    """
     corr_z = f.get("correlation_z")
 
     if corr_z is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "CORR_MISSING"}
 
-    if corr_z > 2.0:
-        return {"modifier": 0.85, "confidence": 0.7, "reason_tag": "CORR_EXTREME_HIGH"}
-    elif corr_z < -2.0:
-        return {"modifier": 1.10, "confidence": 0.7, "reason_tag": "CORR_EXTREME_LOW"}
+    if corr_z > 1.5:
+        return {"modifier": 0.80, "confidence": 0.7, "reason_tag": "CORR_STRESS"}
+    elif corr_z > 0.5:
+        return {"modifier": 0.90, "confidence": 0.6, "reason_tag": "CORR_ELEVATED"}
+    elif corr_z < -0.5:
+        return {"modifier": 1.05, "confidence": 0.5, "reason_tag": "CORR_LOW"}
     else:
         return {"modifier": 1.0, "confidence": 0.4, "reason_tag": "CORR_NORMAL"}
 
@@ -321,72 +428,106 @@ def _aim09_momentum(f: dict, state: dict) -> dict:
 
 
 def _aim10_calendar_effects(f: dict, state: dict) -> dict:
-    """AIM-10: Calendar effects. OPEX window + day-of-week patterns."""
-    is_opex = f.get("is_opex_window", False)
-    dow = f.get("day_of_week")
+    """AIM-10: Calendar effects — per AIM_Extractions.md:2064 + DEC-04.
 
-    modifier = 1.0
-    tag = "CALENDAR_NORMAL"
+    OPEX window → 0.95 (spec; was 0.90 in code).
+    Monday/Friday DOW adjustments REMOVED (DEC-04: Paper 124 shows DOW effects disappeared).
+    """
+    is_opex = f.get("is_opex_window", False)
 
     if is_opex:
-        modifier *= 0.90
-        tag = "OPEX_WINDOW"
+        return {"modifier": 0.95, "confidence": 0.5, "reason_tag": "OPEX_WINDOW"}
 
-    # Monday/Friday tend to have different vol profiles
-    if dow == 0:  # Monday
-        modifier *= 0.95
-        tag = "MONDAY" if tag == "CALENDAR_NORMAL" else tag + "_MONDAY"
-    elif dow == 4:  # Friday
-        modifier *= 0.95
-        tag = "FRIDAY" if tag == "CALENDAR_NORMAL" else tag + "_FRIDAY"
-
-    return {"modifier": modifier, "confidence": 0.4, "reason_tag": tag}
+    return {"modifier": 1.0, "confidence": 0.3, "reason_tag": "CALENDAR_NORMAL"}
 
 
 def _aim11_regime_warning(f: dict, state: dict) -> dict:
-    """AIM-11: Regime warning. VIX z-score signals regime stress."""
+    """AIM-11: Regime warning — VIX z-score per AIM_Extractions.md:2222-2246.
+
+    Thresholds (DEC-01 spec authoritative):
+      VIX_z > 1.5  → 0.75  (high transition probability to stress)
+      VIX_z > 0.5  → 0.90  (elevated)
+      VIX_z < -0.5 → 1.05  (low stress probability)
+      else         → 1.00
+
+    VIX change overlay: VIX_change_z > 2.0 → ×0.85 (regime shift in progress).
+    CL basis overlay (F1.11): basis < -0.02 AND VIX_z > 0.5 → ×0.90.
+    """
     vix_z = f.get("vix_z")
     vix_change_z = f.get("vix_daily_change_z")
 
     if vix_z is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "VIX_MISSING"}
 
-    modifier = 1.0
-    tag = "VIX_NORMAL"
-
-    if vix_z > 2.0:
-        modifier = 0.70
-        tag = "VIX_EXTREME_HIGH"
-    elif vix_z > 1.0:
-        modifier = 0.85
+    # VIX level warning
+    if vix_z > 1.5:
+        modifier = 0.75
+        tag = "VIX_HIGH_STRESS"
+    elif vix_z > 0.5:
+        modifier = 0.90
         tag = "VIX_ELEVATED"
-    elif vix_z < -1.0:
-        modifier = 1.10
-        tag = "VIX_DEPRESSED"
+    elif vix_z < -0.5:
+        modifier = 1.05
+        tag = "VIX_LOW_STRESS"
+    else:
+        modifier = 1.0
+        tag = "VIX_NORMAL"
 
-    # VIX spike adds urgency
+    # VIX change overlay: regime transition in progress (spec: ×0.85)
     if vix_change_z is not None and vix_change_z > 2.0:
-        modifier *= 0.90
+        modifier *= 0.85
         tag += "_SPIKE"
+
+    # CL basis overlay (F1.11): backwardation + elevated VIX = persistent stress
+    cl_basis = f.get("cl_basis")
+    if cl_basis is not None and cl_basis < -0.02 and vix_z > 0.5:
+        modifier *= 0.90
+        tag += "_CL_BACKWARDATION"
 
     return {"modifier": modifier, "confidence": 0.8, "reason_tag": tag}
 
 
 def _aim12_costs(f: dict, state: dict) -> dict:
-    """AIM-12: Dynamic costs. Wide spreads → reduce sizing."""
+    """AIM-12: Dynamic costs — per AIM_Extractions.md:2403-2425.
+
+    Uses BOTH spread_z AND vol_z (OR for high cost, AND for low cost).
+    Thresholds (DEC-01 spec authoritative):
+      spread_z > 1.5 OR vol_z > 1.5  → 0.85
+      spread_z > 0.5 OR vol_z > 0.5  → 0.95
+      spread_z < -0.5 AND vol_z < -0.5 → 1.05
+      else → 1.0
+    VIX overlay: VIX_z > 1.0 → ×0.95.
+    """
     spread_z = f.get("spread_z")
+    vol_z = f.get("vol_z")
 
-    if spread_z is None:
-        return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "SPREAD_MISSING"}
+    if spread_z is None and vol_z is None:
+        return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "COST_MISSING"}
 
-    if spread_z > 2.0:
-        return {"modifier": 0.80, "confidence": 0.8, "reason_tag": "SPREAD_WIDE"}
-    elif spread_z > 1.0:
-        return {"modifier": 0.90, "confidence": 0.6, "reason_tag": "SPREAD_ABOVE_NORMAL"}
-    elif spread_z < -1.0:
-        return {"modifier": 1.05, "confidence": 0.5, "reason_tag": "SPREAD_TIGHT"}
+    # Default to 0 when one signal missing (neutral for OR/AND logic)
+    sz = spread_z if spread_z is not None else 0.0
+    vz = vol_z if vol_z is not None else 0.0
+
+    if sz > 1.5 or vz > 1.5:
+        modifier = 0.85
+        tag = "COST_HIGH"
+    elif sz > 0.5 or vz > 0.5:
+        modifier = 0.95
+        tag = "COST_ELEVATED"
+    elif sz < -0.5 and vz < -0.5:
+        modifier = 1.05
+        tag = "COST_LOW"
     else:
-        return {"modifier": 1.0, "confidence": 0.4, "reason_tag": "SPREAD_NORMAL"}
+        modifier = 1.0
+        tag = "COST_NORMAL"
+
+    # High-vol day overlay (spec: VIX_z > 1.0 → worse fills on stops)
+    vix_z = f.get("vix_z")
+    if vix_z is not None and vix_z > 1.0:
+        modifier *= 0.95
+        tag += "_HIGHVOL"
+
+    return {"modifier": modifier, "confidence": 0.6, "reason_tag": tag}
 
 
 def _aim13_sensitivity(f: dict, state: dict) -> dict:
@@ -407,20 +548,25 @@ def _aim14_expansion(f: dict, state: dict) -> dict:
 
 
 def _aim15_volume(f: dict, state: dict) -> dict:
-    """AIM-15: Opening volume. Unusual volume ratio → adjust."""
+    """AIM-15: Opening volume — per AIM_Extractions.md:2904-2913.
+
+    Thresholds (DEC-01 spec authoritative):
+      vol_ratio > 1.5 → 1.15  (high conviction, strong ORB environment)
+      vol_ratio > 1.0 → 1.05  (above average, moderate confirmation)
+      vol_ratio < 0.7 → 0.80  (low conviction, ORB signal unreliable)
+      else            → 1.00
+    """
     vol_ratio = f.get("opening_volume_ratio")
 
     if vol_ratio is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "VOLUME_MISSING"}
 
-    if vol_ratio > 3.0:
-        return {"modifier": 1.15, "confidence": 0.7, "reason_tag": "VOLUME_SURGE"}
-    elif vol_ratio > 1.5:
+    if vol_ratio > 1.5:
+        return {"modifier": 1.15, "confidence": 0.7, "reason_tag": "VOLUME_HIGH"}
+    elif vol_ratio > 1.0:
         return {"modifier": 1.05, "confidence": 0.5, "reason_tag": "VOLUME_ABOVE_AVG"}
-    elif vol_ratio < 0.3:
-        return {"modifier": 0.80, "confidence": 0.7, "reason_tag": "VOLUME_VERY_LOW"}
     elif vol_ratio < 0.7:
-        return {"modifier": 0.90, "confidence": 0.5, "reason_tag": "VOLUME_BELOW_AVG"}
+        return {"modifier": 0.80, "confidence": 0.7, "reason_tag": "VOLUME_LOW"}
     else:
         return {"modifier": 1.0, "confidence": 0.3, "reason_tag": "VOLUME_NORMAL"}
 

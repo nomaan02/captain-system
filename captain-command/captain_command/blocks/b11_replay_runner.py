@@ -32,13 +32,14 @@ logger = logging.getLogger(__name__)
 class ReplaySession:
     """Manages a single replay execution in a background thread."""
 
-    def __init__(self, replay_id, user_id, config, target_date, speed, gui_push_fn):
+    def __init__(self, replay_id, user_id, config, target_date, speed, gui_push_fn, sessions=None):
         self.replay_id = replay_id
         self.user_id = user_id
         self.config = config
         self.target_date = target_date
         self.speed = speed
         self.gui_push_fn = gui_push_fn
+        self.sessions = sessions
 
         self._pause_event = threading.Event()
         self._pause_event.set()  # Start unpaused
@@ -161,6 +162,7 @@ class ReplaySession:
                 config=self.config,
                 target_date=self.target_date,
                 on_event=on_event,
+                sessions=self.sessions,
             )
 
             self._results = result
@@ -205,7 +207,7 @@ _active_sessions: dict[str, ReplaySession] = {}
 _lock = threading.Lock()
 
 
-def start_replay(user_id, date_str, session, config_overrides, speed, gui_push_fn) -> str:
+def start_replay(user_id, date_str, sessions, config_overrides, speed, gui_push_fn) -> str:
     """Start a new replay. Returns replay_id. Stops any existing replay for this user."""
     from shared.replay_engine import load_replay_config
 
@@ -241,6 +243,7 @@ def start_replay(user_id, date_str, session, config_overrides, speed, gui_push_f
         target_date=target_date,
         speed=speed,
         gui_push_fn=gui_push_fn,
+        sessions=sessions,
     )
 
     with _lock:
@@ -316,7 +319,7 @@ def save_replay(replay_id, user_id) -> dict:
                     replay_id,
                     user_id,
                     rs.target_date.isoformat() if rs.target_date else "",
-                    "NY",  # Primary session
+                    ",".join(rs.sessions) if rs.sessions else "ALL",
                     json.dumps(_safe_config(rs.config)),
                     json.dumps(results.get("results", []), default=str),
                     json.dumps(results.get("summary", {}), default=str),
@@ -363,11 +366,320 @@ def run_whatif(user_id, config_overrides) -> dict:
             cached_bars=rs._cached_bars,
             original_results=rs._results,
             target_date=rs.target_date,
+            sessions=rs.sessions,
         )
         return result
     except Exception as exc:
         logger.error("What-if failed: %s", exc, exc_info=True)
         return {"error": f"What-if failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Batch (period) replay
+# ---------------------------------------------------------------------------
+
+
+class BatchReplaySession:
+    """Manages a multi-day batch replay in a background thread."""
+
+    def __init__(self, replay_id, user_id, config, dates, sessions, speed, gui_push_fn):
+        self.replay_id = replay_id
+        self.user_id = user_id
+        self.config = config
+        self.dates = dates                # list[date] -- weekdays only
+        self.sessions = sessions          # list[str]
+        self.speed = speed
+        self.gui_push_fn = gui_push_fn
+
+        self._pause_event = threading.Event()
+        self._pause_event.set()
+        self._stop_flag = False
+        self._thread = None
+        self._status = "pending"
+        self._error = None
+        self._started_at = None
+        self._finished_at = None
+
+        self.day_results = []
+        self._current_day_idx = 0
+        self._cached_bars = None
+        self._results = None
+        # target_date is the last date in the range (for compat with _get_user_session)
+        self.target_date = dates[-1] if dates else None
+
+    def start(self):
+        self._status = "running"
+        self._started_at = datetime.now().isoformat()
+        self._thread = threading.Thread(
+            target=self._run, name=f"batch-{self.replay_id}", daemon=True
+        )
+        self._thread.start()
+
+    def pause(self):
+        self._pause_event.clear()
+        self._status = "paused"
+        logger.info("Batch %s paused", self.replay_id)
+
+    def resume(self):
+        self._pause_event.set()
+        self._status = "running"
+        logger.info("Batch %s resumed", self.replay_id)
+
+    def set_speed(self, speed):
+        self.speed = max(0.1, min(speed, 100.0))
+        logger.info("Batch %s speed set to %.1fx", self.replay_id, self.speed)
+
+    def skip_to_next(self):
+        self._pause_event.set()
+
+    def stop(self):
+        self._stop_flag = True
+        self._pause_event.set()
+        self._status = "stopped"
+        logger.info("Batch %s stopped", self.replay_id)
+
+    def get_status(self) -> dict:
+        return {
+            "replay_id": self.replay_id,
+            "user_id": self.user_id,
+            "status": self._status,
+            "speed": self.speed,
+            "total_days": len(self.dates),
+            "completed_days": len(self.day_results),
+            "current_day": self.dates[self._current_day_idx].isoformat()
+                if self._current_day_idx < len(self.dates) else None,
+            "started_at": self._started_at,
+            "finished_at": self._finished_at,
+            "error": self._error,
+            "has_results": len(self.day_results) > 0,
+        }
+
+    def _run(self):
+        from shared.replay_engine import run_replay
+
+        write_checkpoint(
+            "COMMAND", "BATCH_REPLAY_START", "starting", "batch_replay",
+            {"replay_id": self.replay_id, "total_days": len(self.dates)},
+        )
+
+        self.gui_push_fn(self.user_id, {
+            "type": "batch_started",
+            "replay_id": self.replay_id,
+            "total_days": len(self.dates),
+            "dates": [d.isoformat() for d in self.dates],
+            "sessions": self.sessions,
+        })
+
+        for idx, target_date in enumerate(self.dates):
+            if self._stop_flag:
+                break
+
+            self._pause_event.wait()
+            if self._stop_flag:
+                break
+
+            self._current_day_idx = idx
+            date_str = target_date.isoformat()
+
+            self.gui_push_fn(self.user_id, {
+                "type": "batch_day_started",
+                "replay_id": self.replay_id,
+                "date": date_str,
+                "day_index": idx,
+                "total_days": len(self.dates),
+            })
+
+            def on_event(event, _date=date_str):
+                if self._stop_flag:
+                    return
+                event_data = event.get("data", {})
+                self.gui_push_fn(self.user_id, {
+                    "type": "replay_tick",
+                    "replay_id": self.replay_id,
+                    "event": event.get("event", ""),
+                    "batch_date": _date,
+                    **event_data,
+                })
+                # Minimal speed delay for batch mode
+                evt = event.get("event", "")
+                if evt not in ("breakout", "exit", "error", "replay_complete",
+                               "config_loaded", "auth_complete"):
+                    time.sleep(0.1 / max(self.speed, 1))
+
+            try:
+                result = run_replay(
+                    config=self.config,
+                    target_date=target_date,
+                    on_event=on_event,
+                    sessions=self.sessions,
+                )
+
+                summary = result.get("summary", {})
+                if isinstance(summary, str):
+                    summary = {}
+
+                day_record = {
+                    "date": date_str,
+                    "sessions": self.sessions,
+                    "trades": summary.get("trades_taken", 0) if isinstance(summary, dict) else 0,
+                    "wins": summary.get("wins", 0) if isinstance(summary, dict) else 0,
+                    "losses": summary.get("losses", 0) if isinstance(summary, dict) else 0,
+                    "pnl": result.get("total_pnl", 0),
+                    "errors": len(result.get("errors", [])),
+                }
+
+            except Exception as exc:
+                day_record = {
+                    "date": date_str,
+                    "sessions": self.sessions,
+                    "trades": 0, "wins": 0, "losses": 0, "pnl": 0,
+                    "errors": 1, "error": str(exc),
+                }
+                logger.error("Batch day %s failed: %s", date_str, exc, exc_info=True)
+
+            self.day_results.append(day_record)
+            cum_pnl = sum(d["pnl"] for d in self.day_results)
+            day_record["cumulative_pnl"] = round(cum_pnl, 2)
+
+            self.gui_push_fn(self.user_id, {
+                "type": "batch_day_completed",
+                "replay_id": self.replay_id,
+                "date": date_str,
+                "day_index": idx,
+                "total_days": len(self.dates),
+                "day_pnl": round(day_record["pnl"], 2),
+                "cumulative_pnl": day_record["cumulative_pnl"],
+                "day_trades": day_record["trades"],
+                "day_wins": day_record["wins"],
+                "day_losses": day_record["losses"],
+            })
+
+        # Compute and send overall summary
+        batch_summary = self._compute_batch_summary()
+        self._status = "complete"
+        self._finished_at = datetime.now().isoformat()
+        self._results = {"day_results": self.day_results, "summary": batch_summary}
+
+        self.gui_push_fn(self.user_id, {
+            "type": "batch_complete",
+            "replay_id": self.replay_id,
+            "summary": batch_summary,
+            "day_results": [
+                {k: v for k, v in d.items() if k != "results"}
+                for d in self.day_results
+            ],
+        })
+
+        write_checkpoint(
+            "COMMAND", "BATCH_REPLAY_COMPLETE", "batch_replay", "idle",
+            {"replay_id": self.replay_id, "total_pnl": batch_summary.get("total_pnl", 0),
+             "total_days": len(self.day_results)},
+        )
+
+    def _compute_batch_summary(self) -> dict:
+        days = self.day_results
+        if not days:
+            return {}
+        total_pnl = sum(d["pnl"] for d in days)
+        total_trades = sum(d["trades"] for d in days)
+        total_wins = sum(d["wins"] for d in days)
+        total_losses = sum(d["losses"] for d in days)
+        pnls = [d["pnl"] for d in days]
+
+        peak = 0
+        max_dd = 0
+        cum = 0
+        for p in pnls:
+            cum += p
+            if cum > peak:
+                peak = cum
+            dd = peak - cum
+            if dd > max_dd:
+                max_dd = dd
+
+        return {
+            "total_pnl": round(total_pnl, 2),
+            "total_trades": total_trades,
+            "total_wins": total_wins,
+            "total_losses": total_losses,
+            "win_rate": round(total_wins / total_trades * 100, 1) if total_trades > 0 else 0,
+            "best_day": round(max(pnls), 2) if pnls else 0,
+            "worst_day": round(min(pnls), 2) if pnls else 0,
+            "avg_daily_pnl": round(total_pnl / len(days), 2) if days else 0,
+            "max_drawdown": round(max_dd, 2),
+            "total_days": len(days),
+            "profitable_days": sum(1 for p in pnls if p > 0),
+            "losing_days": sum(1 for p in pnls if p < 0),
+        }
+
+
+def start_batch_replay(user_id, date_from, date_to, sessions, config_overrides, speed, gui_push_fn) -> str:
+    """Start a batch (period) replay. Returns replay_id."""
+    from datetime import timedelta
+    from shared.replay_engine import load_replay_config
+
+    # Stop existing replay for this user
+    with _lock:
+        for rid, rs in list(_active_sessions.items()):
+            if rs.user_id == user_id and rs._status in ("running", "paused", "pending"):
+                rs.stop()
+
+    try:
+        d_from = date.fromisoformat(date_from)
+        d_to = date.fromisoformat(date_to)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid date format: {e}")
+
+    if d_from > d_to:
+        raise ValueError(f"date_from ({date_from}) must be <= date_to ({date_to})")
+
+    # Generate weekday dates
+    dates = []
+    current = d_from
+    while current <= d_to:
+        if current.weekday() < 5:  # Mon-Fri
+            dates.append(current)
+        current += timedelta(days=1)
+
+    if not dates:
+        raise ValueError(f"No weekdays in range {date_from} to {date_to}")
+
+    if len(dates) > 60:
+        raise ValueError(f"Too many days ({len(dates)}). Max 60 weekdays per batch.")
+
+    # Load config once
+    config = load_replay_config(config_overrides or {})
+
+    if "tp_multiple" in (config_overrides or {}):
+        for asset_strat in config.get("strategies", {}).values():
+            asset_strat["tp_multiple"] = config_overrides["tp_multiple"]
+    if "sl_multiple" in (config_overrides or {}):
+        for asset_strat in config.get("strategies", {}).values():
+            asset_strat["sl_multiple"] = config_overrides["sl_multiple"]
+
+    replay_id = uuid.uuid4().hex[:12]
+
+    batch = BatchReplaySession(
+        replay_id=replay_id,
+        user_id=user_id,
+        config=config,
+        dates=dates,
+        sessions=sessions,
+        speed=speed,
+        gui_push_fn=gui_push_fn,
+    )
+
+    with _lock:
+        _active_sessions[replay_id] = batch
+
+    batch.start()
+
+    logger.info(
+        "Batch replay started: id=%s user=%s dates=%s..%s days=%d speed=%.1f",
+        replay_id, user_id, date_from, date_to, len(dates), speed,
+    )
+
+    return replay_id
 
 
 # ---------------------------------------------------------------------------

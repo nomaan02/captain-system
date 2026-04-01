@@ -51,8 +51,13 @@ const api = {
   performance: (userId) => fetchJson(`${BASE}/performance/${userId}`),
 
   // Replay API
-  replayStart: (date, session, configOverrides, speed) =>
-    post(`${BASE}/replay/start`, { date, session, config_overrides: configOverrides, speed }),
+  replayStart: (date, sessions, configOverrides, speed) =>
+    post(`${BASE}/replay/start`, { date, sessions, config_overrides: configOverrides, speed }),
+  replayBatchStart: (dateFrom, dateTo, sessions, configOverrides, speed) =>
+    post(`${BASE}/replay/batch/start`, {
+      date_from: dateFrom, date_to: dateTo, sessions,
+      config_overrides: configOverrides, speed,
+    }),
   replayControl: (action, value) =>
     post(`${BASE}/replay/control`, { action, value }),
   replaySave: (replayId, userId = "primary_user") =>
@@ -64,6 +69,11 @@ const api = {
     post(`${BASE}/replay/presets`, { name, config, user_id: userId }),
   replayWhatIf: (configOverrides) =>
     post(`${BASE}/replay/whatif`, { config_overrides: configOverrides }),
+
+  // Notifications
+  telegramHistory: (limit = 50) => get(`${BASE}/notifications/telegram-history?limit=${limit}`),
+  testNotification: (userId, message, priority = "HIGH") =>
+    post(`${BASE}/notifications/test`, { user_id: userId, priority, message }),
 
   // System
   gitPull: () => post(`${BASE}/system/git-pull`, {}),

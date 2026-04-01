@@ -657,6 +657,40 @@ TABLES = [
     """,
 
     # =====================================================================
+    # P3-D29: opening_volumes
+    # Owner: Online (bootstrap + post-OR-close daily write)
+    # AIM-15 spec: compare today's first-m-min volume to 20-day avg
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_d29_opening_volumes (
+        asset_id SYMBOL,
+        session_date STRING,
+        session_type STRING,
+        or_minutes INT,
+        volume_first_m_min LONG,
+        ts TIMESTAMP
+    ) timestamp(ts) PARTITION BY MONTH;
+    """,
+
+    # =====================================================================
+    # p3_d30_daily_ohlcv: Historical daily OHLCV for AIM feature baselines
+    # Owner: Online (bootstrap from QC + daily write after session close)
+    # Powers: AIM-08 correlation z-score, AIM-09 momentum, overnight returns
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_d30_daily_ohlcv (
+        asset_id SYMBOL,
+        trade_date STRING,
+        open DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        close DOUBLE,
+        volume LONG,
+        ts TIMESTAMP
+    ) timestamp(ts) PARTITION BY YEAR;
+    """,
+
+    # =====================================================================
     # p3_replay_results: Signal replay analysis results
     # Owner: Command (replay engine)
     # =====================================================================

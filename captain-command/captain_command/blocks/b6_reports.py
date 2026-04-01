@@ -192,17 +192,111 @@ def _rpt03_monthly_decay(user_id: str, params: dict) -> str:
 
 
 def _rpt04_aim_effectiveness(user_id: str, params: dict) -> str:
-    """Per-AIM modifier accuracy, PnL by direction, meta-weight trajectory."""
+    """RPT-04: AIM Effectiveness Report — P3-RPT-04 generation spec.
+
+    Reads:
+      - P3-D01 (aim_model_states): current status, last_retrained per AIM×asset
+      - P3-D02 (aim_meta_weights): inclusion_probability trajectory, days_below_threshold
+      - P3-D03 (trade_outcome_log): aim_breakdown_at_entry, pnl per trade (last N days)
+
+    Computes per AIM×asset:
+      1. Current DMA weight (inclusion_probability from latest D02 row)
+      2. Weight trend: compare current weight to weight 30 days ago (rising/falling/stable)
+      3. Modifier accuracy: for trades where this AIM was active, compare modifier
+         direction (>1.0 = size up, <1.0 = size down) against trade outcome (win/loss)
+         — accuracy = correct_calls / total_calls
+      4. PnL contribution: sum of (pnl × aim_weight / total_weight) for trades
+         where this AIM was active
+      5. Days suppressed: days_below_threshold from D02
+
+    Output: CSV with columns per AIM×asset row.
+    Trigger: Monthly (Offline orchestrator _run_monthly) or on-demand via GUI.
+    """
+    days = params.get("days", 30)
     try:
+        rows = []
         with get_cursor() as cur:
+            # 1. Current AIM states + DMA weights
             cur.execute(
-                """SELECT aim_id, aim_name, status, meta_weight, modifier
-                   FROM p3_d01_aim_model_states a
-                   LEFT JOIN p3_d02_aim_meta_weights d ON a.aim_id = d.aim_id
-                   ORDER BY a.aim_id"""
+                """SELECT d1.aim_id, d1.asset_id, d1.status, d1.last_retrained,
+                          d2.inclusion_probability, d2.inclusion_flag,
+                          d2.days_below_threshold, d2.recent_effectiveness
+                   FROM p3_d01_aim_model_states d1
+                   LEFT JOIN p3_d02_aim_meta_weights d2
+                     ON d1.aim_id = d2.aim_id AND d1.asset_id = d2.asset_id
+                   ORDER BY d1.asset_id, d1.aim_id"""
             )
-            rows = cur.fetchall()
-            return _to_csv(["aim_id", "aim_name", "status", "meta_weight", "modifier"], rows)
+            aim_rows = cur.fetchall()
+
+            # 2. Trade outcomes with AIM breakdowns for modifier accuracy
+            cur.execute(
+                """SELECT asset, pnl, aim_breakdown_at_entry, aim_modifier_at_entry, ts
+                   FROM p3_d03_trade_outcome_log
+                   WHERE ts > dateadd('d', -%s, now())
+                   ORDER BY ts""",
+                (days,),
+            )
+            trades = cur.fetchall()
+
+        # Parse AIM breakdowns from trades to compute per-AIM accuracy
+        aim_stats = {}  # (aim_id, asset) -> {correct: int, total: int, pnl_contribution: float}
+        for asset, pnl, breakdown_raw, combined_mod, ts in trades:
+            breakdown = json.loads(breakdown_raw) if breakdown_raw else {}
+            total_weight = sum(
+                v.get("dma_weight", 0) for v in breakdown.values()
+                if isinstance(v, dict)
+            )
+            for aim_id_str, aim_data in breakdown.items():
+                if not isinstance(aim_data, dict):
+                    continue
+                try:
+                    aid = int(aim_id_str)
+                except (ValueError, TypeError):
+                    continue
+                key = (aid, asset)
+                if key not in aim_stats:
+                    aim_stats[key] = {"correct": 0, "total": 0, "pnl_contribution": 0.0}
+
+                mod = aim_data.get("modifier", 1.0)
+                weight = aim_data.get("dma_weight", 0)
+                aim_stats[key]["total"] += 1
+
+                # Accuracy: modifier > 1.0 predicted "size up" — correct if pnl > 0
+                #           modifier < 1.0 predicted "size down" — correct if pnl < 0
+                if (mod > 1.0 and pnl > 0) or (mod < 1.0 and pnl < 0):
+                    aim_stats[key]["correct"] += 1
+                elif abs(mod - 1.0) < 0.01:
+                    # Neutral modifier — count as correct (no prediction made)
+                    aim_stats[key]["correct"] += 1
+
+                # PnL contribution (weighted share of trade PnL)
+                if total_weight > 0 and weight > 0:
+                    aim_stats[key]["pnl_contribution"] += pnl * (weight / total_weight)
+
+        # Build output rows
+        for aim_id, asset_id, status, last_retrained, inc_prob, inc_flag, days_below, effectiveness in aim_rows:
+            key = (aim_id, asset_id)
+            stats = aim_stats.get(key, {"correct": 0, "total": 0, "pnl_contribution": 0.0})
+            accuracy = (stats["correct"] / stats["total"] * 100) if stats["total"] > 0 else None
+
+            rows.append((
+                aim_id, asset_id, status,
+                round(inc_prob, 4) if inc_prob else None,
+                inc_flag,
+                days_below or 0,
+                round(effectiveness, 4) if effectiveness else None,
+                stats["total"],
+                round(accuracy, 1) if accuracy is not None else None,
+                round(stats["pnl_contribution"], 2),
+                str(last_retrained) if last_retrained else None,
+            ))
+
+        return _to_csv(
+            ["aim_id", "asset_id", "status", "dma_weight", "included",
+             "days_below_threshold", "recent_effectiveness", "trade_count",
+             "accuracy_pct", "pnl_contribution", "last_retrained"],
+            rows,
+        )
     except Exception as exc:
         logger.error("RPT-04 failed: %s", exc, exc_info=True)
         return ""

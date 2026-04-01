@@ -682,9 +682,13 @@ else:                  modifier = 1.0
 GEX_today = aggregate_dealer_gamma (from prior day OI data)
 GEX_z = z_score(GEX_today, trailing_60d)
 
-if GEX_z < -1.0:     modifier = 0.85  (amplification regime, more risk)
-elif GEX_z > +1.0:   modifier = 1.10  (dampening regime, more stable)
-else:                 modifier = 1.0
+if GEX_z > +1.0:    modifier = 0.85  (dampening → mean-reversion → ORB breakouts fail to follow through)
+elif GEX_z < -1.0:  modifier = 1.10  (amplification → momentum → ORB breakout continuation)
+else:                modifier = 1.0
+# ⚠️ AMENDED per DEC-02 (2026-04-01): direction reversed from original spec.
+# Original: negative GEX=reduce, positive GEX=boost (general stability view).
+# Amended: positive GEX=reduce, negative GEX=boost (ORB-specific view).
+# Paper 52: positive gamma → mean-reversion → breakouts fail. FLAG FOR ISAAC.
 
 Expiration day: modifier *= 0.95 (pinning risk)
 Triple witching: modifier *= 0.90

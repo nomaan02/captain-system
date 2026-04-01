@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.questdb_client import get_cursor
+from shared.redis_client import get_redis_client
 from shared.constants import SYSTEM_TIMEZONE
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
@@ -69,6 +70,24 @@ def set_pipeline_stage(stage: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _get_service_health() -> dict:
+    """Ping QuestDB and Redis to determine connectivity status."""
+    health = {"questdb": "unknown", "redis": "unknown"}
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1")
+        health["questdb"] = "ok"
+    except Exception:
+        health["questdb"] = "error"
+    try:
+        r = get_redis_client()
+        r.ping()
+        health["redis"] = "ok"
+    except Exception:
+        health["redis"] = "error"
+    return health
+
+
 def build_dashboard_snapshot(user_id: str) -> dict:
     """Assemble a full dashboard snapshot for a single user.
 
@@ -98,6 +117,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "live_market": _get_live_market_data(),
         "api_status": _get_api_connection_status(),
         "pipeline_stage": _pipeline_stage,
+        "service_health": _get_service_health(),
     }
 
 

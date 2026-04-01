@@ -491,10 +491,10 @@ def get_or_window_minutes(locked_strategy: dict) -> int:
 # ===========================================================================
 
 AIM_FEATURE_MAP = {
-    1: ["vrp", "vrp_overnight"],
-    2: ["pcr", "put_skew"],
+    1: ["vrp", "vrp_overnight", "vrp_overnight_z"],
+    2: ["pcr", "put_skew", "pcr_z", "skew_z"],
     3: ["gex"],
-    4: ["ivts"],
+    4: ["ivts", "overnight_return_z", "is_eia_wednesday"],
     5: [],  # AIM-05 is DEFERRED
     6: ["events_today", "event_proximity"],
     7: ["cot_smi", "cot_speculator_z"],
@@ -502,7 +502,7 @@ AIM_FEATURE_MAP = {
     9: ["cross_momentum"],
     10: ["is_opex_window", "day_of_week"],
     11: ["vix_z", "vix_daily_change_z"],
-    12: ["current_spread", "spread_z"],
+    12: ["current_spread", "spread_z", "vol_z"],
     13: [],  # AIM-13 sensitivity — no features
     14: [],  # AIM-14 auto-expansion — outputs 1.0
     15: ["opening_volume_ratio"],
@@ -558,11 +558,20 @@ def compute_all_features(
         else:
             f["overnight_return"] = None
 
+        # Day of week (always computed — used by AIM-01 Monday adj, AIM-10 calendar)
+        f["day_of_week"] = today.weekday()
+
         # AIM-01: VRP (if active)
         aim01_state = aim_states.get("by_asset_aim", {}).get((asset_id, 1))
         if aim01_state and aim01_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
             f["vrp"] = compute_vrp(asset_id)
             f["vrp_overnight"] = compute_overnight_vrp(asset_id)
+            # z-score overnight VRP over trailing 60d (spec: AIM_Extractions.md:220)
+            trailing_60d_vrp = _get_trailing_overnight_vrp(asset_id, lookback=60)
+            if f["vrp_overnight"] is not None and trailing_60d_vrp is not None:
+                f["vrp_overnight_z"] = z_score(f["vrp_overnight"], trailing_60d_vrp)
+            else:
+                f["vrp_overnight_z"] = None
 
         # AIM-04: IVTS (CRITICAL regime filter — always compute if available)
         vix_close = _get_vix_close_yesterday()
@@ -572,19 +581,23 @@ def compute_all_features(
         else:
             f["ivts"] = None
 
-        # AIM-15: Opening volume ratio
-        aim15_state = aim_states.get("by_asset_aim", {}).get((asset_id, 15))
-        if aim15_state and aim15_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
-            vol_now = _get_session_volume(asset_id)
-            hist_vols = _get_historical_session_volumes(asset_id, lookback=20)
-            if vol_now and hist_vols and len(hist_vols) >= 5:
-                vol_avg = sum(hist_vols) / len(hist_vols)
-                if vol_avg > 0:
-                    f["opening_volume_ratio"] = vol_now / vol_avg
-                else:
-                    f["opening_volume_ratio"] = None
+        # AIM-04 CL EIA Wednesday flag (spec: AIM_Extractions.md:954)
+        f["is_eia_wednesday"] = (asset_id == "CL" and today.weekday() == 2)
+
+        # AIM-04 gap overlay: z-score of |overnight_return| over 60d (spec: AIM_Extractions.md:947)
+        if f.get("overnight_return") is not None:
+            trailing_60d_abs_returns = _get_trailing_overnight_returns(asset_id, lookback=60)
+            if trailing_60d_abs_returns is not None:
+                f["overnight_return_z"] = z_score(abs(f["overnight_return"]), trailing_60d_abs_returns)
             else:
-                f["opening_volume_ratio"] = None
+                f["overnight_return_z"] = None
+        else:
+            f["overnight_return_z"] = None
+
+        # AIM-15: Opening volume ratio (spec: first-m-min vs 20-day avg first-m-min)
+        # Phase A (session open): set None — real volume not yet available.
+        # Phase B (after OR close): orchestrator recomputes with actual volume.
+        f["opening_volume_ratio"] = None
 
         # AIM-06: Economic calendar
         aim06_state = aim_states.get("by_asset_aim", {}).get((asset_id, 6))
@@ -631,6 +644,18 @@ def compute_all_features(
         if aim02_state and aim02_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
             f["pcr"] = compute_put_call_ratio(asset_id)
             f["put_skew"] = compute_dotm_otm_put_spread(asset_id)
+            # z-score PCR over trailing 30d (spec: AIM_Extractions.md:472)
+            trailing_30d_pcr = _get_trailing_pcr(asset_id, lookback=30)
+            if f["pcr"] is not None and trailing_30d_pcr is not None:
+                f["pcr_z"] = z_score(f["pcr"], trailing_30d_pcr)
+            else:
+                f["pcr_z"] = None
+            # z-score skew over trailing 60d (spec: AIM_Extractions.md:473)
+            trailing_60d_skew = _get_trailing_skew(asset_id, lookback=60)
+            if f["put_skew"] is not None and trailing_60d_skew is not None:
+                f["skew_z"] = z_score(f["put_skew"], trailing_60d_skew)
+            else:
+                f["skew_z"] = None
 
         # AIM-10: Calendar
         aim10_state = aim_states.get("by_asset_aim", {}).get((asset_id, 10))
@@ -685,6 +710,13 @@ def compute_all_features(
                 f["spread_z"] = z_score(f["current_spread"], trailing_60d_spreads)
             else:
                 f["spread_z"] = None
+            # vol_z: 5-min opening volatility z-score (spec: AIM_Extractions.md:2406)
+            recent_vol = _get_recent_5min_vol(asset_id)
+            trailing_60d_vol = _get_trailing_open_vol(asset_id, lookback=60)
+            if recent_vol is not None and trailing_60d_vol is not None:
+                f["vol_z"] = z_score(recent_vol, trailing_60d_vol)
+            else:
+                f["vol_z"] = None
 
         features[asset_id] = f
         logger.debug("ON-B1A: %s — %d features computed", asset_id,
@@ -794,6 +826,49 @@ def _get_realised_vol(asset_id: str) -> Optional[float]:
 def _get_overnight_range(asset_id: str) -> Optional[float]:
     return None
 
+def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing overnight VRP values for z-score computation (spec: 60d)."""
+    return None
+
+def _get_trailing_overnight_returns(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing |overnight_return| values for AIM-04 gap z-score (spec: 60d).
+
+    Computes from P3-D30 daily OHLCV: |open_today / close_yesterday - 1|.
+    """
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT open, close FROM p3_d30_daily_ohlcv
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback + 1),
+            )
+            rows = cur.fetchall()
+        if not rows or len(rows) < 11:  # need at least 10 for z-score
+            return None
+        # rows are newest-first; reverse to oldest-first
+        rows = list(reversed(rows))
+        # |overnight_return| = |open[i] / close[i-1] - 1|
+        returns = []
+        for i in range(1, len(rows)):
+            prior_close = float(rows[i - 1][1])
+            today_open = float(rows[i][0])
+            if prior_close > 0:
+                returns.append(abs(today_open / prior_close - 1))
+        return returns if len(returns) >= 10 else None
+    except Exception:
+        return None
+
+def _get_trailing_pcr(asset_id: str, lookback: int = 30) -> Optional[list[float]]:
+    """Trailing PCR values for z-score computation (spec: 30d)."""
+    return None
+
+def _get_trailing_skew(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing DOTM-OTM put spread values for z-score computation (spec: 60d)."""
+    return None
+
 def _get_options_volume(asset_id: str, option_type: str = "PUT") -> Optional[int]:
     return None
 
@@ -870,10 +945,15 @@ def _get_daily_returns(asset_id: str, lookback: int = 20) -> Optional[list[float
     return None
 
 def _get_daily_closes(asset_id: str, lookback: int = 280) -> Optional[list[float]]:
-    """Daily close prices from TopstepX."""
+    """Daily close prices — QuestDB P3-D30 first, TopstepX fallback."""
+    # Try QuestDB first (bootstrapped historical data — faster and more reliable)
+    closes = _get_daily_closes_from_db(asset_id, lookback)
+    if closes and len(closes) >= lookback:
+        return closes
+    # Fall back to TopstepX API
     contract_id = resolve_contract_id(asset_id)
     if not contract_id:
-        return None
+        return closes  # return whatever DB had, even if short
     try:
         client = get_topstep_client()
         today = datetime.now(timezone.utc).date()
@@ -883,6 +963,26 @@ def _get_daily_closes(asset_id: str, lookback: int = 280) -> Optional[list[float
         if bars:
             return [float(b["close"]) for b in bars[-lookback:]]
     except TopstepXClientError:
+        pass
+    return closes  # return DB data even if shorter than requested
+
+
+def _get_daily_closes_from_db(asset_id: str, lookback: int = 280) -> Optional[list[float]]:
+    """Fetch daily closes from P3-D30 (bootstrapped OHLCV data)."""
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT close FROM p3_d30_daily_ohlcv
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if rows:
+            return [float(r[0]) for r in reversed(rows)]  # oldest first
+    except Exception:
         pass
     return None
 
@@ -947,14 +1047,89 @@ def _get_intraday_bars(asset_id: str, minutes: int) -> Optional[list[dict]]:
     return None
 
 def _get_historical_volume_first_N_min(asset_id: str, minutes: int, lookback: int = 20) -> Optional[list[int]]:
-    """Historical opening N-minute volumes from TopstepX.
+    """Historical opening N-minute volumes from P3-D29.
 
-    Fetches daily bars and uses them as a proxy — exact first-N-min
-    volumes would require intraday bars for each historical day.
+    Reads from p3_d29_opening_volumes, populated by bootstrap script
+    and daily post-OR-close writes. Returns last `lookback` entries.
     """
-    # Not directly available from TopstepX without per-day intraday queries.
-    # Leave as None — AIM-15 will gracefully degrade.
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT volume_first_m_min FROM p3_d29_opening_volumes
+                   WHERE asset_id = %s
+                   ORDER BY ts DESC LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if rows:
+            return [int(r[0]) for r in rows if r[0] and r[0] > 0]
+    except Exception:
+        pass
     return None
+
+
+def store_opening_volume(asset_id: str, session_type: str, or_minutes: int, volume: int):
+    """Store today's first-m-minute volume in P3-D29 for AIM-15 baseline.
+
+    Called from orchestrator after OR close to accumulate daily data.
+    """
+    from shared.questdb_client import get_cursor
+    from datetime import datetime
+    import pytz
+    et = pytz.timezone("America/New_York")
+    today_str = datetime.now(et).strftime("%Y-%m-%d")
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO p3_d29_opening_volumes
+                   (asset_id, session_date, session_type, or_minutes,
+                    volume_first_m_min, ts)
+                   VALUES (%s, %s, %s, %s, %s, now())""",
+                (asset_id, today_str, session_type, or_minutes, volume),
+            )
+        logger.info("Stored opening volume for %s: %d contracts in first %d min",
+                     asset_id, volume, or_minutes)
+    except Exception as e:
+        logger.warning("Failed to store opening volume for %s: %s", asset_id, e)
+
+def store_daily_ohlcv(asset_id: str):
+    """Persist today's daily OHLCV bar into P3-D30 for feature baselines.
+
+    Called from orchestrator after OR close. Fetches today's daily bar
+    from TopstepX and inserts into p3_d30_daily_ohlcv. This keeps the
+    table self-sustaining after the initial QC bootstrap.
+    """
+    from shared.questdb_client import get_cursor
+    contract_id = resolve_contract_id(asset_id)
+    if not contract_id:
+        return
+    try:
+        client = get_topstep_client()
+        import pytz
+        et = pytz.timezone("America/New_York")
+        today = datetime.now(et).date()
+        today_str = today.strftime("%Y-%m-%d")
+        bars = client.get_bars(contract_id, 4, 1, today_str, today_str)
+        if not bars:
+            # Try yesterday (session might not have closed yet)
+            yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            bars = client.get_bars(contract_id, 4, 1, yesterday, today_str)
+        if bars:
+            bar = bars[-1]
+            with get_cursor() as cur:
+                cur.execute(
+                    """INSERT INTO p3_d30_daily_ohlcv
+                       (asset_id, trade_date, open, high, low, close, volume, ts)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
+                    (asset_id, today_str, float(bar["open"]), float(bar["high"]),
+                     float(bar["low"]), float(bar["close"]),
+                     int(float(bar.get("volume", 0)))),
+                )
+            logger.info("Stored daily OHLCV for %s: close=%.2f", asset_id, float(bar["close"]))
+    except Exception as e:
+        logger.warning("Failed to store daily OHLCV for %s: %s", asset_id, e)
+
 
 def _get_vix_close_yesterday() -> Optional[float]:
     """Most recent VIX daily close from CSV provider."""
@@ -1003,6 +1178,14 @@ def _get_trailing_spreads(asset_id: str, lookback: int = 60) -> Optional[list[fl
             return [r[0] for r in reversed(rows)]
     except Exception:
         pass
+    return None
+
+def _get_recent_5min_vol(asset_id: str) -> Optional[float]:
+    """Recent 5-min opening volatility (spec: AIM_Extractions.md:2406)."""
+    return None
+
+def _get_trailing_open_vol(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing 5-min opening vol values for z-score computation (spec: 60d)."""
     return None
 
 def _get_trailing_correlations(asset1: str, asset2: str, lookback: int = 252) -> Optional[list[float]]:

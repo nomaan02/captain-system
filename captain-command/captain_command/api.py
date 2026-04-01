@@ -522,6 +522,40 @@ def api_test_notification(req: TestNotificationRequest):
     return JSONResponse({"status": "sent", "user_id": req.user_id})
 
 
+@app.get("/api/notifications/telegram-history")
+def api_telegram_history(limit: int = 50):
+    """Fetch recent Telegram-delivered notifications from D10."""
+    from shared.questdb_client import get_cursor
+
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT notification_id, user_id, priority, event_type,
+                          asset, message, ts
+                   FROM p3_d10_notification_log
+                   WHERE telegram_delivered = true
+                   ORDER BY ts DESC
+                   LIMIT %s""",
+                (min(limit, 200),),
+            )
+            rows = cur.fetchall()
+            items = []
+            for r in rows:
+                items.append({
+                    "notif_id": r[0],
+                    "user_id": r[1],
+                    "priority": r[2],
+                    "event_type": r[3],
+                    "asset": r[4],
+                    "message": r[5],
+                    "timestamp": r[6].isoformat() if r[6] else None,
+                })
+            return JSONResponse({"items": items, "count": len(items)})
+    except Exception as exc:
+        logger.error("Telegram history query failed: %s", exc)
+        return JSONResponse({"items": [], "count": 0, "error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # REST: Session Replay (Block 11)
 # ---------------------------------------------------------------------------
@@ -529,9 +563,18 @@ def api_test_notification(req: TestNotificationRequest):
 
 class ReplayStartRequest(BaseModel):
     date: str
-    session: str = "NY"
+    sessions: list[str] | None = None
+    session: str | None = None  # Backward compat -- use sessions instead
     config_overrides: dict = {}
     speed: float = 1.0
+
+    @property
+    def resolved_sessions(self) -> list[str]:
+        if self.sessions is not None:
+            return self.sessions
+        if self.session is not None:
+            return [self.session]
+        return ["NY"]
 
 
 class ReplayControlRequest(BaseModel):
@@ -562,7 +605,7 @@ def api_replay_start(req: ReplayStartRequest):
         replay_id = start_replay(
             user_id="primary_user",
             date_str=req.date,
-            session=req.session,
+            sessions=req.resolved_sessions,
             config_overrides=req.config_overrides,
             speed=req.speed,
             gui_push_fn=gui_push,
@@ -570,6 +613,34 @@ def api_replay_start(req: ReplayStartRequest):
         return JSONResponse({"replay_id": replay_id})
     except Exception as exc:
         logger.error("Replay start failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)})
+
+
+class BatchReplayStartRequest(BaseModel):
+    date_from: str
+    date_to: str
+    sessions: list[str] = ["NY"]
+    config_overrides: dict = {}
+    speed: float = 1.0
+
+
+@app.post("/api/replay/batch/start")
+def api_batch_replay_start(req: BatchReplayStartRequest):
+    """Start a batch (period) replay over a date range. Returns replay_id."""
+    try:
+        from captain_command.blocks.b11_replay_runner import start_batch_replay
+        replay_id = start_batch_replay(
+            user_id="primary_user",
+            date_from=req.date_from,
+            date_to=req.date_to,
+            sessions=req.sessions,
+            config_overrides=req.config_overrides,
+            speed=req.speed,
+            gui_push_fn=gui_push,
+        )
+        return JSONResponse({"replay_id": replay_id, "mode": "batch"})
+    except Exception as exc:
+        logger.error("Batch replay start failed: %s", exc, exc_info=True)
         return JSONResponse({"error": str(exc)})
 
 

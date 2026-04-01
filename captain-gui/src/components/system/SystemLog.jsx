@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import useNotificationStore from "../../stores/notificationStore";
+import api from "../../api/client";
 
 /* ── Category assignment ─────────────────────────────────────────────── */
 
@@ -12,6 +13,13 @@ const CATEGORY_COLORS = {
 
 const LABEL_MAP  = { ERROR: "ERR", SIGNAL: "SIG", ORDER: "ORD" };
 const FILTER_KEY = { ERRORS: "ERROR", SIGNALS: "SIGNAL", ORDERS: "ORDER" };
+
+const PRIORITY_COLORS = {
+  CRITICAL: "#ef4444",
+  HIGH:     "#f59e0b",
+  MEDIUM:   "#3b82f6",
+  LOW:      "#64748b",
+};
 
 function getCategory(n) {
   const msg = (n.message ?? "").toLowerCase();
@@ -35,11 +43,94 @@ function getCategory(n) {
   return null; // general / system entries — no label
 }
 
+/* ── Telegram Feed ──────────────────────────────────────────────────── */
+
+const TelegramFeed = () => {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await api.telegramHistory(100);
+      setItems(data.items || []);
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+    const interval = setInterval(fetchHistory, 30000);
+    return () => clearInterval(interval);
+  }, [fetchHistory]);
+
+  if (loading && items.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#64748b]">
+        Loading Telegram history...
+      </div>
+    );
+  }
+
+  if (error && items.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#ef4444]">
+        {error}
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#64748b]">
+        No Telegram notifications sent yet
+      </div>
+    );
+  }
+
+  return items.map((item) => {
+    const time = item.timestamp
+      ? new Date(item.timestamp).toLocaleTimeString("en-US", {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour12: false, timeZone: "America/New_York",
+        })
+      : "--";
+    const prioColor = PRIORITY_COLORS[item.priority] || "#64748b";
+    return (
+      <div key={item.notif_id} className="flex items-start py-0 px-2">
+        <div className="relative leading-[13.6px]">
+          <span>{`${time} `}</span>
+          <span
+            style={{
+              color: prioColor,
+              backgroundColor: `${prioColor}22`,
+              borderRadius: "2px",
+              padding: "0 3px",
+              marginRight: "4px",
+              fontSize: "8px",
+              fontWeight: 600,
+            }}
+          >
+            {item.priority}
+          </span>
+          <span className="text-[#e2e8f0]">{item.message}</span>
+        </div>
+      </div>
+    );
+  });
+};
+
 /* ── Component ───────────────────────────────────────────────────────── */
 
 const SystemLog = ({ className = "" }) => {
   const notifications = useNotificationStore((s) => s.notifications);
   const [activeFilter, setActiveFilter] = useState("ALL");
+  const [activeView, setActiveView] = useState("log"); // "log" | "telegram"
 
   const categorized = useMemo(
     () => notifications.map((n) => ({ ...n, _cat: getCategory(n) })),
@@ -78,27 +169,57 @@ const SystemLog = ({ className = "" }) => {
       <div className="self-stretch flex items-start pt-0 pb-[3px] pl-0 pr-px font-[Inter]">
         <div className="self-stretch flex-1 border-[#2e4e5a] border-solid border-b-[0.9px] flex items-end pt-[4.3px] px-2 pb-1 gap-[24.2px]">
           <div className="flex items-start gap-[8.1px]">
-            <div data-testid="syslog-header" className="relative leading-[14.6px]">SYSTEM LOG</div>
-            <div className="relative leading-[14.6px] font-['JetBrains_Mono'] text-[#0065f5]">
-              TELEGRAM
-            </div>
-          </div>
-          <div className="flex-1 flex items-start gap-[2.2px]">
-            <button data-testid="syslog-filter-all" onClick={() => setActiveFilter("ALL")} className={`cursor-pointer border-[#2e4e5a] border-solid border-[0.9px] pt-0 pb-px pl-[5px] pr-[3px] ${activeFilter === "ALL" ? "bg-[#2e4e5a]" : "bg-[transparent]"} self-stretch flex items-start hover:bg-[#547380] hover:border-[#547380] hover:border-solid hover:border-[0.9px] hover:box-border`}>
-              <div className="relative text-[8.6px] leading-[13px] font-medium font-[Inter] text-[#e2e8f0] text-center">
-                All
+            <button
+              data-testid="syslog-header"
+              onClick={() => setActiveView("log")}
+              className="cursor-pointer bg-transparent border-none p-0"
+            >
+              <div
+                className="relative leading-[14.6px]"
+                style={{
+                  color: activeView === "log" ? "#e2e8f0" : "#64748b",
+                  borderBottom: activeView === "log" ? "1px solid #e2e8f0" : "1px solid transparent",
+                }}
+              >
+                SYSTEM LOG
               </div>
             </button>
-            {filterBtn("Errors", "ERRORS")}
-            {filterBtn("Signals", "SIGNALS")}
-            {filterBtn("Orders", "ORDERS")}
+            <button
+              data-testid="syslog-telegram-tab"
+              onClick={() => setActiveView("telegram")}
+              className="cursor-pointer bg-transparent border-none p-0"
+            >
+              <div
+                className="relative leading-[14.6px] font-['JetBrains_Mono']"
+                style={{
+                  color: activeView === "telegram" ? "#0065f5" : "#0065f580",
+                  borderBottom: activeView === "telegram" ? "1px solid #0065f5" : "1px solid transparent",
+                }}
+              >
+                TELEGRAM
+              </div>
+            </button>
           </div>
+          {activeView === "log" && (
+            <div className="flex-1 flex items-start gap-[2.2px]">
+              <button data-testid="syslog-filter-all" onClick={() => setActiveFilter("ALL")} className={`cursor-pointer border-[#2e4e5a] border-solid border-[0.9px] pt-0 pb-px pl-[5px] pr-[3px] ${activeFilter === "ALL" ? "bg-[#2e4e5a]" : "bg-[transparent]"} self-stretch flex items-start hover:bg-[#547380] hover:border-[#547380] hover:border-solid hover:border-[0.9px] hover:box-border`}>
+                <div className="relative text-[8.6px] leading-[13px] font-medium font-[Inter] text-[#e2e8f0] text-center">
+                  All
+                </div>
+              </button>
+              {filterBtn("Errors", "ERRORS")}
+              {filterBtn("Signals", "SIGNALS")}
+              {filterBtn("Orders", "ORDERS")}
+            </div>
+          )}
         </div>
       </div>
       <div className="w-full flex flex-col overflow-y-auto flex-1 min-h-0">
-        {filtered.length > 0 ? (
+        {activeView === "telegram" ? (
+          <TelegramFeed />
+        ) : filtered.length > 0 ? (
           filtered.map((n) => {
-            const time = n.timestamp ? new Date(n.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "America/New_York" }) : "—";
+            const time = n.timestamp ? new Date(n.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "America/New_York" }) : "--";
             const msg = n.message ?? "";
             const cat = n._cat;
             const catColor = cat ? CATEGORY_COLORS[cat] : null;

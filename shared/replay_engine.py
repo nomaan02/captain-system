@@ -843,6 +843,7 @@ def run_replay(
     config: dict,
     target_date: date | None = None,
     on_event: callable = None,
+    sessions: list[str] | None = None,
 ) -> dict:
     """Run a full replay for *target_date* using *config*.
 
@@ -910,7 +911,12 @@ def run_replay(
     errors = []
     cached_bars = {}  # {asset_id: bars} for what-if reruns
 
-    for asset_id in ACTIVE_ASSETS:
+    # Filter assets by selected sessions
+    active_assets = ACTIVE_ASSETS
+    if sessions:
+        active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
+
+    for asset_id in active_assets:
         session_type = ASSET_SESSION_MAP[asset_id]
         contract_id = contracts.get(asset_id)
 
@@ -1087,6 +1093,7 @@ def run_whatif(
     cached_bars: dict,
     original_results: dict,
     target_date: date | None = None,
+    sessions: list[str] | None = None,
 ) -> dict:
     """Rerun sizing with different config using already-fetched bars.
 
@@ -1110,7 +1117,12 @@ def run_whatif(
     whatif_results = []
     errors = []
 
-    for asset_id in ACTIVE_ASSETS:
+    # Filter assets by selected sessions
+    active_assets = ACTIVE_ASSETS
+    if sessions:
+        active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
+
+    for asset_id in active_assets:
         session_type = ASSET_SESSION_MAP[asset_id]
         bars = cached_bars.get(asset_id)
 

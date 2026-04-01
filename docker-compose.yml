@@ -128,6 +128,7 @@ services:
       TZ: America/New_York
       VAULT_KEY_PATH: /captain/vault/keys.vault
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
       VXV_CSV_PATH: /captain/data/vix/vxv_daily_close.csv
     depends_on:

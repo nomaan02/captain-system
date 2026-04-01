@@ -36,6 +36,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress httpx request logging — it leaks the Telegram bot token in URLs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def verify_connections():
     """Verify QuestDB and Redis are reachable."""
@@ -160,6 +163,77 @@ def start_telegram_bot():
     return bot
 
 
+def _ensure_telegram_chat_id():
+    """Write TELEGRAM_CHAT_ID from env into QuestDB D16 + notification preferences.
+
+    QuestDB is append-only so we insert a new D16 row with the chat_id set
+    (queries use ORDER BY last_updated DESC LIMIT 1 to get the latest).
+    Also saves it as a notification preference so b7 route_notification finds it.
+    """
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat_id:
+        logger.info("TELEGRAM_CHAT_ID not set — Telegram notifications will not be delivered")
+        return
+
+    from shared.questdb_client import get_cursor
+    from captain_command.blocks.b7_notifications import save_user_preferences
+
+    user_id = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
+
+    # Check if D16 already has this chat_id for this user
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT telegram_chat_id FROM p3_d16_user_capital_silos
+                   WHERE user_id = %s
+                   ORDER BY last_updated DESC LIMIT 1""",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if row and row[0] == chat_id:
+                logger.info("Telegram chat_id already set in D16 for %s", user_id)
+                return
+
+            # Read current row to copy all fields
+            cur.execute(
+                """SELECT user_id, status, role, starting_capital, total_capital,
+                          accounts, max_simultaneous_positions, max_portfolio_risk_pct,
+                          correlation_threshold, user_kelly_ceiling, capital_history,
+                          created
+                   FROM p3_d16_user_capital_silos
+                   WHERE user_id = %s
+                   ORDER BY last_updated DESC LIMIT 1""",
+                (user_id,),
+            )
+            src = cur.fetchone()
+            if not src:
+                logger.warning("No D16 row for user %s — cannot set telegram_chat_id", user_id)
+                return
+
+            # Insert updated row with chat_id
+            cur.execute(
+                """INSERT INTO p3_d16_user_capital_silos (
+                       user_id, status, role, starting_capital, total_capital,
+                       accounts, max_simultaneous_positions, max_portfolio_risk_pct,
+                       correlation_threshold, user_kelly_ceiling, capital_history,
+                       telegram_chat_id, created, last_updated
+                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
+                (src[0], src[1], src[2], src[3], src[4],
+                 src[5], src[6], src[7], src[8], src[9], src[10],
+                 chat_id, src[11]),
+            )
+            logger.info("Telegram chat_id written to D16 for user %s", user_id)
+    except Exception as exc:
+        logger.error("Failed to write telegram_chat_id to D16: %s", exc)
+
+    # Also save as notification preference (b7 checks prefs first)
+    try:
+        save_user_preferences(user_id, {"telegram_chat_id": chat_id})
+        logger.info("Telegram chat_id saved to notification preferences for %s", user_id)
+    except Exception as exc:
+        logger.error("Failed to save telegram preference: %s", exc)
+
+
 def _init_topstep():
     """Authenticate TopstepX API and start streams for live data.
 
@@ -254,6 +328,9 @@ def main():
 
     # Start Telegram bot (Phase 6)
     telegram_bot = start_telegram_bot()
+
+    # Ensure TELEGRAM_CHAT_ID from env is written to QuestDB D16 + prefs
+    _ensure_telegram_chat_id()
 
     write_checkpoint(ROLE, "TELEGRAM_STARTED", "telegram_ready", "connecting_topstep")
 

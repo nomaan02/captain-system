@@ -1,6 +1,7 @@
 # Runtime data
 questdb/db/
 redis/
+backups/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

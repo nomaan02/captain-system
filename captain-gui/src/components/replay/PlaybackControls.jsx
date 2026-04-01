@@ -9,6 +9,13 @@ const PlaybackControls = () => {
   const setSpeed = useReplayStore((s) => s.setSpeed);
   const progress = useReplayStore((s) => s.progress);
   const currentAsset = useReplayStore((s) => s.currentAsset);
+  const batchStatus = useReplayStore((s) => s.batchStatus);
+  const batchCurrentDay = useReplayStore((s) => s.batchCurrentDay);
+  const batchCompletedDays = useReplayStore((s) => s.batchCompletedDays);
+  const batchTotalDays = useReplayStore((s) => s.batchTotalDays);
+  const batchProgress = useReplayStore((s) => s.batchProgress);
+
+  const isBatch = batchStatus !== "idle";
 
   const isRunning = status === "running";
   const isPaused = status === "paused";
@@ -92,13 +99,20 @@ const PlaybackControls = () => {
           <div
             data-testid="playback-progress-bar"
             className="h-full bg-[#06b6d4] transition-all duration-300"
-            style={{ width: `${progress}%` }}
+            style={{ width: `${isBatch ? batchProgress : progress}%` }}
           />
         </div>
         <span data-testid="playback-progress-pct" className="text-[9px] text-[#64748b] min-w-[28px] text-right">
-          {progress}%
+          {isBatch ? batchProgress : progress}%
         </span>
       </div>
+
+      {/* Batch day indicator */}
+      {isBatch && batchCurrentDay && (
+        <span className="text-[9px] text-[#f59e0b] font-mono">
+          Day {batchCompletedDays}/{batchTotalDays}
+        </span>
+      )}
 
       {/* Current asset */}
       {currentAsset && (

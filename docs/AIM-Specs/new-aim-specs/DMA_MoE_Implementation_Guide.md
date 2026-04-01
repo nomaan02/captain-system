@@ -276,7 +276,7 @@ INSTALLED → BOOTSTRAPPED → ACTIVE → (SUPPRESSED ↔ ACTIVE)
 | Parameter | Default | Location | Tuning |
 |-----------|---------|----------|--------|
 | Forgetting factor (λ) | 0.99 | P3-D17.system_params | Higher = slower adaptation. 0.95–0.99 range. |
-| Inclusion threshold | TBD | P3-D17.system_params | Below this, AIM is suppressed. Suggested: 0.01–0.05 |
+| Inclusion threshold | 0.02 | P3-D17.system_params | Below this, AIM is suppressed (inclusion_flag=False). With 6 AIMs at equal start ~0.167, 0.02 gates at ~12% of initial weight. |
 | Modifier floor | 0.5 | Architecture Section 9 | Prevents AIMs from zeroing out position |
 | Modifier ceiling | 1.5 | Architecture Section 9 | Prevents AIMs from doubling position |
 | HDWM diversity check | Weekly | Offline orchestrator | Ensures at least 1 AIM per type is active |

@@ -10,8 +10,11 @@ const useReplayStore = create((set, get) => ({
 
   // Config (sandboxed, never touches live)
   config: {
+    mode: "single", // "single" | "period"
     date: new Date().toISOString().slice(0, 10),
-    session: "NY",
+    dateFrom: "",
+    dateTo: "",
+    sessions: ["NY", "LONDON", "APAC", "NY_PRE"],
     capital: 150000,
     budgetDivisor: 20,
     riskGoal: "PASS_EVAL",
@@ -41,6 +44,15 @@ const useReplayStore = create((set, get) => ({
   comparison: null, // what-if overlay
   replayHistory: [],
 
+  // Batch (period) replay state
+  batchStatus: "idle", // idle | running | paused | complete
+  batchDayResults: [], // [{date, trades, wins, losses, pnl, cumulativePnl}]
+  batchSummary: null,
+  batchCurrentDay: null,
+  batchTotalDays: 0,
+  batchCompletedDays: 0,
+  batchProgress: 0,
+
   // Actions
   setConfig: (updates) => set((s) => ({ config: { ...s.config, ...updates } })),
   setSpeed: (speed) => set({ speed }),
@@ -51,6 +63,9 @@ const useReplayStore = create((set, get) => ({
     pipelineStages: {}, assetResults: {}, assetOrder: [],
     activeSimPosition: null, summary: null, comparison: null,
     expandedStage: null,
+    batchStatus: "idle", batchDayResults: [], batchSummary: null,
+    batchCurrentDay: null, batchTotalDays: 0, batchCompletedDays: 0,
+    batchProgress: 0,
   }),
 
   handleWsMessage: (data) => {
@@ -165,6 +180,55 @@ const useReplayStore = create((set, get) => ({
       case "replay_resumed":
         set({ status: "running", speed: data.speed || get().speed });
         break;
+
+      // Batch (period) replay events
+      case "batch_started":
+        set({
+          replayId: data.replay_id,
+          status: "running",
+          batchStatus: "running",
+          batchTotalDays: data.total_days,
+          batchCompletedDays: 0,
+          batchDayResults: [],
+          batchSummary: null,
+          batchCurrentDay: null,
+          batchProgress: 0,
+        });
+        break;
+      case "batch_day_started":
+        set({
+          batchCurrentDay: data.date,
+          assetResults: {},
+          assetOrder: [],
+          currentAsset: null,
+          pipelineStages: {},
+          activeSimPosition: null,
+          summary: null,
+        });
+        break;
+      case "batch_day_completed":
+        set((s) => ({
+          batchCompletedDays: data.day_index + 1,
+          batchProgress: Math.round(((data.day_index + 1) / data.total_days) * 100),
+          batchDayResults: [...s.batchDayResults, {
+            date: data.date,
+            trades: data.day_trades,
+            wins: data.day_wins,
+            losses: data.day_losses,
+            pnl: data.day_pnl,
+            cumulativePnl: data.cumulative_pnl,
+          }],
+        }));
+        break;
+      case "batch_complete":
+        set({
+          status: "complete",
+          batchStatus: "complete",
+          batchSummary: data.summary,
+          batchProgress: 100,
+        });
+        break;
+
       default:
         break;
     }

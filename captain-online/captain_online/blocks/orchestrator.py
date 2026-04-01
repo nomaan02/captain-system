@@ -284,6 +284,17 @@ class OnlineOrchestrator:
                 data["features"][asset]["or_range"] = state.or_range
                 data["features"][asset]["entry_price"] = state.entry_price
                 data["features"][asset]["or_direction"] = state.direction
+
+                # AIM-15 Phase B: recompute volume ratio with actual first-m-min data
+                self._recompute_aim15_volume(asset, data, aim)
+
+                # Persist today's daily OHLCV for feature baselines (P3-D30)
+                try:
+                    from captain_online.blocks.b1_features import store_daily_ohlcv
+                    store_daily_ohlcv(asset)
+                except Exception as e:
+                    logger.debug("Daily OHLCV store skipped for %s: %s", asset, e)
+
                 newly_resolved.append(asset)
 
             # Run Phase B (B6) for newly resolved breakout assets
@@ -320,6 +331,66 @@ class OnlineOrchestrator:
 
         if completed_sessions:
             self._publish_pipeline_stage("WAITING")
+
+    def _recompute_aim15_volume(self, asset: str, data: dict, aim: dict):
+        """AIM-15 Phase B: recompute volume ratio after OR close.
+
+        At OR close, first-m-minute volume is now available. Fetch it,
+        compare to 20-day historical average from P3-D29, update
+        the combined modifier, and store today's volume for future use.
+        """
+        try:
+            from captain_online.blocks.b1_features import (
+                volume_first_N_min, _get_historical_volume_first_N_min,
+                get_or_window_minutes, store_opening_volume,
+            )
+            from captain_online.blocks.b3_aim_aggregation import (
+                _aim15_volume, MODIFIER_FLOOR, MODIFIER_CEILING, _clamp,
+            )
+            from captain_online.blocks.or_tracker import get_asset_session_type
+
+            # Get OR window minutes from locked strategy
+            locked = data.get("locked_strategies", {}).get(asset, {})
+            or_min = get_or_window_minutes(locked)
+
+            # Fetch today's first-m-minute volume
+            vol_now = volume_first_N_min(asset, or_min)
+            if vol_now is None or vol_now <= 0:
+                return  # no data yet — keep Phase A neutral
+
+            # Store today's volume for future AIM-15 reference
+            session_type = get_asset_session_type(asset)
+            store_opening_volume(asset, session_type, or_min, vol_now)
+
+            # Get historical average from P3-D29
+            hist_vols = _get_historical_volume_first_N_min(asset, or_min, lookback=20)
+            if not hist_vols or len(hist_vols) < 5:
+                return  # insufficient baseline
+
+            vol_avg = sum(hist_vols) / len(hist_vols)
+            if vol_avg <= 0:
+                return
+
+            volume_ratio = vol_now / vol_avg
+
+            # Update feature and recompute AIM-15
+            if asset in data["features"]:
+                data["features"][asset]["opening_volume_ratio"] = volume_ratio
+
+            result = _aim15_volume({"opening_volume_ratio": volume_ratio}, {})
+            new_mod = result["modifier"]
+
+            # Update combined modifier: replace old AIM-15 (was 1.0 from VOLUME_MISSING)
+            # with the real value. Since Phase A had AIM-15=1.0, divide out 1.0 and multiply new.
+            if asset in aim.get("combined_modifier", {}):
+                old_combined = aim["combined_modifier"][asset]
+                updated = _clamp(old_combined * new_mod, MODIFIER_FLOOR, MODIFIER_CEILING)
+                aim["combined_modifier"][asset] = updated
+                logger.info("AIM-15 Phase B for %s: vol_ratio=%.2f, mod=%.2f, "
+                            "combined %.3f→%.3f", asset, volume_ratio, new_mod,
+                            old_combined, updated)
+        except Exception as e:
+            logger.warning("AIM-15 Phase B recompute failed for %s: %s", asset, e)
 
     def _process_user_sizing(self, session_id: int, data: dict, regime: dict,
                              aim: dict, user_silo: dict) -> dict | None:

@@ -89,6 +89,24 @@ if [ -n "$missing" ]; then
 fi
 log "Project files OK"
 
+# ── Step 3b: Backup QuestDB data before anything touches containers ───────────
+BACKUP_DIR="$CAPTAIN_DIR/backups/questdb"
+QDB_DATA="$CAPTAIN_DIR/questdb/db"
+
+if [ -d "$QDB_DATA" ] && [ "$(ls -A "$QDB_DATA" 2>/dev/null)" ]; then
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_FILE="$BACKUP_DIR/questdb-$(date '+%Y%m%d-%H%M%S').tar.gz"
+    info "Backing up QuestDB data → $BACKUP_FILE"
+    tar czf "$BACKUP_FILE" -C "$CAPTAIN_DIR" questdb/db/ 2>/dev/null && \
+        log "  QuestDB backup complete ($(du -h "$BACKUP_FILE" | cut -f1))" || \
+        warn "  QuestDB backup failed (non-fatal, continuing)"
+
+    # Keep only the 5 most recent backups to avoid filling disk
+    ls -t "$BACKUP_DIR"/questdb-*.tar.gz 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
+else
+    info "No existing QuestDB data to back up (fresh install)"
+fi
+
 # ── Step 4: Sync config into build contexts ──────────────────────────────────
 # Docker can't COPY from parent dirs; pre-copy config/ into each service dir.
 for svc in captain-offline captain-online captain-command; do

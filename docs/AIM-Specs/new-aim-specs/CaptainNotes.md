@@ -334,18 +334,18 @@ Paper 11 (Shu, Yu & Mulvey 2025): Supervised prediction → Program 2 Block 3b
 | Parameter | Status | Suggested |
 |-----------|--------|-----------|
 | Kelly fraction (shrinkage start) | INFORMED | Start at 0.5 (half-Kelly per Paper 217), DMA adjusts dynamically |
-| EWMA decay for E[R] | TBD | ~20 trades |
+| EWMA decay for E[R] | LOCKED | Adaptive span [8,30] via SPEC-A12 (BOCPD cp_prob scales alpha). Default span=30 at low cp_prob, 20 at medium. Supersedes static ~20 suggestion. |
 | BOCPD Level 2 threshold | INFORMED | P(changepoint) > 0.8 (Paper 231) |
 | BOCPD Level 3 threshold | INFORMED | P(changepoint) > 0.9 sustained 5+ days |
 | CUSUM control limit | INFORMED | Bootstrap from in-control data (Paper 232) |
-| DMA forgetting factor | TBD | 0.95–0.99 (higher = slower adaptation) |
-| AIM modifier bounds | TBD | FLOOR=0.5, CEILING=1.5 |
-| AIM meta-learning EWMA decay | TBD | 100 trades |
-| AIM minimum evaluation period | TBD | 50 trades before meta-weight adjusts |
-| Parallel tracking observation period | TBD | 20 trading days |
-| Transition phasing window | TBD | 10 trading days |
-| TSM simulation iterations | TBD | 10,000 Monte Carlo paths |
-| Captain (Offline) retrain schedule | TBD | Weekly AIM models, monthly sensitivity scan |
+| DMA forgetting factor | LOCKED | 0.99 (top of 0.95–0.99 range; conservative for production start) |
+| AIM modifier bounds | LOCKED | FLOOR=0.5, CEILING=1.5 |
+| AIM meta-learning EWMA decay | LOCKED | λ=0.99 → effective window ≈100 trades (same parameter as DMA forgetting factor) |
+| AIM minimum evaluation period | LOCKED | 50 trades before meta-weight adjusts |
+| Parallel tracking observation period | LOCKED | 20 trading days |
+| Transition phasing window | LOCKED | 10 trading days |
+| TSM simulation iterations | LOCKED | 10,000 Monte Carlo paths |
+| Captain (Offline) retrain schedule | LOCKED | Tier 1 AIMs weekly, Tier 2/3 AIMs + sensitivity scan monthly |
 | VIX timing for regime_tag (P1 open param) | RESOLVED | Prior-day closing VIX (16:00 ET) — communicated to Nomaan |
 
 ---

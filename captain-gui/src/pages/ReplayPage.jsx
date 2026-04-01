@@ -9,6 +9,7 @@ import SimulatedPosition from "../components/replay/SimulatedPosition";
 import ReplaySummary from "../components/replay/ReplaySummary";
 import WhatIfComparison from "../components/replay/WhatIfComparison";
 import ReplayHistory from "../components/replay/ReplayHistory";
+import BatchPnlReport from "../components/replay/BatchPnlReport";
 import useReplayStore from "../stores/replayStore";
 import useWebSocket from "../ws/useWebSocket";
 import api from "../api/client";
@@ -116,6 +117,7 @@ const ReplayPage = () => {
 
         {/* Right Column -- Summary + What-If + History */}
         <div className="h-full overflow-y-auto border-l border-solid border-[#1e293b]">
+          <ErrorBoundary name="BatchPnlReport"><BatchPnlReport /></ErrorBoundary>
           <ErrorBoundary name="ReplaySummary"><ReplaySummary /></ErrorBoundary>
           <ErrorBoundary name="WhatIfComparison"><WhatIfComparison /></ErrorBoundary>
           <ErrorBoundary name="ReplayHistory"><ReplayHistory /></ErrorBoundary>
