@@ -235,19 +235,17 @@ def _ensure_telegram_chat_id():
 
 
 def _init_topstep():
-    """Authenticate TopstepX API and start streams for live data.
+    """Authenticate TopstepX API for REST operations (orders, accounts).
 
-    Starts one MarketStream per resolved contract (multi-asset) and
-    one UserStream for live account/position updates.
+    ALL WebSocket streams (Market + User) are owned by captain-online.
+    TopstepX allows only ONE concurrent WebSocket per user account.
     """
     from shared.topstep_client import get_topstep_client, TopstepXClientError
-    from shared.topstep_stream import UserStream, MarketStream
-    from captain_command.blocks.b2_gui_data_server import set_user_stream, set_account_data
+    from captain_command.blocks.b2_gui_data_server import set_account_data
     from captain_command.blocks.b3_api_adapter import (
         TopstepXAdapter, register_connection,
     )
 
-    user_stream = None
     market_streams = []
     try:
         client = get_topstep_client()
@@ -274,39 +272,27 @@ def _init_topstep():
             adapter.connect()
             register_connection(str(account_id), adapter, "topstepx")
 
-            # Preload all contract IDs
+            # Preload all contract IDs (for resolver, NOT for streaming)
             contracts = preload_contracts()
             logger.info("Resolved %d contracts: %s", len(contracts), list(contracts.keys()))
 
-            # Start single MarketStream for all contracts (one WebSocket)
-            if contracts:
-                market_stream = MarketStream(
-                    token=client.current_token,
-                    contract_ids=list(contracts.values()),
-                )
-                market_stream.start()
-                market_streams.append(market_stream)
-                logger.info("MarketStream STARTED for %d contracts", len(contracts))
-
-            # Start UserStream for live account/position updates
-            user_stream = UserStream(
-                token=client.current_token,
-                account_id=account_id,
-            )
-            user_stream.start()
-            set_user_stream(user_stream)
-            logger.info("TopstepX UserStream: STARTED")
+            # NOTE: ALL WebSocket streams are owned by captain-online only.
+            # TopstepX allows ONE concurrent WebSocket per user account
+            # across ALL hubs (market + user). Any connection from Command
+            # sends GatewayLogout to Online, killing signal generation.
+            # Command uses REST API for orders and Redis for data.
+            logger.info("TopstepX WebSocket streams: SKIPPED (owned by captain-online)")
         else:
             logger.warning("TopstepX: no matching account found")
 
     except TopstepXClientError as exc:
         logger.error("TopstepX initialization failed: %s", exc)
-        return {"market_streams": [], "user": None}
+        return {"account": None}
     except Exception as exc:
         logger.error("TopstepX unexpected error: %s", exc, exc_info=True)
-        return {"market_streams": [], "user": None}
+        return {"account": None}
 
-    return {"market_streams": market_streams, "user": user_stream, "account": account}
+    return {"account": account}
 
 
 def main():
@@ -370,11 +356,6 @@ def main():
     def shutdown_handler(signum, frame):
         logger.info("Shutdown signal received")
         orchestrator.stop()
-        if topstep_streams:
-            for ms in topstep_streams.get("market_streams", []):
-                ms.stop()
-            if topstep_streams.get("user"):
-                topstep_streams["user"].stop()
         if telegram_bot:
             telegram_bot.stop()
         sys.exit(0)

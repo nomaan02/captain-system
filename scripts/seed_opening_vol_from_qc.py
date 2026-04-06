@@ -81,9 +81,10 @@ def seed_asset(asset: str, csv_path: str) -> int:
                 continue
             cur.execute(
                 """INSERT INTO p3_d33_opening_volatility
-                   (asset_id, session_date, vol_5min)
-                   VALUES (%s, %s, %s)""",
-                (asset, session_date, vol),
+                   (asset_id, session_date, session_type, or_minutes,
+                    opening_range_pct, opening_vol_z, ts)
+                   VALUES (%s, %s, %s, %s, %s, %s, now())""",
+                (asset, session_date, "NY", 5, vol, 0.0),
             )
             inserted += 1
 

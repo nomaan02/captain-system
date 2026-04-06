@@ -46,8 +46,8 @@ def seed_iv_rv(csv_path: str, asset_id: str = "ES") -> int:
         for r in rows:
             cur.execute(
                 """INSERT INTO p3_d31_implied_vol
-                   (asset_id, trade_date, atm_iv_30d, realized_vol_20d)
-                   VALUES (%s, %s, %s, %s)""",
+                   (asset_id, trade_date, atm_iv_30d, realized_vol_20d, ts)
+                   VALUES (%s, %s, %s, %s, now())""",
                 (asset_id, r["date"], r["atm_iv_30d"], r["realized_vol_20d"]),
             )
 

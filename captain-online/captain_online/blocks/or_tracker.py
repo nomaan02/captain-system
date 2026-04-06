@@ -289,6 +289,11 @@ class ORTracker:
     def check_expirations(self) -> list[str]:
         """Check for expired OR sessions (call from orchestrator loop).
 
+        Handles two cases:
+        - COMPLETE → EXPIRED: no breakout by cutoff time
+        - FORMING → EXPIRED: no ticks received to close OR window (e.g. quotes
+          stopped flowing). Without this, assets would stay FORMING forever.
+
         Returns list of asset_ids that just expired.
         """
         now_time = datetime.now(_ET).timetz()
@@ -300,6 +305,12 @@ class ORTracker:
                     session.state = ORState.EXPIRED
                     logger.warning("OR EXPIRED: %s — no breakout by %s",
                                    asset_id, session.cutoff)
+                    expired.append(asset_id)
+                elif session.state == ORState.FORMING and now_time >= session.cutoff:
+                    session.state = ORState.EXPIRED
+                    logger.warning("OR EXPIRED (stuck FORMING): %s — no ticks "
+                                   "after OR window closed (received %d ticks)",
+                                   asset_id, session.tick_count)
                     expired.append(asset_id)
 
         return expired

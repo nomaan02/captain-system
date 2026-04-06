@@ -46,8 +46,8 @@ def seed_skew(csv_path: str, asset_id: str = "ES") -> int:
         for r in rows:
             cur.execute(
                 """INSERT INTO p3_d32_options_skew
-                   (asset_id, trade_date, cboe_skew, skew_spread_proxy)
-                   VALUES (%s, %s, %s, %s)""",
+                   (asset_id, trade_date, cboe_skew, skew_spread_proxy, ts)
+                   VALUES (%s, %s, %s, %s, now())""",
                 (asset_id, r["date"], r["cboe_skew"], r["skew_spread_proxy"]),
             )
 

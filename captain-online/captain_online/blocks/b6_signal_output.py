@@ -80,6 +80,12 @@ def run_signal_output(
 
         # Direction and levels from locked strategy
         direction = _determine_direction(strategy, asset_features)
+        if direction == 0:
+            logger.warning("ON-B6: Skipping %s — no breakout direction resolved "
+                           "(or_direction=%s, default_direction=%s)",
+                           u, asset_features.get("or_direction"),
+                           strategy.get("default_direction"))
+            continue
         tp_level = _compute_tp(strategy, asset_features, direction)
         sl_level = _compute_sl(strategy, asset_features, direction)
 

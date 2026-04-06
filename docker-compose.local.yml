@@ -28,6 +28,7 @@ services:
   captain-offline:
     volumes:
       - ./scripts:/captain/scripts:ro
+      - ./captain-offline/captain_offline:/app/captain_offline:ro
     deploy:
       resources:
         limits:
@@ -36,6 +37,8 @@ services:
           memory: 512M
 
   captain-online:
+    volumes:
+      - ./captain-online/captain_online:/app/captain_online:ro
     deploy:
       resources:
         limits:
@@ -44,6 +47,8 @@ services:
           memory: 768M
 
   captain-command:
+    volumes:
+      - ./captain-command/captain_command:/app/captain_command:ro
     deploy:
       resources:
         limits:

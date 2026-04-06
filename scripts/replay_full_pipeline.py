@@ -287,7 +287,109 @@ def run_phase_a(session_id: int) -> dict | None:
     }
 
 
-def run_phase_b(asset_id: str, or_state: dict, phase_a: dict):
+def _replay_compute_or_volume(asset_id: str, bars: list[dict],
+                              session_type: str) -> int | None:
+    """Sum volume from replay bars that fall within the OR window.
+
+    Returns total volume during the OR formation period, or None if
+    no bars matched.
+    """
+    cfg = SESSION_CONFIG.get(session_type)
+    if not cfg:
+        return None
+    or_start_str = cfg.get("or_start", "09:30")
+    or_end_str = cfg.get("or_end", "09:35")
+    or_start_t = datetime.strptime(or_start_str, "%H:%M").time()
+    or_end_t = datetime.strptime(or_end_str, "%H:%M").time()
+
+    total_vol = 0
+    matched = 0
+    for bar in bars:
+        t = parse_bar_time(bar)
+        if t is None:
+            continue
+        t_et = t.astimezone(ET).time()
+        if or_start_t <= t_et < or_end_t:
+            vol = bar.get("v") or bar.get("volume", 0)
+            total_vol += int(vol)
+            matched += 1
+
+    return total_vol if matched > 0 else None
+
+
+def _replay_recompute_aim15(asset_id: str, b1: dict, b3: dict,
+                            bars: list[dict] | None = None,
+                            session_type: str = "NY"):
+    """AIM-15 Phase B for replay: recompute volume modifier after OR close.
+
+    Uses replay bars to compute today's OR volume (instead of the live
+    TopstepX REST API which isn't available during replay), then compares
+    to the 20-day historical average from P3-D29.
+    """
+    try:
+        from captain_online.blocks.b1_features import (
+            _get_historical_volume_first_N_min,
+            get_or_window_minutes, store_opening_volume,
+        )
+        from shared.aim_compute import (
+            _aim15_volume, MODIFIER_FLOOR, MODIFIER_CEILING, _clamp,
+        )
+        from captain_online.blocks.or_tracker import get_asset_session_type
+
+        locked = b1.get("locked_strategies", {}).get(asset_id, {})
+        or_min = get_or_window_minutes(locked)
+
+        # Compute today's volume from replay bars (not live API)
+        if bars is None:
+            logger.debug("AIM-15 replay: no bars for %s — skipping", asset_id)
+            return
+        vol_now = _replay_compute_or_volume(asset_id, bars, session_type)
+        if vol_now is None or vol_now <= 0:
+            logger.debug("AIM-15 replay: no OR volume for %s", asset_id)
+            return
+
+        # Store today's volume in D29 for future reference
+        sess_type = get_asset_session_type(asset_id)
+        store_opening_volume(asset_id, sess_type, or_min, vol_now)
+
+        # Get 20-day historical average from P3-D29
+        hist_vols = _get_historical_volume_first_N_min(asset_id, or_min, lookback=20)
+        if not hist_vols or len(hist_vols) < 5:
+            logger.debug("AIM-15 replay: insufficient D29 history for %s (%d rows)",
+                         asset_id, len(hist_vols) if hist_vols else 0)
+            return
+
+        vol_avg = sum(hist_vols) / len(hist_vols)
+        if vol_avg <= 0:
+            return
+
+        volume_ratio = vol_now / vol_avg
+
+        # Update feature
+        features = b1.get("features", {})
+        if asset_id in features:
+            features[asset_id]["opening_volume_ratio"] = volume_ratio
+
+        # Compute AIM-15 modifier
+        result = _aim15_volume({"opening_volume_ratio": volume_ratio}, {})
+        new_mod = result["modifier"]
+
+        # Update combined modifier
+        combined = b3.get("combined_modifier", {})
+        if asset_id in combined:
+            old_combined = combined[asset_id]
+            updated = _clamp(old_combined * new_mod, MODIFIER_FLOOR, MODIFIER_CEILING)
+            combined[asset_id] = updated
+            logger.info("AIM-15 Phase B (replay) for %s: or_vol=%d, hist_avg=%.0f, "
+                        "ratio=%.2f, mod=%.2f, combined %.3f->%.3f",
+                        asset_id, vol_now, vol_avg, volume_ratio, new_mod,
+                        old_combined, updated)
+    except Exception as e:
+        logger.warning("AIM-15 Phase B recompute skipped for %s: %s", asset_id, e)
+
+
+def run_phase_b(asset_id: str, or_state: dict, phase_a: dict,
+                bars: list[dict] | None = None, session_type: str = "NY"):
     """Run Phase B (B6) for one asset after OR breakout.
 
     Publishes signal to Redis for GUI consumption.
@@ -309,6 +411,9 @@ def run_phase_b(asset_id: str, or_state: dict, phase_a: dict):
     asset_features["or_range"] = or_state.get("or_range", 0)
     asset_features["entry_price"] = or_state.get("entry_price", 0)
     asset_features["or_direction"] = or_state.get("direction", 0)
+
+    # AIM-15 Phase B: recompute volume ratio with actual first-m-min data
+    _replay_recompute_aim15(asset_id, b1, b3, bars=bars, session_type=session_type)
 
     logger.info("PHASE B: Running B6 for %s — direction=%s, entry=%.2f, or_range=%.2f",
                 asset_id,
@@ -476,7 +581,8 @@ def run_replay(target_date: date, session_type: str = "NY"):
                 "or_range": state.or_range or 0,
                 "state": state.state.value,
             }
-            run_phase_b(asset, state_dict, phase_a)
+            run_phase_b(asset, state_dict, phase_a,
+                        bars=all_bars.get(asset, []), session_type=session_type)
 
     # Summary
     logger.info("")

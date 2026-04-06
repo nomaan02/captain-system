@@ -159,6 +159,31 @@ class OnlineOrchestrator:
             self._session_evaluated_today[session_id] = datetime.now(_ET).date()
             return
 
+        # ──── EARLY OR REGISTRATION (before Phase A) ────
+        # Register active assets with the OR tracker NOW so ticks from
+        # session open are captured. Phase A (B1-B5C) takes ~1-2 min;
+        # without early registration those ticks would be lost.
+        if self._or_tracker:
+            try:
+                from shared.questdb_client import get_cursor as _gc
+                with _gc() as _cur:
+                    _cur.execute(
+                        """SELECT asset_id FROM p3_d00_asset_universe
+                           WHERE captain_status = 'ACTIVE'
+                           ORDER BY last_updated DESC"""
+                    )
+                    _rows = _cur.fetchall()
+                _seen = set()
+                for _r in _rows:
+                    if _r[0] not in _seen:
+                        _seen.add(_r[0])
+                        self._or_tracker.register_asset(_r[0])
+                if _seen:
+                    logger.info("OR tracker: %d assets registered at session open", len(_seen))
+                    self._publish_pipeline_stage("OR_FORMING")
+            except Exception as e:
+                logger.error("Early OR registration failed: %s — will retry after Phase A", e)
+
         try:
             # ──── SHARED INTELLIGENCE (once per session) ────
             from captain_online.blocks.b1_data_ingestion import run_data_ingestion
@@ -205,10 +230,14 @@ class OnlineOrchestrator:
                         session_id, data, regime, aim, user_silo
                     )
 
-            # ──── OR TRACKER: register assets and store Phase A results ────
+            # ──── OR TRACKER: store Phase A results (assets already registered early) ────
             if self._or_tracker and user_results:
+                # Register any assets that weren't caught by early registration
+                # (e.g. if early query failed or new assets appeared during Phase A).
+                # register_asset() overwrites, so only register MISSING ones.
                 for asset in data["active_assets"]:
-                    self._or_tracker.register_asset(asset)
+                    if self._or_tracker.get_state(asset) is None:
+                        self._or_tracker.register_asset(asset)
 
                 self._pending_sessions[session_id] = {
                     "session_name": session_name,
@@ -219,7 +248,7 @@ class OnlineOrchestrator:
                     "active_users": active_users,
                     "resolved_assets": set(),
                 }
-                logger.info("Phase A complete for %s — %d assets registered for OR tracking, "
+                logger.info("Phase A complete for %s — %d assets tracked, "
                             "%d user(s) pending Phase B",
                             session_name, len(data["active_assets"]), len(user_results))
                 # Don't run B8/B9 yet — defer until Phase B completes
@@ -351,7 +380,7 @@ class OnlineOrchestrator:
                 volume_first_N_min, _get_historical_volume_first_N_min,
                 get_or_window_minutes, store_opening_volume,
             )
-            from captain_online.blocks.b3_aim_aggregation import (
+            from shared.aim_compute import (
                 _aim15_volume, MODIFIER_FLOOR, MODIFIER_CEILING, _clamp,
             )
             from captain_online.blocks.or_tracker import get_asset_session_type

@@ -235,6 +235,7 @@ class MarketStream:
             self._client.on("GatewayQuote", self._async_handle_quote)
             self._client.on("GatewayTrade", self._async_handle_trade)
             self._client.on("GatewayDepth", self._async_handle_depth)
+            self._client.on("GatewayLogout", self._async_handle_logout)
             self._client.on_open(self._async_on_open)
             self._client.on_close(self._async_on_close)
             self._client.on_error(self._async_on_error)
@@ -373,6 +374,9 @@ class MarketStream:
         logger.error("MarketStream error: %s", error)
         if self._state != StreamState.DISCONNECTED:
             self._state = StreamState.RECONNECTING
+
+    async def _async_handle_logout(self, *args) -> None:
+        logger.warning("MarketStream GatewayLogout received: %s", args)
 
     async def _async_handle_quote(self, *args) -> None:
         data = args[0] if args else None
@@ -523,6 +527,8 @@ class UserStream:
                             self._async_handle_position)
             self._client.on("GatewayUserTrade",
                             self._async_handle_trade)
+            self._client.on("GatewayLogout",
+                            self._async_handle_logout)
             self._client.on_open(self._async_on_open)
             self._client.on_close(self._async_on_close)
             self._client.on_error(self._async_on_error)
@@ -635,6 +641,9 @@ class UserStream:
         logger.error("UserStream error: %s", error)
         if self._state != StreamState.DISCONNECTED:
             self._state = StreamState.RECONNECTING
+
+    async def _async_handle_logout(self, *args) -> None:
+        logger.warning("UserStream GatewayLogout received: %s", args)
 
     async def _async_handle_account(self, *args) -> None:
         data = args[0] if args else None
