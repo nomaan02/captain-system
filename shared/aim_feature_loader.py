@@ -262,7 +262,7 @@ def _load_volume_features(target_date: date, asset_id: str, cur) -> dict:
 
     # vol_z from p3_d33_opening_volatility
     cur.execute(
-        "SELECT session_date, vol_5min FROM p3_d33_opening_volatility "
+        "SELECT session_date, opening_range_pct FROM p3_d33_opening_volatility "
         "WHERE asset_id = %s AND session_date <= %s ORDER BY session_date DESC LIMIT 30",
         (asset_id, target_date.isoformat()),
     )
@@ -323,16 +323,22 @@ def _load_aim_states_and_weights(assets: list[str], cur):
     Returns:
         (aim_states, aim_weights) matching the expected dict structures.
     """
-    # Load D01 states
+    # Load D01 states — ORDER BY last_updated DESC so first occurrence per
+    # (asset_id, aim_id) is the most recent. QuestDB is append-only; without
+    # this, stale COLLECTING rows overwrite the ACTIVE rows from bootstrap.
     by_asset_aim = {}
+    seen_states = set()
     cur.execute(
         "SELECT aim_id, asset_id, status, current_modifier, warmup_progress "
-        "FROM p3_d01_aim_model_states"
+        "FROM p3_d01_aim_model_states "
+        "ORDER BY last_updated DESC"
     )
     for row in cur.fetchall():
         aim_id, asset_id, status, current_modifier_str, warmup_progress = row
-        if asset_id not in assets:
+        key = (asset_id, aim_id)
+        if key in seen_states or asset_id not in assets:
             continue
+        seen_states.add(key)
         state = {
             "status": status or "INSTALLED",
             "warmup_progress": warmup_progress or 0.0,
@@ -343,22 +349,26 @@ def _load_aim_states_and_weights(assets: list[str], cur):
                 state["current_modifier"] = json.loads(current_modifier_str)
             except (json.JSONDecodeError, TypeError):
                 pass
-        by_asset_aim[(asset_id, aim_id)] = state
+        by_asset_aim[key] = state
 
     aim_states = {"by_asset_aim": by_asset_aim, "global": {}}
 
-    # Load D02 weights
+    # Load D02 weights — same ORDER BY + dedup pattern as D01
     aim_weights = {}
+    seen_weights = set()
     cur.execute(
         "SELECT aim_id, asset_id, inclusion_probability, inclusion_flag, "
         "recent_effectiveness, days_below_threshold "
-        "FROM p3_d02_aim_meta_weights"
+        "FROM p3_d02_aim_meta_weights "
+        "ORDER BY last_updated DESC"
     )
     for row in cur.fetchall():
         aim_id, asset_id, inc_prob, inc_flag, effectiveness, days_below = row
-        if asset_id not in assets:
+        key = (asset_id, aim_id)
+        if key in seen_weights or asset_id not in assets:
             continue
-        aim_weights[(asset_id, aim_id)] = {
+        seen_weights.add(key)
+        aim_weights[key] = {
             "inclusion_probability": inc_prob if inc_prob is not None else 1.0,
             "inclusion_flag": inc_flag if inc_flag is not None else True,
             "recent_effectiveness": effectiveness or 0.0,

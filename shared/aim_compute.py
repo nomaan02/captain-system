@@ -98,19 +98,37 @@ def run_aim_aggregation(
     combined_modifier = {}
     aim_breakdown = {}
 
+    # AIM name lookup for readable logging
+    _AIM_NAMES = {
+        1: "VRP", 2: "Skew", 3: "GEX", 4: "IVTS", 5: "DEFERRED",
+        6: "EconCal", 7: "COT", 8: "CrossCorr", 9: "CrossMom",
+        10: "Calendar", 11: "RegimeWarn", 12: "DynCosts", 13: "Sensitivity",
+        14: "AutoExpand", 15: "OpenVol", 16: "HMM",
+    }
+
     for asset_id in active_assets:
         aim_outputs = {}
+        skipped = []
 
         for aim_id in range(1, 17):
+            aim_name = _AIM_NAMES.get(aim_id, f"AIM-{aim_id}")
             # Check AIM status
             key = (asset_id, aim_id)
             state = aim_states.get("by_asset_aim", {}).get(key)
-            if state is None or state["status"] != "ACTIVE":
+            if state is None:
+                skipped.append(f"{aim_id:02d}-{aim_name}:NO_STATE")
+                continue
+            if state["status"] != "ACTIVE":
+                skipped.append(f"{aim_id:02d}-{aim_name}:{state['status']}")
                 continue
 
             # Check DMA inclusion flag
             weight_data = aim_weights.get(key)
-            if weight_data is None or not weight_data.get("inclusion_flag", True):
+            if weight_data is None:
+                skipped.append(f"{aim_id:02d}-{aim_name}:NO_WEIGHT")
+                continue
+            if not weight_data.get("inclusion_flag", True):
+                skipped.append(f"{aim_id:02d}-{aim_name}:DMA_OFF")
                 continue
 
             # Compute AIM modifier
@@ -123,6 +141,14 @@ def run_aim_aggregation(
                 "reason_tag": result.get("reason_tag", ""),
                 "dma_weight": weight_data.get("inclusion_probability", 1.0),
             }
+
+        # Log per-asset AIM detail
+        if aim_outputs:
+            parts = [f"AIM-{k:02d}({_AIM_NAMES.get(k,'')})={v['modifier']:.3f}×{v['dma_weight']:.3f}"
+                     for k, v in sorted(aim_outputs.items())]
+            logger.info("AIM %s: %s", asset_id, " | ".join(parts))
+        if skipped:
+            logger.debug("AIM %s skipped: %s", asset_id, ", ".join(skipped))
 
         # Weighted aggregation
         if aim_outputs:
@@ -137,12 +163,14 @@ def run_aim_aggregation(
                 combined_modifier[asset_id] = 1.0
         else:
             combined_modifier[asset_id] = 1.0  # No active AIMs → neutral
+            logger.warning("AIM %s: ALL skipped → combined=1.0 (neutral)", asset_id)
 
         aim_breakdown[asset_id] = aim_outputs
 
     active_count = sum(1 for ab in aim_breakdown.values() if ab)
-    logger.info("AIM aggregation complete for %d assets (%d with active AIMs)",
-                len(active_assets), active_count)
+    total_aim_count = sum(len(ab) for ab in aim_breakdown.values())
+    logger.info("AIM aggregation: %d assets, %d with active AIMs, %d individual AIMs computed",
+                len(active_assets), active_count, total_aim_count)
 
     return {
         "combined_modifier": combined_modifier,

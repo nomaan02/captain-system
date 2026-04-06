@@ -321,6 +321,7 @@ const ReplayConfigPanel = () => {
             </div>
           </button>
         </div>
+
       </div>
 
       {/* Section: Speed */}

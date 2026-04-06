@@ -45,6 +45,7 @@ const useReplayStore = create((set, get) => ({
   comparison: null, // what-if overlay
   aimBreakdown: {}, // {asset_id: {aim_id: {modifier, confidence, reason_tag, dma_weight}}}
   combinedModifier: {}, // {asset_id: float}
+  aimDebug: {}, // {asset_id: {aim_id: {modifier, weight, tag}}}
   replayHistory: [],
 
   // Batch (period) replay state
@@ -65,7 +66,7 @@ const useReplayStore = create((set, get) => ({
     replayId: null, status: "idle", progress: 0, currentAsset: null,
     pipelineStages: {}, assetResults: {}, assetOrder: [],
     activeSimPosition: null, summary: null, comparison: null,
-    aimBreakdown: {}, combinedModifier: {},
+    aimBreakdown: {}, combinedModifier: {}, aimDebug: {},
     expandedStage: null,
     batchStatus: "idle", batchDayResults: [], batchSummary: null,
     batchCurrentDay: null, batchTotalDays: 0, batchCompletedDays: 0,
@@ -136,12 +137,32 @@ const useReplayStore = create((set, get) => ({
             activeSimPosition: null,
           });
         } else if (event === "sizing_complete") {
+          const stages = { ...state.pipelineStages, B4: { status: "complete", data: payload } };
+          if (payload.cb_enabled !== undefined) {
+            stages.B5C = {
+              status: "complete",
+              data: {
+                cb_enabled: payload.cb_enabled,
+                cb_blocked: payload.cb_blocked,
+                cb_l1_halt: payload.cb_l1_halt,
+                cb_rho_j: payload.cb_rho_j,
+                cb_l1_l_t: payload.cb_l1_l_t,
+                cb_l2_blocked: payload.cb_l2_blocked,
+                cb_l2_N: payload.cb_l2_N,
+                cb_l2_n_t: payload.cb_l2_n_t,
+                cb_l3_blocked: payload.cb_l3_blocked,
+                cb_l3_mu_b: payload.cb_l3_mu_b,
+                cb_l0_blocked: payload.cb_l0_blocked,
+                cb_l4_blocked: payload.cb_l4_blocked,
+              },
+            };
+          }
           set({
             assetResults: {
               ...state.assetResults,
               [asset]: { ...state.assetResults[asset], sizing: payload, status: "sized" },
             },
-            pipelineStages: { ...state.pipelineStages, B4: { status: "complete", data: payload } },
+            pipelineStages: stages,
             activeSimPosition: state.activeSimPosition?.asset_id === asset
               ? { ...state.activeSimPosition, contracts: payload.contracts ?? payload.final ?? null }
               : state.activeSimPosition,
@@ -150,6 +171,7 @@ const useReplayStore = create((set, get) => ({
           set({
             aimBreakdown: payload.aim_breakdown || {},
             combinedModifier: payload.combined_modifier || {},
+            aimDebug: payload.aim_debug || {},
             pipelineStages: { ...state.pipelineStages, B3: { status: "complete", data: payload } },
           });
         } else if (event === "position_limit_applied") {

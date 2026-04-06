@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import TopBar from "../components/layout/TopBar";
 import ReplayConfigPanel from "../components/replay/ReplayConfigPanel";
 import PipelineStepper from "../components/replay/PipelineStepper";
@@ -41,6 +41,65 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+
+const ResizableBottomPanel = ({ expandedStage }) => {
+  const [panelHeight, setPanelHeight] = useState(250);
+  const isDragging = useRef(false);
+  const startY = useRef(0);
+  const startH = useRef(0);
+
+  const onMouseDown = useCallback((e) => {
+    isDragging.current = true;
+    startY.current = e.clientY;
+    startH.current = panelHeight;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }, [panelHeight]);
+
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      if (!isDragging.current) return;
+      const delta = startY.current - e.clientY;
+      const newH = Math.min(Math.max(startH.current + delta, 100), window.innerHeight * 0.7);
+      setPanelHeight(newH);
+    };
+    const onMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
+  return (
+    <div className="shrink-0 border-t border-solid border-[#1e293b] bg-[#080e0d]">
+      <ErrorBoundary name="PipelineStepper">
+        <div className="flex justify-center">
+          <PipelineStepper />
+        </div>
+      </ErrorBoundary>
+      {expandedStage && (
+        <>
+          {/* Drag handle */}
+          <div
+            onMouseDown={onMouseDown}
+            className="h-[5px] cursor-row-resize border-t border-solid border-[#1e293b] hover:bg-[#10b981]/30 active:bg-[#10b981]/50 transition-colors"
+          />
+          <ErrorBoundary name="BlockDetail">
+            <div style={{ height: panelHeight }} className="overflow-y-auto">
+              <BlockDetail blockId={expandedStage} />
+            </div>
+          </ErrorBoundary>
+        </>
+      )}
+    </div>
+  );
+};
 
 const ReplayPage = () => {
   // WebSocket connection — required to receive replay streaming events
@@ -125,21 +184,8 @@ const ReplayPage = () => {
         </div>
       </div>
 
-      {/* Bottom Bar -- Pipeline Stepper (centred) */}
-      <div className="shrink-0 border-t border-solid border-[#1e293b] bg-[#080e0d]">
-        <ErrorBoundary name="PipelineStepper">
-          <div className="flex justify-center">
-            <PipelineStepper />
-          </div>
-        </ErrorBoundary>
-        {expandedStage && (
-          <ErrorBoundary name="BlockDetail">
-            <div className="border-t border-solid border-[#1e293b] max-h-[250px] overflow-y-auto">
-              <BlockDetail blockId={expandedStage} />
-            </div>
-          </ErrorBoundary>
-        )}
-      </div>
+      {/* Bottom Bar -- Pipeline Stepper + resizable detail panel */}
+      <ResizableBottomPanel expandedStage={expandedStage} />
     </div>
   );
 };

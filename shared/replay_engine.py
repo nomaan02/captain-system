@@ -145,6 +145,18 @@ def load_replay_config(overrides: dict | None = None) -> dict:
     user_capital = row[0] if row else 150000.0
     max_positions = row[2] if row else 5
 
+    # Extract dynamic account_id from D16 accounts list
+    _accounts_raw = row[1] if row else None
+    if isinstance(_accounts_raw, str):
+        try:
+            _accounts_raw = json.loads(_accounts_raw)
+        except (json.JSONDecodeError, TypeError):
+            _accounts_raw = None
+    if isinstance(_accounts_raw, list) and _accounts_raw:
+        _dynamic_account_id = str(_accounts_raw[0])
+    else:
+        _dynamic_account_id = "20319811"  # fallback
+
     # --- TSM state from D08 ---
     tsm = {}
     topstep_params = {}
@@ -161,8 +173,9 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             "current_balance, current_drawdown, daily_loss_used, "
             "max_drawdown_limit, max_daily_loss, max_contracts, "
             "topstep_optimisation, risk_goal "
-            "FROM p3_d08_tsm_state WHERE account_id = '20319811' "
-            "ORDER BY last_updated DESC LIMIT 1"
+            "FROM p3_d08_tsm_state WHERE account_id = %s "
+            "ORDER BY last_updated DESC LIMIT 1",
+            (_dynamic_account_id,)
         )
         row = cur.fetchone()
     if row:
@@ -202,6 +215,19 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             "max_contracts": max_contracts,
             "topstep_params": topstep_params,
             "risk_goal": risk_goal,
+            "pass_probability": (
+                classification.get("pass_probability", 0.6)
+                if isinstance(classification, dict) else 0.6
+            ),
+            "evaluation_end_date": (
+                classification.get("evaluation_end_date")
+                if isinstance(classification, dict) else None
+            ),
+            "fee_per_trade": (
+                topstep_params.get("round_turn_fee",
+                                   topstep_params.get("fee_per_trade", 2.80))
+                if topstep_params else 2.80
+            ),
         }
 
     # --- Contract IDs from config file ---
@@ -224,12 +250,101 @@ def load_replay_config(overrides: dict | None = None) -> dict:
                     contracts[asset_id] = cid
             break
 
+    # --- Trade counts from D03 (for quality gate data maturity) ---
+    trade_counts = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT asset, count() as cnt FROM p3_d03_trade_outcome_log "
+                "GROUP BY asset"
+            )
+            for r in cur.fetchall():
+                trade_counts[r[0]] = r[1]
+    except Exception:
+        pass  # D03 may be empty on fresh systems
+
+    # --- Correlation matrix from D07 (for cross-asset filter) ---
+    correlation_matrix = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT correlation_matrix FROM p3_d07_correlation_model_states "
+                "ORDER BY last_updated DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                correlation_matrix = (
+                    json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                )
+    except Exception:
+        pass  # D07 may not be populated yet
+
+    # --- CB basket parameters from D25 (for L2/L3 circuit breaker) ---
+    cb_params = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT account_id, model_m, r_bar, beta_b, sigma, rho_bar, "
+                "n_observations, p_value "
+                "FROM p3_d25_circuit_breaker ORDER BY last_updated DESC"
+            )
+            seen_cb = set()
+            for r in cur.fetchall():
+                key = (r[0], str(r[1]) if r[1] is not None else "0")
+                if key in seen_cb:
+                    continue
+                seen_cb.add(key)
+                cb_params[key] = {
+                    "r_bar": r[2] or 0.0,
+                    "beta_b": r[3] or 0.0,
+                    "sigma": r[4] or 0.0,
+                    "rho_bar": r[5] or 0.0,
+                    "n_observations": r[6] or 0,
+                    "p_value": r[7] or 1.0,
+                }
+    except Exception:
+        pass  # D25 may not be populated yet
+
+    # --- HMM opportunity state from D26 (for session allocation) ---
+    hmm_state = {}
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT hmm_params "
+                "FROM p3_d26_hmm_opportunity_state "
+                "ORDER BY last_updated DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                _hmm_raw = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                if isinstance(_hmm_raw, dict):
+                    hmm_state = _hmm_raw
+    except Exception:
+        pass  # D26 may not be populated yet
+
+    # Compute budget_divisor from evaluation_end_date (b4_kelly_sizing.py:332-341)
+    _budget_divisor = 20
+    _eval_end = tsm.get("evaluation_end_date")
+    if _eval_end:
+        try:
+            if isinstance(_eval_end, str):
+                _eval_end_dt = date.fromisoformat(_eval_end)
+            elif isinstance(_eval_end, date):
+                _eval_end_dt = _eval_end
+            else:
+                _eval_end_dt = None
+            if _eval_end_dt:
+                _remaining = (_eval_end_dt - date.today()).days
+                _budget_divisor = max(_remaining, 1)
+        except (ValueError, TypeError):
+            pass
+
     # --- Assemble config dict ---
     config = {
         "user_capital": user_capital,
         "max_contracts": max_contracts,
         "max_positions": max_positions,
-        "budget_divisor": 20,
+        "budget_divisor": _budget_divisor,
         "risk_goal": risk_goal,
         "cb_enabled": True,
         "tp_multiple": 0.70,
@@ -243,7 +358,11 @@ def load_replay_config(overrides: dict | None = None) -> dict:
         "kelly_params": kelly_params,
         "ewma_states": ewma_states,
         "contracts": contracts,
+        "trade_counts": trade_counts,
+        "correlation_matrix": correlation_matrix,
         "topstep_params": topstep_params if topstep_params else {"c": 0.5, "e": 0.01},
+        "cb_params": cb_params,
+        "hmm_state": hmm_state,
         "session_config": SESSION_CONFIG,
         "asset_session_map": ASSET_SESSION_MAP,
         # Keep full TSM for compute_contracts
@@ -540,12 +659,26 @@ def simulate_orb(
     breakout_time = None
 
     for bar in post_or:
-        if bar["high"] > or_high and direction == 0:
+        high_breach = bar["high"] > or_high
+        low_breach = bar["low"] < or_low
+        if high_breach and low_breach:
+            # Simultaneous breach: pick by penetration depth (matching live ORTracker)
+            high_pen = bar["high"] - or_high
+            low_pen = or_low - bar["low"]
+            if high_pen >= low_pen:
+                direction = 1  # LONG
+                entry_price = or_high
+            else:
+                direction = -1  # SHORT
+                entry_price = or_low
+            breakout_time = bar["time"]
+            break
+        elif high_breach:
             direction = 1  # LONG breakout
             entry_price = or_high
             breakout_time = bar["time"]
             break
-        elif bar["low"] < or_low and direction == 0:
+        elif low_breach:
             direction = -1  # SHORT breakout
             entry_price = or_low
             breakout_time = bar["time"]
@@ -638,6 +771,118 @@ def simulate_orb(
 
 
 # ---------------------------------------------------------------------------
+# Regime probability (ports live B2 — b2_regime_probability.py)
+# ---------------------------------------------------------------------------
+
+def _compute_regime_probs(
+    asset_id: str,
+    strategy: dict,
+    bars: list | None = None,
+) -> tuple[dict, bool]:
+    """Compute regime probabilities for one asset, porting from live B2.
+
+    Logic mirrors ``b2_regime_probability.py``:
+      - REGIME_NEUTRAL → equal 0.5/0.5 (line 153-154)
+      - BINARY_ONLY with pettersson_threshold → realised vol vs phi (line 95-116)
+      - Fallback on locked regime_label
+
+    Returns:
+        (probs, uncertain) where probs = {HIGH_VOL: float, LOW_VOL: float}
+        and uncertain = True if max(probs) < 0.6 (spec PG-22).
+    """
+    regime_label = strategy.get("regime_label", "REGIME_NEUTRAL")
+
+    # REGIME_NEUTRAL → equal probs (matches live B2 _classifier_regime)
+    if regime_label == "REGIME_NEUTRAL":
+        return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}, True
+
+    # BINARY_ONLY with pettersson_threshold (live B2 _binary_regime)
+    phi = strategy.get("pettersson_threshold")
+    if phi is not None and bars:
+        sigma = _estimate_realised_vol(bars)
+        if sigma is not None:
+            if sigma > phi:
+                probs = {"HIGH_VOL": 1.0, "LOW_VOL": 0.0}
+            else:
+                probs = {"HIGH_VOL": 0.0, "LOW_VOL": 1.0}
+            return probs, (max(probs.values()) < 0.6)
+
+    # Fallback: use locked regime label directly
+    if regime_label == "HIGH_VOL":
+        return {"HIGH_VOL": 1.0, "LOW_VOL": 0.0}, False
+    if regime_label == "LOW_VOL":
+        return {"HIGH_VOL": 0.0, "LOW_VOL": 1.0}, False
+
+    return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}, True
+
+
+def _estimate_realised_vol(bars: list) -> float | None:
+    """Estimate annualised realised volatility from intraday 1-min bars.
+
+    Uses close-to-close log returns, annualised assuming ~390 bars/day
+    and 252 trading days/year.  Minimum 10 bars required.
+    """
+    if not bars or len(bars) < 10:
+        return None
+
+    closes = []
+    for bar in bars:
+        c = get_bar_field(bar, "close")
+        if c and c > 0:
+            closes.append(c)
+
+    if len(closes) < 10:
+        return None
+
+    log_returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    if not log_returns:
+        return None
+
+    mean = sum(log_returns) / len(log_returns)
+    variance = sum((r - mean) ** 2 for r in log_returns) / max(len(log_returns) - 1, 1)
+    std = math.sqrt(variance)
+
+    # Annualize: ~390 1-min bars per day, 252 trading days
+    return std * math.sqrt(390 * 252)
+
+
+# ---------------------------------------------------------------------------
+# Robust Kelly (Paper 218 distributional robust Kelly)
+# ---------------------------------------------------------------------------
+
+def _get_return_bounds(ewma_state: dict) -> tuple[float, float]:
+    """Paper 218: uncertainty set bounds from EWMA statistics.
+
+    Port of ``b1_features.py:450-464``.
+    """
+    wr = ewma_state.get("win_rate", 0.5)
+    avg_win = ewma_state.get("avg_win", 0.0)
+    avg_loss = ewma_state.get("avg_loss", 0.0)
+    mu = avg_win * wr - avg_loss * (1 - wr)
+    variance = avg_win ** 2 * wr + avg_loss ** 2 * (1 - wr) - mu ** 2
+    sigma = math.sqrt(max(0, variance))
+    return (mu - 1.5 * sigma, mu + 1.5 * sigma)
+
+
+def _compute_robust_kelly(
+    return_bounds: tuple[float, float],
+    standard_kelly: float = 0.0,
+) -> float:
+    """Paper 218: min-max robust Kelly fraction.
+
+    Port of ``b1_features.py:467-480``.
+    """
+    lower, upper = return_bounds
+    if lower <= 0:
+        return 0.3 * standard_kelly
+    product = upper * lower
+    if product == 0:
+        return 0.0
+    robust_f = lower / product
+    return max(0.0, min(robust_f, 0.5))
+
+
+# ---------------------------------------------------------------------------
 # Kelly sizing
 # ---------------------------------------------------------------------------
 
@@ -668,7 +913,7 @@ def compute_contracts(
     sl_dist = strategy.get("threshold", 4.0)
     fallback_risk = sl_dist * point_value
 
-    # Step 1: Regime-blended Kelly (REGIME_NEUTRAL -> equal 0.5/0.5 probs)
+    # Step 1: Regime-blended Kelly (weighted by actual regime probabilities from B2)
     low_kelly = 0.0
     high_kelly = 0.0
     shrinkage = 1.0
@@ -680,23 +925,53 @@ def compute_contracts(
                 high_kelly = kp.get("kelly_full", 0)
             shrinkage = kp.get("shrinkage_factor", 1.0)
 
-    blended = 0.5 * low_kelly + 0.5 * high_kelly
+    regime_probs = config.get("regime_probs", {}).get(
+        asset_id, {"LOW_VOL": 0.5, "HIGH_VOL": 0.5},
+    )
+    blended = (
+        regime_probs.get("LOW_VOL", 0.5) * low_kelly
+        + regime_probs.get("HIGH_VOL", 0.5) * high_kelly
+    )
 
     # Step 2: Shrinkage
     adjusted = blended * shrinkage
 
-    # Step 3: AIM modifier
+    # Step 3: Robust Kelly fallback (b4_kelly_sizing.py:129-138, Paper 218)
+    regime_uncertain = config.get("regime_uncertain", {}).get(asset_id, False)
+    robust_kelly_applied = False
+    if regime_uncertain:
+        dominant_regime = max(regime_probs.items(), key=lambda x: x[1])[0]
+        ewma_key = (asset_id, dominant_regime, session_id)
+        ewma_for_robust = ewma_states.get(ewma_key, {})
+        if ewma_for_robust:
+            bounds = _get_return_bounds(ewma_for_robust)
+            robust = _compute_robust_kelly(bounds, adjusted)
+            if robust < adjusted:
+                adjusted = robust
+                robust_kelly_applied = True
+
+    # Step 4: AIM modifier
     aim_mod = aim_modifier
     kelly_with_aim = adjusted * aim_mod
 
-    # Step 4: Risk goal (PASS_EVAL)
+    # Step 5: User Kelly ceiling (b4_kelly_sizing.py:144-145)
+    user_kelly_ceiling = config.get("user_kelly_ceiling", 0.25)
+    kelly_with_aim = min(kelly_with_aim, user_kelly_ceiling)
+
+    # Step 6: Risk goal — graduated by pass_probability (b4_kelly_sizing.py:305-317)
     risk_goal = config.get("risk_goal", "GROW_CAPITAL")
     if risk_goal == "PASS_EVAL":
-        kelly_with_aim *= 0.7
+        pass_prob = config.get("_tsm", {}).get("pass_probability", 0.6)
+        if pass_prob < 0.5:
+            kelly_with_aim *= 0.5
+        elif pass_prob < 0.7:
+            kelly_with_aim *= 0.7
+        else:
+            kelly_with_aim *= 0.85
     elif risk_goal == "PRESERVE_CAPITAL":
         kelly_with_aim *= 0.5
 
-    # Step 5: Risk per contract from EWMA
+    # Step 7: Risk per contract from EWMA
     risk_per_contract = None
     for key, ewma in ewma_states.items():
         if key[0] == asset_id and key[2] == session_id:
@@ -715,13 +990,17 @@ def compute_contracts(
     if risk_per_contract is None or risk_per_contract <= 0:
         risk_per_contract = fallback_risk
 
-    # Step 6: Raw contracts
+    # Step 7b: Add expected fee to risk_per_contract (b4_kelly_sizing.py:422-440)
+    expected_fee = config.get("_tsm", {}).get("fee_per_trade", 2.80)
+    risk_per_contract += expected_fee
+
+    # Step 8: Raw contracts
     if risk_per_contract > 0 and kelly_with_aim > 0:
         raw = kelly_with_aim * user_capital / risk_per_contract
     else:
         raw = 0
 
-    # Step 7: MDD budget cap (remaining MDD / budget_divisor)
+    # Step 9: MDD budget cap (remaining MDD / budget_divisor)
     tsm = config.get("_tsm", {})
     max_dd = tsm.get("max_drawdown_limit") or config.get("mdd_limit", 999999)
     current_dd = tsm.get("current_drawdown") or config.get("current_drawdown", 0)
@@ -732,7 +1011,7 @@ def compute_contracts(
         math.floor(daily_budget / fallback_risk) if fallback_risk > 0 else 999
     )
 
-    # Step 8: Daily loss cap (MLL)
+    # Step 10: Daily loss cap (MLL)
     max_daily = tsm.get("max_daily_loss") or config.get("mll_limit")
     daily_used = tsm.get("daily_loss_used") or config.get("daily_loss_used", 0)
     if max_daily and max_daily > 0:
@@ -745,27 +1024,105 @@ def compute_contracts(
     else:
         daily_cap = 999
 
-    # Step 9: 4-way min
-    final = min(math.floor(raw), mdd_cap, daily_cap, max_contracts)
+    # Step 11: 4-way min
+    raw_floor = math.floor(raw)
+    final = min(raw_floor, mdd_cap, daily_cap, max_contracts)
     final = max(final, 0)
 
-    # Step 10: Circuit breaker L1 preemptive halt
-    # abs(L_t) + rho_j >= c * e * A
-    topstep_params = config.get("topstep_params", {})
-    if isinstance(topstep_params, str):
-        topstep_params = json.loads(topstep_params) if topstep_params else {}
-    c = topstep_params.get("c", 0.5)
-    e = topstep_params.get("e", 0.01)
-    l_halt = c * e * user_capital
-    rho_j = final * fallback_risk
-    cb_blocked = False
+    # Log which constraint is binding
+    binding = "kelly"
+    if final < raw_floor:
+        if final == mdd_cap:
+            binding = "mdd_cap"
+        elif final == daily_cap:
+            binding = "daily_cap"
+        elif final == max_contracts:
+            binding = "max_contracts"
+    logger.info("SIZING %s: kelly=%.4f aim_mod=%.3f → raw=%d, mdd_cap=%d, daily_cap=%d, "
+                "max=%d → final=%d (binding: %s)",
+                asset_id, adjusted, aim_mod, raw_floor, mdd_cap, daily_cap,
+                max_contracts, final, binding)
 
+    # --- Circuit breaker layers (b5c_circuit_breaker.py) ---
+    topstep_params_cb = config.get("topstep_params", {})
+    if isinstance(topstep_params_cb, str):
+        topstep_params_cb = (
+            json.loads(topstep_params_cb) if topstep_params_cb else {}
+        )
+    c_param = topstep_params_cb.get("c", 0.5)
+    e_param = topstep_params_cb.get("e", 0.01)
+    fee_per_trade = config.get("_tsm", {}).get("fee_per_trade", 2.80)
     cb_enabled = config.get("cb_enabled", True)
-    if cb_enabled and rho_j >= l_halt and final > 0:
+
+    # Step 11b: CB L0 — Scaling cap for XFA accounts (b5c_circuit_breaker.py:232-256)
+    cb_l0_blocked = False
+    scaling_plan_active = config.get("_tsm", {}).get("scaling_plan_active", False)
+    if cb_enabled and scaling_plan_active and final > 0:
+        scaling_tier_micros = config.get("_tsm", {}).get("scaling_tier_micros", 150)
+        current_open_micros = config.get("_current_open_micros", 0)
+        if current_open_micros + final > scaling_tier_micros:
+            final = max(0, scaling_tier_micros - current_open_micros)
+            cb_l0_blocked = (final == 0)
+
+    # Step 12: CB L1 — Preemptive halt: abs(L_t) + rho_j >= c * e * A
+    l_t = abs(config.get("_intraday_cumulative_pnl", 0.0))
+    l_halt = c_param * e_param * user_capital
+    rho_j = final * (fallback_risk + fee_per_trade)
+    cb_blocked = False
+    if cb_enabled and final > 0 and (l_t + rho_j) >= l_halt:
         cb_blocked = True
-        while final > 0 and (final * fallback_risk) >= l_halt:
+        while final > 0 and (l_t + final * (fallback_risk + fee_per_trade)) >= l_halt:
             final -= 1
         final = max(final, 0)
+
+    # Step 13: CB L2 — Budget exhaustion: n_t < N (b5c_circuit_breaker.py:292-321)
+    n_t = config.get("_intraday_trade_count", 0)
+    p_param = topstep_params_cb.get("p", 0.005)
+    mdd_val = config.get("mdd_limit", 4500.0)
+    l2_denom = mdd_val * p_param + fee_per_trade
+    cb_l2_N = int((e_param * user_capital) / l2_denom) if l2_denom > 0 else 999
+    cb_l2_blocked = False
+    if cb_enabled and final > 0 and n_t >= cb_l2_N:
+        cb_l2_blocked = True
+        final = 0
+
+    # Step 14: CB L3 — Basket expectancy: mu_b = r_bar + beta_b * L_b
+    #   (b5c_circuit_breaker.py:324-368)
+    cb_l3_blocked = False
+    mu_b = None
+    n_obs = 0
+    bp = {}
+    if cb_enabled and final > 0:
+        _account_id = config.get("_tsm", {}).get("account_id", "20319811")
+        _model_m = str(strategy.get("m", 0))
+        bp = config.get("cb_params", {}).get((_account_id, _model_m), {})
+        n_obs = bp.get("n_observations", 0)
+        if n_obs > 0:
+            r_bar = bp.get("r_bar", 0.0)
+            beta_b = bp.get("beta_b", 0.0)
+            p_val = bp.get("p_value", 1.0)
+            # Significance gate: require p<0.05 AND n>=100
+            if p_val > 0.05 or n_obs < 100:
+                beta_b = 0.0
+            l_b = config.get("_intraday_basket_pnl", {}).get(_model_m, 0.0)
+            mu_b = r_bar + beta_b * l_b
+            if mu_b <= 0 and beta_b > 0:
+                cb_l3_blocked = True
+                final = 0
+
+    # Step 15: CB L4 — Correlation-adjusted Sharpe (b5c_circuit_breaker.py:371-433)
+    #   Reuses bp, n_obs, mu_b from L3 scope above.
+    cb_l4_blocked = False
+    if cb_enabled and final > 0 and n_obs >= 100 and mu_b is not None:
+        sigma_cb = bp.get("sigma", 0.0)
+        rho_bar = bp.get("rho_bar", 0.0)
+        lambda_threshold = topstep_params_cb.get("lambda", 0.0)
+        if sigma_cb > 0:
+            denom = sigma_cb * math.sqrt(1.0 + 2.0 * n_t * max(rho_bar, 0.0))
+            S = mu_b / denom if denom > 0 else 0.0
+            if S <= lambda_threshold:
+                cb_l4_blocked = True
+                final = 0
 
     return {
         "asset": asset_id,
@@ -773,6 +1130,8 @@ def compute_contracts(
         "kelly_blended": round(blended, 6),
         "kelly_shrunk": round(adjusted, 6),
         "kelly_adjusted": round(kelly_with_aim, 6),
+        "robust_kelly_applied": robust_kelly_applied,
+        "user_kelly_ceiling": user_kelly_ceiling,
         "risk_per_contract": round(risk_per_contract, 2),
         "raw_contracts": math.floor(raw),
         "mdd_cap": mdd_cap,
@@ -784,9 +1143,21 @@ def compute_contracts(
         "fallback_risk": round(fallback_risk, 2),
         "risk_goal": risk_goal,
         "cb_l1_halt": round(l_halt, 2),
+        "cb_l1_l_t": round(l_t, 2),
         "cb_rho_j": round(rho_j, 2),
         "cb_blocked": cb_blocked,
+        "cb_l2_blocked": cb_l2_blocked,
+        "cb_l2_N": cb_l2_N,
+        "cb_l2_n_t": n_t,
+        "cb_l3_blocked": cb_l3_blocked,
+        "cb_l3_mu_b": round(mu_b, 4) if mu_b is not None else None,
+        "cb_l0_blocked": cb_l0_blocked,
+        "cb_l4_blocked": cb_l4_blocked,
         "cb_enabled": cb_enabled,
+        "binding_constraint": binding,
+        "aim_modifier": round(aim_mod, 4),
+        "regime_probs": regime_probs,
+        "regime_uncertain": regime_uncertain,
     }
 
 
@@ -794,14 +1165,56 @@ def compute_contracts(
 # Position limit
 # ---------------------------------------------------------------------------
 
+def _expected_edge(result: dict, config: dict) -> float:
+    """Compute forward-looking expected edge for one trade result.
+
+    Ports from live B5 (``b5_trade_selection.py:51-61``):
+      edge = wr * avg_win - (1 - wr) * avg_loss
+    using the dominant regime's EWMA stats.
+    """
+    asset_id = result.get("asset")
+    regime_probs = config.get("regime_probs", {}).get(
+        asset_id, {"LOW_VOL": 0.5, "HIGH_VOL": 0.5},
+    )
+    dominant_regime = max(regime_probs, key=regime_probs.get)
+
+    ewma_states = config.get("ewma_states", {})
+    session_type = ASSET_SESSION_MAP.get(asset_id, "NY")
+    session_id = SESSION_ID_MAP.get(session_type, 1)
+
+    # Look up EWMA for (asset, dominant_regime, session_id)
+    ewma = ewma_states.get((asset_id, dominant_regime, session_id))
+    if not ewma:
+        # Fallback: try any session for this asset + regime
+        for key, val in ewma_states.items():
+            if key[0] == asset_id and key[1] == dominant_regime:
+                ewma = val
+                break
+    if not ewma:
+        return 0.0
+
+    wr = ewma.get("win_rate", 0.5)
+    avg_win = ewma.get("avg_win", 0.0)
+    avg_loss = ewma.get("avg_loss", 0.0)
+    return wr * avg_win - (1 - wr) * avg_loss
+
+
 def apply_position_limit(
     results: list[dict],
     max_positions: int,
+    config: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Sort by edge (abs pnl per contract), take top N.
+    """Rank trades by expected edge (B5 spec), take top N.
+
+    When ``config`` is provided, ranks by forward-looking expected edge
+    (wr*avg_win - (1-wr)*avg_loss) matching live B5.  Falls back to
+    abs(pnl_per_contract) if config is missing.
 
     Returns (selected, excluded).
     """
+    if config is None:
+        config = {}
+
     # Only trades with a breakout AND non-zero contracts qualify
     eligible = [
         r
@@ -809,10 +1222,12 @@ def apply_position_limit(
         if r.get("direction", 0) != 0 and r.get("contracts", 0) > 0
     ]
 
-    # Sort by absolute PnL per contract (proxy for expected edge) -- take top N
-    eligible.sort(
-        key=lambda x: abs(x.get("pnl_per_contract", 0)), reverse=True,
-    )
+    # Compute and attach expected edge to each result
+    for r in eligible:
+        r["expected_edge"] = round(_expected_edge(r, config), 4)
+
+    # Rank by expected edge (forward-looking, matching live B5)
+    eligible.sort(key=lambda x: x.get("expected_edge", 0), reverse=True)
 
     if len(eligible) <= max_positions:
         return eligible, []
@@ -825,6 +1240,227 @@ def apply_position_limit(
         ex["contracts"] = 0
         ex["total_pnl"] = 0
     return selected, excluded
+
+
+# ---------------------------------------------------------------------------
+# Quality gate (ports live B5B — b5b_quality_gate.py)
+# ---------------------------------------------------------------------------
+
+def _apply_quality_gate(results: list[dict], config: dict) -> list[dict]:
+    """B5B quality gate: filter/scale trades by quality_score.
+
+    Port of ``b5b_quality_gate.py:49-67``.
+
+    ``quality_score = expected_edge × aim_modifier × data_maturity``
+
+    - Below ``hard_floor`` (default 0.003): contracts zeroed.
+    - Between floor and ceiling: graduated sizing multiplier
+      ``min(1.0, quality_score / quality_ceiling)``.
+    - ``data_maturity = min(1.0, max(0.5, trade_count / 50))``
+      (cold-start floor of 0.5 so fresh systems aren't fully blocked).
+    """
+    hard_floor = config.get("quality_hard_floor", 0.003)
+    quality_ceiling = config.get("quality_ceiling", 0.010)
+    trade_counts = config.get("trade_counts", {})
+
+    for result in results:
+        if result.get("direction", 0) == 0:
+            continue
+
+        asset_id = result.get("asset")
+        edge = result.get("expected_edge", 0.0)
+        aim_mod = result.get("aim_modifier", 1.0)
+        trade_count = trade_counts.get(asset_id, 0)
+
+        # Data maturity ramp (b5b_quality_gate.py:54)
+        data_maturity = min(1.0, max(0.5, trade_count / 50.0))
+
+        quality_score = abs(edge) * aim_mod * data_maturity
+        result["quality_score"] = round(quality_score, 6)
+        result["data_maturity"] = round(data_maturity, 4)
+
+        if quality_score < hard_floor:
+            result["quality_gate_passed"] = False
+            result["original_contracts"] = result.get("contracts", 0)
+            result["contracts"] = 0
+            result["total_pnl"] = 0.0
+            result["quality_gate_reason"] = (
+                f"score {quality_score:.6f} < floor {hard_floor}"
+            )
+        else:
+            result["quality_gate_passed"] = True
+            # Graduated sizing multiplier (b5b_quality_gate.py:66)
+            quality_mult = (
+                min(1.0, quality_score / quality_ceiling)
+                if quality_ceiling > 0
+                else 1.0
+            )
+            new_contracts = max(0, int(result.get("contracts", 0) * quality_mult))
+            result["contracts"] = new_contracts
+            result["total_pnl"] = round(
+                result.get("pnl_per_contract", 0) * new_contracts, 2,
+            )
+            result["quality_multiplier"] = round(quality_mult, 4)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Cross-asset correlation filter (ports live B5 — b5_trade_selection.py)
+# ---------------------------------------------------------------------------
+
+# Known high-correlation pairs (fallback when D07 is not populated)
+_DEFAULT_CORR_PAIRS = {
+    ("ES", "MES"): 0.99,  ("MES", "ES"): 0.99,
+    ("NQ", "MNQ"): 0.99,  ("MNQ", "NQ"): 0.99,
+    ("ZB", "ZN"):  0.85,  ("ZN", "ZB"):  0.85,
+}
+
+
+def _apply_correlation_filter(
+    selected: list[dict],
+    config: dict,
+) -> list[dict]:
+    """Reduce contracts for highly correlated pairs.
+
+    Port of ``b5_trade_selection.py:70-89``.
+
+    For pairs with correlation above *threshold* (default 0.7), the asset
+    with the lower expected edge gets its contracts halved.
+    """
+    corr_threshold = config.get("correlation_threshold", 0.7)
+    corr_matrix = config.get("correlation_matrix", {})
+
+    if not corr_matrix:
+        corr_matrix = _DEFAULT_CORR_PAIRS
+
+    # Only process eligible trades (direction != 0, contracts > 0)
+    eligible = [
+        r for r in selected
+        if r.get("direction", 0) != 0 and r.get("contracts", 0) > 0
+    ]
+
+    for i, r1 in enumerate(eligible):
+        for r2 in eligible[i + 1:]:
+            a1, a2 = r1["asset"], r2["asset"]
+
+            # Try both key formats: tuple keys and string keys
+            corr = corr_matrix.get(
+                (a1, a2),
+                corr_matrix.get(
+                    (a2, a1),
+                    corr_matrix.get(
+                        f"{a1}_{a2}",
+                        corr_matrix.get(f"{a2}_{a1}", 0.0),
+                    ),
+                ),
+            )
+            if isinstance(corr, str):
+                try:
+                    corr = float(corr)
+                except (ValueError, TypeError):
+                    corr = 0.0
+
+            if corr > corr_threshold:
+                # Halve the lower-edge asset (b5_trade_selection.py:83-86)
+                e1 = r1.get("expected_edge", 0)
+                e2 = r2.get("expected_edge", 0)
+                if e1 < e2:
+                    orig = r1["contracts"]
+                    r1["contracts"] = max(0, orig // 2)
+                    r1["correlation_reduced"] = True
+                    r1["correlated_with"] = a2
+                    r1["pre_correlation_contracts"] = orig
+                    r1["total_pnl"] = round(
+                        r1.get("pnl_per_contract", 0) * r1["contracts"], 2,
+                    )
+                else:
+                    orig = r2["contracts"]
+                    r2["contracts"] = max(0, orig // 2)
+                    r2["correlation_reduced"] = True
+                    r2["correlated_with"] = a1
+                    r2["pre_correlation_contracts"] = orig
+                    r2["total_pnl"] = round(
+                        r2.get("pnl_per_contract", 0) * r2["contracts"], 2,
+                    )
+
+    return selected
+
+
+# ---------------------------------------------------------------------------
+# Portfolio risk cap (B4 Step 7 — b4_kelly_sizing.py:236-247)
+# ---------------------------------------------------------------------------
+
+def _apply_portfolio_risk_cap(
+    results: list[dict],
+    config: dict,
+) -> list[dict]:
+    """Scale down all contracts if total risk exceeds portfolio cap.
+
+    ``total_risk = Σ(contracts × SL_distance × point_value)``
+    If ``total_risk > max_portfolio_risk_pct × capital``, scale proportionally.
+    """
+    max_pct = config.get("max_portfolio_risk_pct", 0.10)
+    user_capital = config.get("user_capital", 150000.0)
+    max_risk = max_pct * user_capital
+    strategies = config.get("strategies", {})
+    specs = config.get("specs", {})
+
+    total_risk = 0.0
+    active = []
+    for r in results:
+        if r.get("direction", 0) != 0 and r.get("contracts", 0) > 0:
+            asset_id = r.get("asset")
+            sl_dist = strategies.get(asset_id, {}).get("threshold", 4)
+            pv = specs.get(asset_id, {}).get("point_value", 50.0)
+            risk = r["contracts"] * sl_dist * pv
+            total_risk += risk
+            active.append(r)
+
+    if total_risk > max_risk and total_risk > 0:
+        scale = max_risk / total_risk
+        for r in active:
+            original = r["contracts"]
+            r["contracts"] = max(0, int(original * scale))
+            if r["contracts"] < original:
+                r["portfolio_risk_scaled"] = True
+                r["portfolio_scale_factor"] = round(scale, 4)
+                r["total_pnl"] = round(
+                    r.get("pnl_per_contract", 0) * r["contracts"], 2,
+                )
+
+    return results
+
+
+def _apply_hmm_session_weight(
+    results: list[dict],
+    config: dict,
+) -> list[dict]:
+    """Apply HMM session allocation weights (b5_trade_selection.py:135-185).
+
+    During cold start (n_observations < 20), uses equal 1/3 weights per session
+    which is a no-op for single-session replays.  When warm, applies learned
+    session weights from D26.
+    """
+    hmm_state = config.get("hmm_state", {})
+    n_obs = hmm_state.get("n_observations", 0)
+
+    if n_obs < 20:
+        return results  # Cold start: equal weights, no change
+
+    session_weights = hmm_state.get("session_weights", {})
+    for r in results:
+        session = r.get("session_type", "NY")
+        weight = session_weights.get(session, 1.0 / 3.0)
+        weight = max(weight, 0.05)  # Floor at 5%
+        if r.get("contracts", 0) > 0:
+            original = r["contracts"]
+            r["contracts"] = max(1, int(original * weight))
+            if r["contracts"] < original:
+                r["hmm_session_weighted"] = True
+                r["hmm_session_weight"] = round(weight, 4)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -920,6 +1556,25 @@ def run_replay(
     if sessions:
         active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
 
+    # --- Intraday state accumulators for CB L1/L2/L3 ---
+    config["_intraday_cumulative_pnl"] = 0.0
+    config["_intraday_trade_count"] = 0
+    config["_intraday_basket_pnl"] = {}
+
+    # --- Regime probability (B2) — initial pass from strategy data ---
+    config["regime_probs"] = {}
+    config["regime_uncertain"] = {}
+    for _asset in active_assets:
+        _strat = strategies.get(_asset, {})
+        _probs, _unc = _compute_regime_probs(_asset, _strat)
+        config["regime_probs"][_asset] = _probs
+        config["regime_uncertain"][_asset] = _unc
+
+    _emit(on_event, "regime_computed", {
+        "regime_probs": config["regime_probs"],
+        "regime_uncertain": config["regime_uncertain"],
+    })
+
     # --- AIM scoring ---
     aim_combined_modifier = {}
     aim_breakdown = {}
@@ -940,9 +1595,22 @@ def run_replay(
             aim_combined_modifier = aim_output.get("combined_modifier", {})
             aim_breakdown = aim_output.get("aim_breakdown", {})
 
+            # Emit detailed debug info for each AIM
+            aim_debug = {}
+            for asset_id_dbg, breakdown in aim_breakdown.items():
+                asset_debug = {}
+                for aid, info in breakdown.items():
+                    asset_debug[aid] = {
+                        "modifier": info.get("modifier", 1.0),
+                        "weight": info.get("dma_weight", 0),
+                        "tag": info.get("reason_tag", ""),
+                    }
+                aim_debug[asset_id_dbg] = asset_debug
+
             _emit(on_event, "aim_scored", {
                 "combined_modifier": aim_combined_modifier,
                 "aim_breakdown": aim_breakdown,
+                "aim_debug": aim_debug,
             })
         except Exception as exc:
             logger.warning("AIM scoring failed, falling back to neutral: %s", exc)
@@ -955,6 +1623,7 @@ def run_replay(
     for asset_id in active_assets:
         session_type = ASSET_SESSION_MAP[asset_id]
         contract_id = contracts.get(asset_id)
+        asset_aim_mod = aim_combined_modifier.get(asset_id, 1.0)
 
         if not contract_id:
             errors.append({"asset": asset_id, "error": "No contract ID"})
@@ -975,6 +1644,13 @@ def run_replay(
                 "bar_count": len(bars),
                 "session": session_type,
             })
+
+            # Refine regime probs with bars if pettersson_threshold available
+            if strategy.get("pettersson_threshold") is not None:
+                _probs, _unc = _compute_regime_probs(asset_id, strategy, bars)
+                config["regime_probs"][asset_id] = _probs
+                config["regime_uncertain"][asset_id] = _unc
+
         except Exception as exc:
             err = {"asset": asset_id, "error": f"API error: {exc}"}
             errors.append(err)
@@ -1036,7 +1712,6 @@ def run_replay(
 
         # --- Compute contracts ---
         session_id = SESSION_ID_MAP.get(session_type, 1)
-        asset_aim_mod = aim_combined_modifier.get(asset_id, 1.0)
         try:
             sizing = compute_contracts(
                 asset_id,
@@ -1058,6 +1733,24 @@ def run_replay(
         result["total_pnl"] = round(
             result["pnl_per_contract"] * sizing.get("contracts", 0), 2,
         )
+        # Pre-compute expected edge & AIM modifier for quality gate / position limit
+        result["expected_edge"] = round(_expected_edge(result, config), 4)
+        result["aim_modifier"] = asset_aim_mod
+
+        # Update intraday state for subsequent CB checks
+        if result.get("direction", 0) != 0 and sizing.get("contracts", 0) > 0:
+            config["_intraday_trade_count"] = (
+                config.get("_intraday_trade_count", 0) + 1
+            )
+            config["_intraday_cumulative_pnl"] = (
+                config.get("_intraday_cumulative_pnl", 0.0)
+                + result["total_pnl"]
+            )
+            _m = str(strategy.get("m", 0))
+            _bpnl = config.get("_intraday_basket_pnl", {})
+            _bpnl[_m] = _bpnl.get(_m, 0.0) + result["total_pnl"]
+            config["_intraday_basket_pnl"] = _bpnl
+
         results.append(result)
 
         _emit(on_event, "sizing_complete", {
@@ -1066,14 +1759,71 @@ def run_replay(
             **sizing,
         })
 
+    # --- Apply quality gate (B5B) ---
+    if config.get("quality_gate_enabled", True):
+        results = _apply_quality_gate(results, config)
+        _emit(on_event, "quality_gate_applied", {
+            "results": [
+                {
+                    "asset": r.get("asset"),
+                    "quality_score": r.get("quality_score"),
+                    "quality_gate_passed": r.get("quality_gate_passed"),
+                    "data_maturity": r.get("data_maturity"),
+                    "quality_multiplier": r.get("quality_multiplier"),
+                }
+                for r in results
+                if r.get("direction", 0) != 0
+            ],
+        })
+
     # --- Apply position limit ---
-    selected, excluded = apply_position_limit(results, max_positions)
+    selected, excluded = apply_position_limit(results, max_positions, config)
 
     _emit(on_event, "position_limit_applied", {
-        "selected": [r["asset"] for r in selected],
-        "excluded": [r["asset"] for r in excluded],
+        "selected": [
+            {"asset": r["asset"], "expected_edge": r.get("expected_edge", 0)}
+            for r in selected
+        ],
+        "excluded": [
+            {"asset": r["asset"], "expected_edge": r.get("expected_edge", 0)}
+            for r in excluded
+        ],
         "max_positions": max_positions,
     })
+
+    # --- Apply cross-asset correlation filter ---
+    if config.get("correlation_filter_enabled", True):
+        selected = _apply_correlation_filter(selected, config)
+        corr_adjustments = [
+            {
+                "asset": r["asset"],
+                "correlated_with": r.get("correlated_with"),
+                "contracts": r.get("contracts"),
+                "pre_correlation_contracts": r.get("pre_correlation_contracts"),
+            }
+            for r in selected
+            if r.get("correlation_reduced")
+        ]
+        if corr_adjustments:
+            _emit(on_event, "correlation_filter_applied", {
+                "adjustments": corr_adjustments,
+            })
+
+    # --- Apply portfolio risk cap (B4 Step 7) ---
+    if config.get("portfolio_risk_cap_enabled", True):
+        selected = _apply_portfolio_risk_cap(selected, config)
+        scaled = [
+            r for r in selected if r.get("portfolio_risk_scaled")
+        ]
+        if scaled:
+            _emit(on_event, "portfolio_risk_cap_applied", {
+                "scale_factor": scaled[0].get("portfolio_scale_factor"),
+                "assets_scaled": [r["asset"] for r in scaled],
+            })
+
+    # --- Apply HMM session allocation (B5 warmup/blend) ---
+    if config.get("hmm_enabled", True):
+        selected = _apply_hmm_session_weight(selected, config)
 
     # Classify non-trade results
     no_breakout = [r for r in results if r.get("result") == "NO_BREAKOUT"]
@@ -1161,6 +1911,30 @@ def run_whatif(
     if sessions:
         active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
 
+    # Ensure regime_probs exist in config (may be overridden or missing)
+    if "regime_probs" not in config:
+        config["regime_probs"] = {}
+        config["regime_uncertain"] = {}
+        for _asset in active_assets:
+            _strat = strategies.get(_asset, {})
+            _bars = cached_bars.get(_asset)
+            _probs, _unc = _compute_regime_probs(_asset, _strat, _bars)
+            config["regime_probs"][_asset] = _probs
+            config["regime_uncertain"][_asset] = _unc
+
+    # Initialize intraday state accumulators for CB L1/L2/L3
+    config["_intraday_cumulative_pnl"] = 0.0
+    config["_intraday_trade_count"] = 0
+    config["_intraday_basket_pnl"] = {}
+
+    # Extract AIM modifiers from original results for what-if (#11)
+    aim_modifiers = {}
+    if config.get("aim_enabled", False):
+        for r in original_results.get("results", []):
+            _a = r.get("asset")
+            if _a:
+                aim_modifiers[_a] = r.get("aim_modifier", 1.0)
+
     for asset_id in active_assets:
         session_type = ASSET_SESSION_MAP[asset_id]
         bars = cached_bars.get(asset_id)
@@ -1194,6 +1968,7 @@ def run_whatif(
 
         # Recompute sizing with (potentially overridden) config
         session_id = SESSION_ID_MAP.get(session_type, 1)
+        _aim_mod = aim_modifiers.get(asset_id, 1.0)
         try:
             sizing = compute_contracts(
                 asset_id,
@@ -1204,6 +1979,7 @@ def run_whatif(
                 config,
                 strategy,
                 session_id,
+                aim_modifier=_aim_mod,
             )
         except Exception as exc:
             sizing = {"contracts": 0, "error": str(exc)}
@@ -1213,10 +1989,45 @@ def run_whatif(
         result["total_pnl"] = round(
             result["pnl_per_contract"] * sizing.get("contracts", 0), 2,
         )
+        # Pre-compute expected edge & AIM modifier for quality gate / position limit
+        result["expected_edge"] = round(_expected_edge(result, config), 4)
+        result["aim_modifier"] = _aim_mod
+
+        # Update intraday state for subsequent CB checks
+        if result.get("direction", 0) != 0 and sizing.get("contracts", 0) > 0:
+            config["_intraday_trade_count"] = (
+                config.get("_intraday_trade_count", 0) + 1
+            )
+            config["_intraday_cumulative_pnl"] = (
+                config.get("_intraday_cumulative_pnl", 0.0)
+                + result["total_pnl"]
+            )
+            _m = str(strategy.get("m", 0))
+            _bpnl = config.get("_intraday_basket_pnl", {})
+            _bpnl[_m] = _bpnl.get(_m, 0.0) + result["total_pnl"]
+            config["_intraday_basket_pnl"] = _bpnl
+
         whatif_results.append(result)
 
+    # Apply quality gate (B5B)
+    if config.get("quality_gate_enabled", True):
+        whatif_results = _apply_quality_gate(whatif_results, config)
+
     # Apply position limit
-    selected, excluded = apply_position_limit(whatif_results, max_positions)
+    selected, excluded = apply_position_limit(whatif_results, max_positions, config)
+
+    # Apply cross-asset correlation filter
+    if config.get("correlation_filter_enabled", True):
+        selected = _apply_correlation_filter(selected, config)
+
+    # Apply portfolio risk cap (B4 Step 7)
+    if config.get("portfolio_risk_cap_enabled", True):
+        selected = _apply_portfolio_risk_cap(selected, config)
+
+    # Apply HMM session allocation (B5 warmup/blend)
+    if config.get("hmm_enabled", True):
+        selected = _apply_hmm_session_weight(selected, config)
+
     whatif_total = sum(r.get("total_pnl", 0) for r in selected)
 
     # Build comparison

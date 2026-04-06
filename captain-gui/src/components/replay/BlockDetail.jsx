@@ -51,11 +51,13 @@ const modColor = (v) => {
   return "text-[#e2e8f0]";
 };
 
-// B3: AIM — dynamic when scored, static fallback
+// B3: AIM — full debug panel with per-AIM visibility
 const B3Detail = () => {
   const aimBreakdown = useReplayStore((s) => s.aimBreakdown);
   const combinedModifier = useReplayStore((s) => s.combinedModifier);
+  const aimDebug = useReplayStore((s) => s.aimDebug);
   const aimEnabled = useReplayStore((s) => s.config.aimEnabled);
+  const b3Stage = useReplayStore((s) => s.pipelineStages?.B3);
 
   if (!aimEnabled) {
     return (
@@ -65,18 +67,51 @@ const B3Detail = () => {
     );
   }
 
+  // B3 ran but returned empty — show diagnostic
+  const b3Complete = b3Stage?.status === "complete";
+  const b3Error = b3Stage?.data?.error;
   const assets = Object.keys(aimBreakdown);
-  if (assets.length === 0) {
+  const hasAnyActive = assets.some((a) => aimBreakdown[a] && Object.keys(aimBreakdown[a]).length > 0);
+
+  if (!b3Complete) {
     return (
       <div className="p-2 space-y-1 text-[9px] font-mono">
-        <div className="text-[#f59e0b]">AIM scoring enabled. Waiting for results...</div>
+        <div className="text-[#f59e0b]">AIM scoring in progress...</div>
+      </div>
+    );
+  }
+
+  if (b3Error) {
+    return (
+      <div className="p-2 space-y-1 text-[9px] font-mono">
+        <div className="text-[#ef4444]">AIM scoring failed: {b3Error}</div>
+        <div className="text-[#64748b] mt-1">Check console for details. Common causes: missing D01/D02 data, QuestDB column mismatch, import errors.</div>
+      </div>
+    );
+  }
+
+  if (!hasAnyActive) {
+    return (
+      <div className="p-2 space-y-2 text-[9px] font-mono">
+        <div className="text-[#ef4444] font-bold">ALL AIMs SKIPPED — combined modifier = 1.0x (neutral)</div>
+        <div className="text-[#94a3b8]">
+          No AIMs have status=ACTIVE in D01. This means either:
+        </div>
+        <ul className="text-[#94a3b8] ml-3 list-disc space-y-0.5">
+          <li>The offline lifecycle set them to COLLECTING (most common)</li>
+          <li>The loader query picked up stale rows (QuestDB append-only dedup issue)</li>
+          <li>Bootstrap was never run or was overwritten</li>
+        </ul>
+        <div className="text-[#64748b] mt-1">
+          Combined modifiers: {Object.entries(combinedModifier).map(([a, m]) => `${a}=${m?.toFixed(3)}`).join(", ") || "none"}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="p-2 space-y-3 text-[9px] font-mono">
-      {/* Per-asset combined modifier */}
+      {/* Per-asset combined modifier summary */}
       <div className="flex flex-wrap gap-3 mb-1">
         {Object.entries(combinedModifier).map(([asset, mod]) => (
           <div key={asset} className="flex items-center gap-1">
@@ -86,39 +121,49 @@ const B3Detail = () => {
         ))}
       </div>
 
-      {/* Breakdown table for first asset with data */}
+      {/* Full breakdown per asset — each AIM with modifier and reason */}
       {assets.map((asset) => {
         const breakdown = aimBreakdown[asset];
-        if (!breakdown || Object.keys(breakdown).length === 0) return null;
+        const activeCount = breakdown ? Object.keys(breakdown).length : 0;
+        const mod = combinedModifier[asset];
         return (
-          <div key={asset}>
-            <div className="text-[#06b6d4] mb-1">{asset} AIM Breakdown</div>
-            <table className="w-full border-collapse">
-              <thead>
-                <tr>
-                  <TableHeader>AIM</TableHeader>
-                  <TableHeader>Name</TableHeader>
-                  <TableHeader>Modifier</TableHeader>
-                  <TableHeader>Conf</TableHeader>
-                  <TableHeader>Weight</TableHeader>
-                  <TableHeader>Reason</TableHeader>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(breakdown)
-                  .sort(([a], [b]) => Number(a) - Number(b))
-                  .map(([aimId, info]) => (
-                    <tr key={aimId}>
-                      <TableCell className="text-[#06b6d4]">{String(aimId).padStart(2, "0")}</TableCell>
-                      <TableCell>{AIM_NAMES[Number(aimId)] || `AIM-${aimId}`}</TableCell>
-                      <TableCell className={modColor(info.modifier)}>{info.modifier?.toFixed(4) ?? "--"}</TableCell>
-                      <TableCell>{info.confidence?.toFixed(2) ?? "--"}</TableCell>
-                      <TableCell>{info.dma_weight?.toFixed(3) ?? "--"}</TableCell>
-                      <TableCell className="text-[#94a3b8] max-w-[120px] truncate">{info.reason_tag || "--"}</TableCell>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+          <div key={asset} className="border border-solid border-[#1e293b] rounded p-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[#06b6d4] font-bold">{asset}</span>
+              <span className={`${modColor(mod)} text-[10px]`}>
+                combined = {mod?.toFixed(4) ?? "1.0000"}x ({activeCount}/16 active)
+              </span>
+            </div>
+            {activeCount === 0 ? (
+              <div className="text-[#ef4444]">All 16 AIMs skipped (status != ACTIVE)</div>
+            ) : (
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <TableHeader>AIM</TableHeader>
+                    <TableHeader>Name</TableHeader>
+                    <TableHeader>Modifier</TableHeader>
+                    <TableHeader>Conf</TableHeader>
+                    <TableHeader>DMA Wt</TableHeader>
+                    <TableHeader>Reason</TableHeader>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(breakdown)
+                    .sort(([a], [b]) => Number(a) - Number(b))
+                    .map(([aimId, info]) => (
+                      <tr key={aimId}>
+                        <TableCell className="text-[#06b6d4]">{String(aimId).padStart(2, "0")}</TableCell>
+                        <TableCell>{AIM_NAMES[Number(aimId)] || `AIM-${aimId}`}</TableCell>
+                        <TableCell className={modColor(info.modifier)}>{info.modifier?.toFixed(4) ?? "--"}</TableCell>
+                        <TableCell>{info.confidence?.toFixed(2) ?? "--"}</TableCell>
+                        <TableCell>{info.dma_weight?.toFixed(3) ?? "--"}</TableCell>
+                        <TableCell className="text-[#94a3b8] max-w-[150px] truncate">{info.reason_tag || "--"}</TableCell>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
           </div>
         );
       })}
