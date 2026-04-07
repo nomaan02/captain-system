@@ -732,7 +732,9 @@ TABLES = [
         asset_id SYMBOL,
         trade_date TIMESTAMP,
         atm_iv_30d DOUBLE,
-        realized_vol_20d DOUBLE
+        realized_vol_20d DOUBLE,
+        vrp DOUBLE,
+        ts TIMESTAMP
     ) timestamp(trade_date) PARTITION BY MONTH;
     """,
 
@@ -746,7 +748,8 @@ TABLES = [
         asset_id SYMBOL,
         trade_date TIMESTAMP,
         cboe_skew DOUBLE,
-        skew_spread_proxy DOUBLE
+        skew_spread_proxy DOUBLE,
+        ts TIMESTAMP
     ) timestamp(trade_date) PARTITION BY MONTH;
     """,
 
@@ -759,7 +762,11 @@ TABLES = [
     CREATE TABLE IF NOT EXISTS p3_d33_opening_volatility (
         asset_id SYMBOL,
         session_date TIMESTAMP,
-        vol_5min DOUBLE
+        session_type SYMBOL,
+        or_minutes INT,
+        opening_range_pct DOUBLE,
+        opening_vol_z DOUBLE,
+        ts TIMESTAMP
     ) timestamp(session_date) PARTITION BY MONTH;
     """,
 ]
