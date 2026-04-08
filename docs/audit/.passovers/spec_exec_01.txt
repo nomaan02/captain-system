@@ -1,0 +1,36 @@
+Session 1 Passover Summary
+==========================
+
+Docs read:
+  - docs/AIM-Specs/new-aim-specs/Program3_Online.md (V3, 1,756 lines) -- PRIMARY
+  - /mnt/c/Users/nomaa/.../33_P3_Online_Full_Pseudocode.md (Obsidian doc 33, 476 lines) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../30_P1_Consolidated_Config.md (Obsidian doc 30, 89 lines) -- SUPPLEMENTARY
+
+Sections written: S1 (Session Definitions), S2 (Online Blocks 1-9 + Orchestrator + Error Handling + Data Flow)
+
+Key spec requirements:
+  1. Shared/Per-User split is architectural law: B1-3 shared once/session, B4-6 per-user, B7 per-user monitoring, B8-9 post-loop aggregation.
+  2. 7-layer Kelly pipeline with 30% silo drawdown pre-check halts all trading for that user.
+  3. Quality gate is fail-open with OPEN calibration parameters (hard_floor=0.003, ceiling=0.010 are PLACEHOLDERS). Fixed after calibration.
+  4. NET PnL (after commissions) feeds the Offline learning loop (DMA, BOCPD, EWMA, Kelly).
+  5. Circuit breaker 5-layer structure (L0-L4) is Obsidian-only -- V3 references circuit_breaker_check() but omits layer definitions.
+
+Obsidian-only content tagged:
+  - Circuit Breaker PG-27B 5-layer screen (doc 33)
+  - AIM-16 HMM session_budget_weights in Block 3 (doc 33)
+  - Anti-copy jitter in Block 6 (doc 33)
+  - Exit grid TP/SL multiples (doc 30)
+
+Ambiguous items tagged:
+  - APAC session exact open time not specified
+  - No London-session assets in current deployment
+  - AIM-16 scope discrepancy (Obsidian: AIMs 1-16, V3: AIMs 1-15)
+  - Circuit breaker placement: standalone block (Obsidian) vs orchestrator-level check (V3)
+
+Items for next sessions:
+  - S3: Offline blocks (DMA, BOCPD, pseudotrader, decay, strategy injection, Kelly)
+  - S4: Command blocks (routing, GUI server, API adapter, reconciliation)
+  - S5: Dataset schemas (P3-D00 through P3-D26)
+  - S6: AIM individual specs (per-AIM modifier logic from doc 31)
+  - S7: Architecture spec (multi-user siloing, TSM classification, circuit breaker)
+  - P2-D06/D07 locked strategy and regime model schemas

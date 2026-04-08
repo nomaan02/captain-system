@@ -1,0 +1,58 @@
+You are auditing Captain system. Session 4a of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-620-codebase-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-625-dependencies-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Scope
+Captain Offline — Orchestrator + B1-B2: Strategic brain process. Event-driven + scheduled tasks for AIM lifecycle, DMA weight updates, BOCPD changepoint detection, drift detection. Category A learning uses ALL signals; Category B uses own trades only.
+
+## Files
+1. captain-offline/captain_offline/main.py
+2. captain-offline/captain_offline/blocks/orchestrator.py
+3. captain-offline/captain_offline/blocks/bootstrap.py
+4. captain-offline/captain_offline/blocks/version_snapshot.py
+5. captain-offline/captain_offline/blocks/b1_aim_lifecycle.py
+6. captain-offline/captain_offline/blocks/b1_aim16_hmm.py
+7. captain-offline/captain_offline/blocks/b1_dma_update.py
+8. captain-offline/captain_offline/blocks/b1_drift_detection.py
+9. captain-offline/captain_offline/blocks/b1_hdwm_diversity.py
+10. captain-offline/captain_offline/blocks/b2_bocpd.py
+11. captain-offline/captain_offline/blocks/b2_cusum.py
+12. captain-offline/captain_offline/blocks/b2_level_escalation.py
+
+## Per-File Extraction Format
+For each file:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [cron, interval, event triggers]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected]
+
+Additionally for this session, extract:
+- Scheduled tasks: what runs on schedule? Cron expression or interval?
+- Event handlers: what Redis messages trigger what actions?
+- Category A vs B learning: does this block learn from ALL signals or own trades only?
+- Startup sequence: initialization order, dependencies, health checks
+- Dead code: unused functions, unreachable branches
+
+## Output
+Write to: docs/audit/captain_offline.md — under heading "# Captain Offline Audit" then "## Part 1: Orchestrator + B1-B2"
+
+## Passover
+End with:
+## Session 4a Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **Scheduled tasks:** [task → timing inventory]
+- **Event handlers:** [channel → handler inventory]
+- **Cross-service deps:** [QuestDB tables, Redis channels]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_04a.txt

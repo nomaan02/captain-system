@@ -1,0 +1,45 @@
+Session 2 Passover Summary
+==========================
+
+Docs read:
+  - docs/AIM-Specs/new-aim-specs/AIM_Extractions.md (V3, 3,723 lines) -- PRIMARY
+  - docs/AIM-Specs/new-aim-specs/HMM_Opportunity_Regime_Spec.md (V3, 578 lines) -- PRIMARY
+  - /mnt/c/Users/nomaa/.../31_AIM_Individual_Specifications.md (Obsidian doc 31, 767 lines) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../22_HMM_Opportunity_Regime.md (Obsidian doc 22, 151 lines) -- SUPPLEMENTARY
+
+Sections written: S3 (AIM System -- full 16-AIM extraction with system overview)
+
+AIM count confirmed: 16 AIMs extracted (AIM-01 through AIM-16). 15 per-asset + 1 per-session (HMM).
+
+Key spec requirements:
+  1. All AIM modifiers clamped to [0.5, 1.5] with fail-safe neutral (1.0) on error. Confidence in [0, 1]. Standardised output interface across all 15 per-asset AIMs.
+  2. DMA with forgetting factor 0.99 is the aggregation framework. HDWM seed types (6 categories: Options, Microstructure, Macro/Event, Cross-Asset, Temporal, Internal) enforce diversity. 50-trade minimum before meta-weight adjustment.
+  3. AIM-03 GEX direction AMENDED (DEC-02, 2026-04-01): Positive gamma -> reduce (mean-reversion harms ORB breakouts). Reversed from original spec. Flagged for Isaac.
+  4. AIM-15 (Volume Quality) is potentially the single most impactful enhancement to MOST strategy -- Sharpe 2.81 on high-volume sessions (Zarattini et al.). Dual check: temporal (today vs trailing avg) + spatial (volume at breakout price zone).
+  5. AIM-16 (HMM) operates at session level, not per-asset. K=3 states (LOW_OPP, NORMAL, HIGH_OPP), Gaussian emissions with 7-element observation vector, TVTP transitions (covariate-driven), alpha=0.3 exponential smoothing. Excluded from HDWM seed enforcement.
+
+Tier structure:
+  - Tier 1 (Build First): AIM-04, AIM-06, AIM-08, AIM-11, AIM-12, AIM-15
+  - Tier 2 (Build Second): AIM-01, AIM-09, AIM-10, AIM-13, AIM-14
+  - Tier 3 (Build Later): AIM-02, AIM-03, AIM-05, AIM-07
+
+Deferred AIMs:
+  - AIM-05 (Order Book Depth) -- requires L2 data infrastructure ($500-2000/month)
+  - AIM-14 -- not a modifier AIM, triggers P1/P2 re-runs on Level 3 decay
+
+Warm-up discrepancies (doc 31 vs AIM_Extractions):
+  - AIM-02: 120d vs 60d
+  - AIM-03: 250d vs 60d
+  - AIM-08: 120d vs 252d
+  - AIM-11: 120d vs 252d
+  - AIM-12: 50 trades vs 60d
+  - AIM-15: 60d vs 20d
+
+Obsidian-only content tagged:
+  - None unique to Obsidian -- V3 AIM_Extractions.md and HMM_Opportunity_Regime_Spec.md cover all content from docs 22 and 31 with greater detail.
+
+Items for next sessions:
+  - S4: Offline blocks (B1-B9: DMA update, BOCPD changepoint, pseudotrader, decay detection with 3-level escalation, strategy injection, Kelly update, sensitivity scan, HMM training)
+  - S5: Command blocks (B1-B10: routing, GUI data server, API adapter, reconciliation, reporting, notifications, incident response, data validation, replay runner, Telegram bot)
+  - S6: Dataset schemas (P3-D00 through P3-D26 full field definitions)
+  - S7: Architecture spec (multi-user capital siloing, TSM classification, circuit breaker 5-layer, parity-based multi-instance)

@@ -1,0 +1,49 @@
+You are auditing Captain system. Session 1 of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-629-lifecycle-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-628-concurrency-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Scope
+Captain Online — Core & Ingestion: Startup, session management, data ingestion, bar aggregation, WebSocket handling, Opening Range tracking.
+
+## Files
+1. captain-online/captain_online/main.py
+2. captain-online/captain_online/blocks/orchestrator.py
+3. captain-online/captain_online/blocks/or_tracker.py
+4. captain-online/captain_online/blocks/b1_data_ingestion.py
+5. captain-online/captain_online/blocks/b1_features.py
+
+## Per-File Extraction Format
+For each file, use this structure:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [session_id, market_open, cron, session registry refs]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, payload shape, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected, risky, or smell-worthy]
+
+Additionally for this session, extract:
+- Startup/shutdown sequence and initialization order
+- Async patterns: asyncio.create_task, await, locks, shared mutable state
+- WebSocket connections: lifecycle, reconnection, error handling
+- Data flow: market open → quote ingestion → bar formation
+- Opening Range tracking: how OR window is defined, tracked, completed
+
+## Output
+Write to: docs/audit/captain_online.md — under heading "# Captain Online Audit" then "## Part 1: Core & Ingestion"
+
+## Passover
+End with:
+## Session 1 Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **Cross-service deps:** [Redis channels, QuestDB tables, shared modules discovered]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_01.txt

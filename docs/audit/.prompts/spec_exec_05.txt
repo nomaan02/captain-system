@@ -1,0 +1,129 @@
+## Previous Session Summary
+---
+## Session 4 Summary
+
+- **Docs read:**
+  - `/mnt/c/Users/nomaa/.../34_P3_Command_Full_Pseudocode.md` (Obsidian doc 34, 380 lines) -- PRIMARY
+  - `/mnt/c/Users/nomaa/.../18_GUI_Dashboard.md` (Obsidian doc 18, 149 lines) -- PRIMARY
+  - `/mnt/c/Users/nomaa/.../26_Notification_System.md` (Obsidian doc 26, 159 lines) -- PRIMARY
+  - `/mnt/c/Users/nomaa/.../19_User_Management.md` (Obsidian doc 19, 158 lines) -- SUPPLEMENTARY (RBAC, capital silos)
+  - `docs/AIM-Specs/new-aim-specs/Nomaan_Edits_P3.md` (V3, 275 lines) -- SUPPLEMENTARY (Change 1: SOD computation for B8)
+
+- **Sections written:** S7 (Command Blocks 1-10), S8 (GUI Panels + Security + User Management)
+
+- **Command blocks confirmed:** 10
+  B1: Core Routing (PG-30) -- message bus, 3 queues, 13 command types, security enforcement
+  B2: GUI Data Server (PG-31) -- per-user dashboard payload, 11 data sections
+  B3: API Adapter + Execution (PG-32) -- broker adapters (topstep/ibkr), compliance gate
+  B4: TSM Management (PG-33) -- account onboarding, 5 classifications, fee schedules
+  B5: Injection Flow (PG-34) -- strategy adoption GUI workflow (ADOPT/PARALLEL/REJECT)
+  B6: Report Generator (PG-35) -- 11 report types (RPT-01 through RPT-11)
+  B7: Notification System (PG-36) -- 4 channels, 4 priorities, Telegram bot (7 commands)
+  B8: Daily Reconciliation (PG-39) -- 6-step SOD process, broker is source of truth [V3 AMENDMENT]
+  B9: Incident Response (PG-40) -- 4 severity levels, severity-based routing
+  B10: Data Input Validation (PG-41) -- freshness, completeness, schema checks
+
+- **GUI panels confirmed:** 9 dashboard panels + System Overview (ADMIN only) with 8 health dimensions
+  1. Signal Display (per-user)
+  2. Regime States (shared)
+  3. AIM Panel (shared, 7 fields per AIM row)
+  4. Notification Centre (per-user)
+  5. Intraday Positions (per-user)
+  6. TSM Status (per-account)
+  7. Capital Summary (per-user)
+  8. Decay Alerts (shared)
+  9. Warm-up Gauges (per-AIM/per-asset)
+
+- **Key spec requirements:**
+  1. **6 outbound fields only:** asset, direction, size, tp, sl, timestamp. ALL internal state
+     (aim_breakdown, combined_modifier, regime_probs, kelly_params, aim_weights, strategy_logic,
+     ewma_states, decay_states, sensitivity_results) is PROHIBITED from external transmission.
+     Enforced by sanitise_for_api() in B1.
+  2. **Broker is source of truth for balance.** Daily reconciliation (B8, 19:00 EST) overwrites
+     system balance with broker query. Mismatch above threshold creates P2_HIGH incident.
+  3. **[V3 AMENDMENT] SOD computation gated by topstep_optimisation flag.** Only accounts with
+     `topstep_optimisation: true` in TSM get the extended topstep_state parameters (mdd_pct,
+     max_trades, hard_halt_threshold, max_payout, post_payout_mdd_pct). From Nomaan_Edits_P3.md
+     Change 1 (Isaac, 2026-03-12).
+  4. **CRITICAL notifications override quiet hours.** Quiet hours default 22:00-06:00 local user TZ.
+     Only P1_CRITICAL events break through. Telegram rate limited to 60 msgs/hour per chat.
+  5. **RBAC has 6 roles** (ADMIN, ANALYST/DEV, TRADER, VIEWER, SYSTEM, AUDITOR). Tag-based,
+     users may hold multiple. JWT session 24h with silent refresh. Max 2 devices per user.
+
+- **V3 amendments applied:**
+  - Change 1 from Nomaan_Edits_P3.md (Isaac, 2026-03-12): SOD parameter computation in Command B8.
+    Adds topstep_optimisation gate and extended topstep_state fields (mdd_pct, risk_per_trade_pct,
+    risk_per_trade_dollar, max_trades, daily_exposure, hard_halt_threshold, max_payout,
+    post_payout_mdd_pct). TSM file extended with topstep_params block.
+  - No other V3 amendments affect Command blocks. Nomaan_Edits explicitly states: "Command routing
+    (all Command blocks)" does NOT change. CB adds constraints, never loosens.
+
+- **Source priority note:** No dedicated V3 doc exists for Command. All 10 blocks sourced from
+  Obsidian doc 34 as PRIMARY. This is the only session where Obsidian is the authoritative source.
+  V3 specs cover Offline (Program3_Offline.md) and Online (Program3_Online.md) but not Command.
+
+- **Items for next sessions:**
+  - S5 (Session 5): Dataset schemas (P3-D00 through P3-D26 full field definitions)
+  - S6 (Session 6): Online blocks (B1-B9: data ingestion, regime, AIM aggregation, Kelly sizing,
+    trade selection, quality gate, signal output, position monitoring, net concentration, capacity)
+  - S7 (Session 7): Architecture spec (multi-user capital siloing, TSM classification,
+    parity-based multi-instance, deployment topology)
+
+You are extracting spec content for the Captain System consolidated spec reference. Session 5 of 7.
+
+## Source Priority
+V3 P3_Dataset_Schemas.md supersedes Obsidian doc 24 for schema definitions. Other supporting specs are Obsidian-only.
+
+## Documents to Read
+PRIMARY (V3 for schemas):
+- docs/AIM-Specs/new-aim-specs/P3_Dataset_Schemas.md (~565 lines)
+
+PRIMARY (Obsidian for supporting systems):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/24_P3_Dataset_Schemas.md (~265 lines) — supplementary to V3
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/25_Fee_Payout_System.md (~143 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/20_Signal_Distribution.md (~108 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/27_Contract_Rollover.md (~79 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/28_Pseudotrader_System.md (~121 lines)
+
+## What to Extract
+
+### §9 — QuestDB Dataset Master List (D00–D27)
+For EVERY P3 dataset (D00 through D27):
+
+### D[NN]: [table_name]
+- **Purpose:** (one line)
+- **Key Fields:** [field names and types from V3 spec]
+- **Writer:** [which process/block writes]
+- **Reader:** [which process/block reads]
+- **Write Frequency:** [per-tick, per-session, daily, on-event]
+- **Retention:** [partition, TTL if specified]
+- **Notes:** [constraints, multi-user implications]
+
+If a dataset is referenced in earlier sections but not defined here, note as [REFERENCED BUT UNDEFINED].
+
+### §10 — Supporting Systems
+
+**Fee Resolution:** formula, per-asset fees, payout rules, TopstepX handling
+**Signal Distribution:** format, fields, Redis channel, anti-copy measures, multi-user routing
+**Contract Rollover:** detection logic, ID resolution, timeline per asset, data continuity
+**Pseudotrader:** account-aware simulation, shadow positions, theoretical outcomes, parity interaction
+
+## Output
+Read the existing docs/audit/spec_reference.md (has §1–8 from Sessions 1–4).
+APPEND §9, §10 to the end. Do NOT delete existing content.
+Also write passover to: docs/audit/.passovers/spec_exec_05.txt
+
+## Passover Format
+---
+## Session 5 Summary
+- **Docs read:** [list]
+- **Sections written:** §9, §10
+- **Datasets cataloged:** [N out of 28]
+- **Key spec requirements:** [3–5 critical]
+- **Items for next sessions:** [referenced but not extracted]
+
+## Rules
+- Extract what the spec SAYS — do NOT read code files
+- Be EXHAUSTIVE for §9 — every dataset the spec mentions must appear
+- V3 P3_Dataset_Schemas.md has field-level detail Obsidian lacks — prefer V3 fields
+- Sparsely defined datasets: include with [SCHEMA INCOMPLETE]

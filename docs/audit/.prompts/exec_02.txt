@@ -1,0 +1,130 @@
+You are auditing Captain system. Session 2 of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-624-code-quality-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-626-dead-code-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Previous Session Summary
+EXEC-01 PASSOVER SUMMARY
+========================
+Session: Captain Online — Core & Ingestion (Part 1 of 8)
+Date: 2026-04-08
+Files audited: 5
+
+FILES COVERED:
+  captain-online/captain_online/main.py
+  captain-online/captain_online/blocks/orchestrator.py
+  captain-online/captain_online/blocks/or_tracker.py
+  captain-online/captain_online/blocks/b1_data_ingestion.py
+  captain-online/captain_online/blocks/b1_features.py
+
+KEY FINDINGS (13 total):
+
+HIGH:
+  1. THREAD RACE: open_positions + shadow_positions lists mutated from 2 threads (main + command listener) with no lock.
+     orchestrator.py:762,769 (write, command thread) vs :598,608 (read/write, main thread).
+  2. WRONG CONSTANT: _get_contract_multiplier() returns 50.0 for all assets — breaks AIM-03 GEX for non-ES assets.
+     b1_features.py:955-956.
+
+MEDIUM:
+  3. get_state() returns live AssetORSession object (not snapshot) — caller reads fields without lock held.
+     or_tracker.py:245 / orchestrator.py:301-315.
+  4. sys.exit(0) inside SIGTERM handler — not clean shutdown if signal arrives mid-DB-query.
+     main.py:126.
+  5. No Docker liveness/readiness probes — hangs not detectable.
+     main.py (absent).
+  6. Blocking REST API calls in _run_data_ingestion() on main thread — can exceed 5s latency target for 10 assets.
+     b1_data_ingestion.py:497,520,547.
+  7. p3_spread_history table is read/written but not in schema docs — may not exist, silently broken.
+     b1_features.py:700-706, 1270.
+  8. datetime.now() used without timezone in 3 locations — wrong trading date near midnight ET.
+     b1_data_ingestion.py:436,642 / b1_features.py:546.
+  9. _check_data_source_for_feature() + _has_valid_timestamp() are stubs (always return True) — Data Moderator's STALE_FEATURE and timestamp rejection paths are disabled.
+     b1_data_ingestion.py:574,578.
+
+LOW:
+  10. _registry_cache + _contract_to_asset lazy-init without lock — potential double-load at startup (idempotent).
+      or_tracker.py:116,167.
+  11. _all_signals reset pattern is fragile if OR breakout handling is ever threaded.
+      orchestrator.py:211,344.
+  12. ORTracker.clear() never called — stale previous-day state accumulates.
+      or_tracker.py:318 / orchestrator.py (absent call).
+  13. _get_session_open_time() hardcodes 9:30 ET for all assets — wrong for LON/APAC.
+      b1_features.py:1073.
+
+STUB COUNT: 11
+  b1_features.py (9): _get_overnight_range, _get_options_volume, _get_put_iv, _get_option_chain,
+                       _get_trailing_pcr, _load_latest_cot, _load_cot_history,
+                       _get_cl_spot, _get_cl_front_futures
+  b1_data_ingestion.py (2): _check_data_source_for_feature, _has_valid_timestamp
+
+LIFECYCLE SCORE: 6.5/10
+CONCURRENCY SCORE: 5.5/10
+
+REDIS CHANNELS:
+  captain:status (publish pipeline stages)
+  captain:commands (STREAM_COMMANDS, GROUP_ONLINE_COMMANDS)
+  captain:alerts (publish roll/data alerts)
+
+QUESTDB TABLES:
+  READS: p3_d00, p3_d01, p3_d02, p3_d05, p3_d08, p3_d12, p3_d15, p3_d16, p3_d17,
+         p3_d29, p3_d30, p3_d31, p3_d32, p3_d33
+  WRITES: p3_d00 (status flags), p3_d17 (quality log), p3_d21 (incidents),
+          p3_d29, p3_d30, p3_d33 (post-OR daily data), p3_spread_history (UNDOCUMENTED)
+
+SHARED MODULES:
+  topstep_client, topstep_stream (quote_cache), contract_resolver,
+  redis_client, questdb_client, journal, constants, vix_provider
+
+CONFIG FILES:
+  config/session_registry.json  (OR window times per session)
+  config/contract_ids.json      (contract_id → asset_id mapping)
+  config/economic_calendar_2026.json  (AIM-06 events)
+
+REPORT: docs/audit/captain_online.md — "# Captain Online Audit / ## Part 1: Core & Ingestion"
+
+## Scope
+Captain Online — AIMs & Regime: AIM computation, regime probability classification, AIM aggregation via DMA weights (Blocks 2-3).
+
+## Files
+1. captain-online/captain_online/blocks/b2_regime_probability.py
+2. captain-online/captain_online/blocks/b3_aim_aggregation.py
+3. shared/aim_compute.py
+4. shared/aim_feature_loader.py
+
+## Per-File Extraction Format
+For each file:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [any triggers, session refs]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected]
+
+Additionally for this session, extract:
+- AIM inventory: which AIMs are implemented vs stubbed (ID, name, status)
+- Feature computation: what features are calculated, from which data sources
+- Regime classifier: method (HMM/threshold/rule-based), input features, output states
+- MoE/DMA aggregation: how AIM weights are loaded and applied, forgetting factor
+- Code quality: cyclomatic complexity hotspots, magic numbers, nested logic
+- Dead code: unused imports, unreachable branches, commented-out blocks
+
+## Output
+APPEND to: docs/audit/captain_online.md — under heading "## Part 2: AIMs & Regime"
+(Part 1 already exists — do NOT overwrite it)
+
+## Passover
+End with:
+## Session 2 Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **AIM inventory:** [ID → status for each AIM]
+- **Cross-service deps:** [QuestDB tables, input contract for Kelly sizing]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_02.txt

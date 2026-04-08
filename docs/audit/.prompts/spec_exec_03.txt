@@ -1,0 +1,119 @@
+## Previous Session Summary
+Session 2 Passover Summary
+==========================
+
+Docs read:
+  - docs/AIM-Specs/new-aim-specs/AIM_Extractions.md (V3, 3,723 lines) -- PRIMARY
+  - docs/AIM-Specs/new-aim-specs/HMM_Opportunity_Regime_Spec.md (V3, 578 lines) -- PRIMARY
+  - /mnt/c/Users/nomaa/.../31_AIM_Individual_Specifications.md (Obsidian doc 31, 767 lines) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../22_HMM_Opportunity_Regime.md (Obsidian doc 22, 151 lines) -- SUPPLEMENTARY
+
+Sections written: S3 (AIM System -- full 16-AIM extraction with system overview)
+
+AIM count confirmed: 16 AIMs extracted (AIM-01 through AIM-16). 15 per-asset + 1 per-session (HMM).
+
+Key spec requirements:
+  1. All AIM modifiers clamped to [0.5, 1.5] with fail-safe neutral (1.0) on error. Confidence in [0, 1]. Standardised output interface across all 15 per-asset AIMs.
+  2. DMA with forgetting factor 0.99 is the aggregation framework. HDWM seed types (6 categories: Options, Microstructure, Macro/Event, Cross-Asset, Temporal, Internal) enforce diversity. 50-trade minimum before meta-weight adjustment.
+  3. AIM-03 GEX direction AMENDED (DEC-02, 2026-04-01): Positive gamma -> reduce (mean-reversion harms ORB breakouts). Reversed from original spec. Flagged for Isaac.
+  4. AIM-15 (Volume Quality) is potentially the single most impactful enhancement to MOST strategy -- Sharpe 2.81 on high-volume sessions (Zarattini et al.). Dual check: temporal (today vs trailing avg) + spatial (volume at breakout price zone).
+  5. AIM-16 (HMM) operates at session level, not per-asset. K=3 states (LOW_OPP, NORMAL, HIGH_OPP), Gaussian emissions with 7-element observation vector, TVTP transitions (covariate-driven), alpha=0.3 exponential smoothing. Excluded from HDWM seed enforcement.
+
+Tier structure:
+  - Tier 1 (Build First): AIM-04, AIM-06, AIM-08, AIM-11, AIM-12, AIM-15
+  - Tier 2 (Build Second): AIM-01, AIM-09, AIM-10, AIM-13, AIM-14
+  - Tier 3 (Build Later): AIM-02, AIM-03, AIM-05, AIM-07
+
+Deferred AIMs:
+  - AIM-05 (Order Book Depth) -- requires L2 data infrastructure ($500-2000/month)
+  - AIM-14 -- not a modifier AIM, triggers P1/P2 re-runs on Level 3 decay
+
+Warm-up discrepancies (doc 31 vs AIM_Extractions):
+  - AIM-02: 120d vs 60d
+  - AIM-03: 250d vs 60d
+  - AIM-08: 120d vs 252d
+  - AIM-11: 120d vs 252d
+  - AIM-12: 50 trades vs 60d
+  - AIM-15: 60d vs 20d
+
+Obsidian-only content tagged:
+  - None unique to Obsidian -- V3 AIM_Extractions.md and HMM_Opportunity_Regime_Spec.md cover all content from docs 22 and 31 with greater detail.
+
+Items for next sessions:
+  - S4: Offline blocks (B1-B9: DMA update, BOCPD changepoint, pseudotrader, decay detection with 3-level escalation, strategy injection, Kelly update, sensitivity scan, HMM training)
+  - S5: Command blocks (B1-B10: routing, GUI data server, API adapter, reconciliation, reporting, notifications, incident response, data validation, replay runner, Telegram bot)
+  - S6: Dataset schemas (P3-D00 through P3-D26 full field definitions)
+  - S7: Architecture spec (multi-user capital siloing, TSM classification, circuit breaker 5-layer, parity-based multi-instance)
+
+You are extracting spec content for the Captain System consolidated spec reference. Session 3 of 7.
+
+## Source Priority
+V3 repo specs SUPERSEDE Obsidian vault originals.
+
+## Documents to Read
+PRIMARY (V3 — authoritative):
+- docs/AIM-Specs/new-aim-specs/Program3_Offline.md (~1729 lines)
+- docs/AIM-Specs/new-aim-specs/DMA_MoE_Implementation_Guide.md (~339 lines)
+
+SUPPLEMENTARY (Obsidian vault):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/32_P3_Offline_Full_Pseudocode.md (~782 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/21_Implementation_Guides.md (~205 lines)
+
+## What to Extract
+
+### §4 — Offline Blocks 1–9
+For EACH block (B1 through B9), same structure as §2:
+
+### Block N: [Name]
+- **PG ID:** P3-OFF-BN
+- **Purpose:** (one line)
+- **Trigger:** (event-driven, scheduled, or upstream)
+- **Inputs:** Datasets (QuestDB R) | Redis keys | Upstream blocks
+- **Outputs:** Datasets (QuestDB W) | Redis keys | Downstream
+- **Key Logic:** (algorithms, formulas, thresholds)
+- **Shared vs Per-User** | **Error Handling**
+
+### §5 — Kelly 7-Layer Pipeline
+Extract the COMPLETE Kelly sizing pipeline, layer by layer:
+
+### Layer N: [Name]
+- **Purpose:** (one line)
+- **Inputs:** [datasets, parameters]
+- **Formula:** [exact formula from spec]
+- **Output:** [what this layer produces]
+- **Dataset Refs:** [QuestDB tables — D12, etc.]
+- **Constraints:** [caps, floors, bounds]
+
+Include: raw Kelly fraction, shrinkage, regime adjustment, CB interaction, basket allocation, account cap, final position size.
+
+### §6 — Circuit Breaker 5 Layers
+
+### Layer N: [Name]
+- **Condition:** [trigger]
+- **Action:** [reduce size, pause trading, alert, etc.]
+- **Dataset Refs:** [D25, etc.]
+- **Parameters:** [thresholds, beta_b, correlation windows]
+- **Recovery:** [how trading resumes]
+
+Include per-asset vs account-level vs system-level distinctions.
+
+## Output
+Read the existing docs/audit/spec_reference.md (has §1–3 from Sessions 1–2).
+APPEND §4, §5, §6 to the end. Do NOT delete existing content.
+Also write passover to: docs/audit/.passovers/spec_exec_03.txt
+
+## Passover Format
+---
+## Session 3 Summary
+- **Docs read:** [list]
+- **Sections written:** §4, §5, §6
+- **Kelly layers confirmed:** [N]
+- **CB layers confirmed:** [N]
+- **Key spec requirements:** [3–5 critical]
+- **Items for next sessions:** [referenced but not extracted]
+
+## Rules
+- Extract what the spec SAYS — do NOT read code files
+- Include EXACT formulas for Kelly and CB — most audit-critical sections
+- Note where DMA_MoE guide adds detail beyond main Offline spec
+- Obsidian-only content: tag as [SOURCE: Obsidian doc NN]

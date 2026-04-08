@@ -1,0 +1,122 @@
+## Previous Session Summary
+Session 3 Passover Summary
+==========================
+
+Docs read:
+  - docs/AIM-Specs/new-aim-specs/Program3_Offline.md (V3, 1,729 lines) -- PRIMARY
+  - docs/AIM-Specs/new-aim-specs/DMA_MoE_Implementation_Guide.md (V3, 339 lines) -- PRIMARY
+  - docs/AIM-Specs/new-aim-specs/Nomaan_Edits_P3.md (V3, 275 lines) -- SUPPLEMENTARY (CB spec from Isaac)
+  - docs/15_Topstep_Optimisation_Functions.md (V3, partial read for CB layer pseudocode) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../32_P3_Offline_Full_Pseudocode.md (Obsidian doc 32, 783 lines) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../21_Implementation_Guides.md (Obsidian doc 21, 206 lines) -- SUPPLEMENTARY
+
+Sections written: S4 (Offline Blocks 1-9), S5 (Kelly 7-Layer Pipeline), S6 (Circuit Breaker 5 Layers)
+
+Kelly layers confirmed: 7
+  L1: Regime-Conditional Raw Kelly (Offline B8, per [asset][regime][session])
+  L2: Regime Blend (Online B4, f = Σ P(r) × f*_r)
+  L3: Shrinkage (Offline B8 computes, Online B4 applies, floor 0.3)
+  L4: Robust Fallback (Online B4, mean-variance Kelly when regime uncertain)
+  L5: AIM/MoE Modifier (Online B3->B4, combined_modifier [0.5, 1.5])
+  L6: Risk Goal (Online B4, PASS_EVAL 0.5-0.85, PRESERVE 0.5, GROW 1.0)
+  L7: Contracts + Caps (Online B4, floor(f × capital / risk_per_contract), TSM caps)
+
+CB layers confirmed: 5
+  L0: Simultaneous Position Limit (XFA/scaling only, live accounts skip)
+  L1: Hard Halt PREEMPTIVE (|L_t| + ρ_j >= c×e×A, active day 1)
+  L2: Budget (n_t >= N, active day 1)
+  L3: Conditional Expectancy per-basket (μ_b = r_bar + β_b × L_b, disabled until 100 obs)
+  L4: Correlation-Adjusted Sharpe (S = μ_b / (σ × √(1+2×n_t×ρ_bar)), disabled until 100 obs)
+
+Key spec requirements:
+  1. BOCPD + CUSUM dual detection. Level 2 (cp > 0.8 or CUSUM breach) = autonomous sizing
+     reduction to max(50%). Level 3 (cp > 0.9 sustained 5d) = halt signals + P1/P2 rerun.
+  2. Kelly EWMA uses BOCPD-driven adaptive alpha (SPEC-A12). cp < 0.2 -> span=30;
+     cp >= 0.8 -> span=8. Session-specific (SPEC-A8): [asset][regime][session].
+  3. CB Layer 1 is PREEMPTIVE: |L_t| + ρ_j >= L_halt. Prevents double-loss scenario.
+  4. CB Layers 3-4 disabled during cold start (< 100 obs). β_b = 0, ρ_bar = 0.
+  5. All model updates require P3-D18 version snapshot BEFORE commit. Max 50 per component.
+
+DMA_MoE guide additions:
+  - Python implementation of DMA update (~50 lines) and MoE gating (compute_combined_modifier)
+  - 5 common pitfalls: forget normalisation, wrong timestamp modifier, kill AIM permanently,
+    λ too low (< 0.95 chases noise), cold start handling (first ~50 trades near neutral)
+  - Libraries: river/skmultiflow for ADWIN, sklearn/tensorflow for AutoEncoder
+
+Obsidian-only content:
+  - Doc 32: No unique content. Header confirms full incorporation into V3 Program3_Offline.md.
+  - Doc 21: Summary form only. All detail in V3 specs with greater depth.
+
+Supplementary sources used:
+  - Nomaan_Edits_P3.md: Isaac's CB integration spec (2026-03-12). 5 changes to P3, no P1/P2
+    changes. CB adds constraints, never loosens. Full pseudocode in Topstep_Optimisation_Functions.md.
+  - 15_Topstep_Optimisation_Functions.md: Full CB layer formulas, cold start table,
+    SOD parameter computation, P3-D23/D25 schemas, pseudotrader CB replay extension.
+
+Items for next sessions:
+  - S5: Command blocks (B1-B10: routing, GUI data server, API adapter, TSM load,
+    injection flow, reporting, notifications, incident response, data validation,
+    replay runner, Telegram bot)
+  - S6: Dataset schemas (P3-D00 through P3-D26 full field definitions)
+  - S7: Architecture spec (multi-user capital siloing, TSM classification,
+    parity-based multi-instance)
+
+You are extracting spec content for the Captain System consolidated spec reference. Session 4 of 7.
+
+## Source Priority
+No dedicated V3 doc exists for Command — Obsidian vault docs are PRIMARY for this session. Use V3 Nomaan_Edits_P3.md for amendments (tag as [V3 AMENDMENT] where it overrides Obsidian).
+
+## Documents to Read
+PRIMARY (Obsidian — no V3 Command equivalent):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/34_P3_Command_Full_Pseudocode.md (~380 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/18_GUI_Dashboard.md (~149 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/26_Notification_System.md (~159 lines)
+
+SUPPLEMENTARY (V3 amendments):
+- docs/AIM-Specs/new-aim-specs/Nomaan_Edits_P3.md (~275 lines)
+
+ADDITIONAL (if needed for RBAC context):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/19_User_Management.md (~158 lines)
+
+## What to Extract
+
+### §7 — Command Blocks 1–10
+For EACH block (B1 through B10):
+
+### Block N: [Name]
+- **PG ID:** P3-CMD-BN
+- **Purpose:** (one line)
+- **Trigger:** (always-on, event-driven, API call)
+- **Inputs:** Datasets (QuestDB R) | Redis keys | API endpoints consumed
+- **Outputs:** Datasets (QuestDB W) | Redis keys | API responses
+- **Key Logic:** (routing rules, TAKEN/SKIPPED, parity filter, etc.)
+- **Shared vs Per-User**
+
+### §8 — GUI Panels + Security
+- All GUI panels/tabs (name, purpose, data sources)
+- Autonomy tiers (manual, semi-auto, full-auto) — what each controls
+- Security model: the "6 outbound fields only" rule — what are the 6 fields?
+- WebSocket channels for real-time GUI updates
+- Notification system: event types, priority levels (CRITICAL/HIGH/MEDIUM/LOW), quiet hours
+- Telegram bot integration points
+
+## Output
+Read the existing docs/audit/spec_reference.md (has §1–6 from Sessions 1–3).
+APPEND §7, §8 to the end. Do NOT delete existing content.
+Also write passover to: docs/audit/.passovers/spec_exec_04.txt
+
+## Passover Format
+---
+## Session 4 Summary
+- **Docs read:** [list]
+- **Sections written:** §7, §8
+- **Command blocks confirmed:** [N]
+- **GUI panels confirmed:** [N]
+- **Key spec requirements:** [3–5 critical]
+- **Items for next sessions:** [referenced but not extracted]
+
+## Rules
+- Extract what the spec SAYS — do NOT read code files
+- Flag areas where original spec may be outdated vs V3
+- If Nomaan_Edits contradicts Obsidian, prefer Nomaan_Edits and tag [V3 AMENDMENT]
+- Pay special attention to "6 outbound fields" security rule — this is critical

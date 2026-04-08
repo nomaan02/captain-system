@@ -1,0 +1,145 @@
+[2026-04-08 14:32:52] Archiving previous audit outputs...
+[2026-04-08 14:32:52]   Renamed captain_online.md → captain_online_old.md
+[2026-04-08 14:32:52]   Archived 1 file(s).
+[2026-04-08 14:32:52] 
+[2026-04-08 14:32:52] Phase 1: Online pipeline (EXEC-01 → 02 → 03)
+[2026-04-08 14:32:52] ===== EXEC-01 START =====
+Session 1 complete. Here's the summary of what was found:
+
+---
+
+## Session 1 Results
+
+**Files audited:** 5 | **Output:** `docs/audit/captain_online.md` + `docs/audit/.passovers/exec_01.txt`
+
+### HIGH (2)
+1. **Thread race on `open_positions`/`shadow_positions`** — both lists are mutated from the command listener thread AND the main session loop with no lock. `shadow_positions` in particular gets full list replacement (line 769) while the main thread may be appending to it. Fix: `threading.Lock()` around all accesses.
+2. **`_get_contract_multiplier()` returns 50.0 for all assets** (`b1_features.py:955`) — makes AIM-03 GEX values meaningless for MES, NQ, ZB, ZN, MGC, etc. (off by 10–200×).
+
+### MEDIUM (7)
+- `get_state()` returns live `AssetORSession` object — caller in `_check_or_breakouts()` reads multiple fields without the lock, observable inconsistency possible
+- `sys.exit(0)` inside SIGTERM handler — not clean if signal arrives mid-QuestDB query
+- No Docker liveness/readiness probes
+- Blocking REST calls in B1 session startup — can exceed the stated `<5s` latency target for 10 assets
+- `p3_spread_history` table read/written but absent from 29-table schema
+- `datetime.now()` without timezone in 3 locations (wrong date near midnight ET)
+- `_check_data_source_for_feature()` + `_has_valid_timestamp()` are stubs — Data Moderator's STALE/timestamp paths are dead code
+
+### Stub count: 11
+9 in b1_features (AIM-01 overnight range, AIM-02 options vol, AIM-03 chain, AIM-07 COT ×2, AIM-11 CL basis ×2) + 2 in b1_data_ingestion (data source check, timestamp check).
+[2026-04-08 14:40:45] ===== EXEC-01 DONE (451 lines, 473s) =====
+[2026-04-08 14:40:45] ===== EXEC-02 START =====
+Session 2 audit complete. Here's the summary:
+
+**4 files audited** across B2 (regime) and B3 (AIM aggregation), plus shared computation and replay feature loading.
+
+**14 findings** (5 MEDIUM, 9 LOW):
+- The code quality is good overall (7.0/10) — B2/B3 are clean, pure-functional modules with no side effects
+- Dead code score 8.0/10 — main issue is `_aim16_hmm()` still defined despite removal from dispatch
+
+**Key takeaways:**
+1. **Only 7 of 13 active AIMs actually fire** for most assets — AIM-03 (GEX) and AIM-07 (COT) are dead-on-arrival due to upstream stubs, and AIM-01/02/12 are partial
+2. **Replay fidelity gap** — AIM-08's CORR_STRESS tier is unreachable because raw Pearson correlation is used as a z-score proxy
+3. **Regime classifier is effectively a no-op** — most assets get 50/50 neutral because classifier objects aren't populated
+4. The MoE/DMA aggregation logic itself is well-implemented and architecturally clean
+
+Report appended to `docs/audit/captain_online.md` under "Part 2: AIMs & Regime". Passover written to `docs/audit/.passovers/exec_02.txt`.
+[2026-04-08 14:50:52] ===== EXEC-02 DONE (898 lines, 607s) =====
+[2026-04-08 14:50:52] ===== EXEC-03 START =====
+## Session 3 Complete
+
+**Files audited:** 9 (B4 through B9)
+**Key findings:** 18 total (8 MEDIUM, 10 LOW)
+
+### Headline findings:
+- **Kelly pipeline: 12/12 steps IMPLEMENTED** — full spec coverage including V3 fee integration and 4-way min
+- **Circuit breaker: 6/7 layers IMPLEMENTED** — L6 manual override is a stub
+- **5 DRY duplication clusters** spanning ~15 copy-pasted functions (`_parse_json` 6×, `_get_ewma_for_regime` 3×, `_load_system_param` 6× with inconsistent return types, fee resolution 3×, correlation matrix 2×)
+- **M8 is the highest-risk finding**: failed Redis trade outcome publish silently breaks the Offline feedback loop with no retry/dead-letter
+- **M7**: shadow monitor has hardcoded POINT_VALUES dict instead of reading from D00
+- **4 new stubs** (7 total Online): manual halt, VIX spike detection, regime shift detection, API commission
+
+### Outputs:
+- Report appended to `docs/audit/captain_online.md` — "## Part 3: Kelly to Signal Output"
+- Passover written to `docs/audit/.passovers/exec_03.txt`
+[2026-04-08 14:59:33] ===== EXEC-03 DONE (1457 lines, 521s) =====
+[2026-04-08 14:59:33] Phase 1 complete.
+[2026-04-08 14:59:33] 
+[2026-04-08 14:59:33] Phase 2: Offline (04a→04b) || Command (05a→05b)
+[2026-04-08 14:59:33] ===== EXEC-04a START =====
+[2026-04-08 14:59:33] ===== EXEC-05a START =====
+Session 4a audit complete. Outputs written to:
+- `docs/audit/captain_offline.md` — full audit under "Part 1: Orchestrator + B1-B2"
+- `docs/audit/.passovers/exec_04a.txt` — passover summary
+
+**Top 5 findings to flag:**
+
+1. **Scheduler TZ bug (HIGH)** — `datetime.now()` in orchestrator uses system timezone, not `America/New_York`. Daily tasks fire at wrong ET hour if container TZ differs.
+
+2. **Drift detection is dead (HIGH)** — Orchestrator passes empty `{}` to `run_drift_detection()`. The feature extraction pipeline was never wired, so drift detection has never actually run.
+
+3. **QuestDB stale-row reads (HIGH, 2 instances)** — `_load_aim_states` and `_load_active_aims` query without `LATEST ON` or `ORDER BY last_updated DESC`, risking stale data from QuestDB's append-only model.
+
+4. **Level 2 alert spam (HIGH)** — `check_level_escalation` fires Level 2 on every trade where `cp_prob > 0.8` with no debounce. 10 trades at 0.85 = 10 alerts, 10 DB writes, 10 sizing overrides.
+
+5. **Dependency mismatch (MEDIUM)** — `hmmlearn`, `scikit-learn`, `pydantic` in requirements.txt but never imported. `river` imported but missing from requirements.txt.
+[2026-04-08 15:09:45] ===== EXEC-04a DONE (467 lines, 612s) =====
+[2026-04-08 15:09:45] ===== EXEC-04b START =====
+Session 5a complete. Here's the summary:
+
+## Session 5a Summary
+
+**Files audited:** 7 | **Findings:** 10 (6 security, 4 concurrency) | **Stubs:** 0
+
+### Top Security Concerns (ranked)
+1. **CRITICAL** — No authentication on any of 28 endpoints
+2. **CRITICAL** — Unauthenticated RCE via `POST /api/system/git-pull` + Docker socket
+3. **HIGH** — Docker socket mounted in container (`/var/run/docker.sock`)
+4. **HIGH** — SQL injection in b7_notifications role query (f-string in IN clause)
+5. **MEDIUM** — Error messages leak `str(exc)` to clients
+6. **MEDIUM** — WebSocket user_id spoofing (no identity verification)
+
+### Concurrency Concerns
+1. **HIGH** — 8+ module-level globals modified cross-thread without locks
+2. **HIGH** — `_active_connections` dict on trade execution path, unlocked
+
+### Positive Findings
+- `sanitise_for_api()` uses explicit 6-field allowlist (secure by construction)
+- Telegram token leak prevented via httpx log suppression
+- All QuestDB queries except one use parameterised queries
+- Parity filter implementation is correct (atomic Redis INCR)
+
+### Scores
+- Security: **5.5/10** (dragged down by zero authentication)
+- Concurrency: **7.5/10** (unlocked shared state, but CPython GIL provides partial safety)
+
+Output written to:
+- `docs/audit/captain_command.md` (full audit, Part 1)
+- `docs/audit/.passovers/exec_05a.txt` (passover for session 5b)
+[2026-04-08 15:10:33] ===== EXEC-05a DONE (544 lines, 660s) =====
+[2026-04-08 15:10:33] ===== EXEC-05b START =====
+Session 4b complete. Here's the summary:
+
+## Session 4b Summary — Captain Offline B3-B9
+
+- **Files audited:** 8
+- **Key findings:** 13 (1 CRITICAL, 3 HIGH, 6 MEDIUM, 3 LOW)
+
+**Top issues:**
+
+| Severity | Finding | Impact |
+|----------|---------|--------|
+| CRITICAL | `b8_cb_params.py:119` — `np.corrcoef` on single-element arrays returns ±1/NaN | Layer 4 CB uses garbage rho_bar values |
+| HIGH | `b8_cb_params.py:40` — `model_m` param unused in query | CB params estimated from wrong data (all models mixed) |
+| HIGH | `b3_pseudotrader.py` — 1432-line god module | 6 responsibilities in 1 file, untestable |
+| HIGH | `b7/b6` — Fixed SEED=42 in MC and GA | Monte Carlo and GA always produce identical results |
+
+- **Stub count:** 0 (all B3-B9 fully implemented)
+- **Dead code:** 3 items + AlgorithmImports shim in all 8 files
+- **QuestDB tables (Offline total):** 12 read (D00-D05, D08, D12, D13, D17, D22, D25), 16 written (D01, D02, D04-D06, D06b, D08, D11-D13, D18, D22, D25-D27, job_queue)
+- **Redis channels (Offline total):** 3 consumed (trade_outcomes, signal_outcomes, commands), 1 published (alerts)
+- **External deps:** numpy + scipy actively used; hmmlearn, scikit-learn, pydantic unused
+- **Cross-service deps:** Offline reads trade/signal outcomes from Online/Command via Redis; reads D03 populated by Command; reads P1/P2 data files for replay context
+
+Passover written to `docs/audit/.passovers/exec_04b.txt`. Full audit appended to `docs/audit/captain_offline.md` under "Part 2: B3-B9".
+[2026-04-08 15:17:50] ===== EXEC-04b DONE (804 lines, 485s) =====

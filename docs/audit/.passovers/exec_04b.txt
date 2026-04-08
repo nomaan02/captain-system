@@ -1,0 +1,70 @@
+EXEC-04b Passover: Captain Offline — B3-B9
+Date: 2026-04-08
+Files audited: 8
+
+KEY FINDINGS (13 total: 1 CRITICAL, 3 HIGH, 6 MEDIUM, 3 LOW):
+- FINDING-15 (CRITICAL): b8_cb_params.py:119-120 — np.corrcoef on single-element arrays returns ±1/NaN. rho_bar calculation statistically degenerate. Layer 4 CB decisions use garbage data.
+- FINDING-16 (HIGH): b8_cb_params.py:40-54 — model_m parameter unused in SQL query. Loads ALL trades for account, not filtered by model. CB params estimated from cross-model data.
+- FINDING-17 (HIGH): b3_pseudotrader.py — god module: 1432 lines, 15+ functions, 6 responsibilities. Needs splitting.
+- FINDING-18 (HIGH): b7_tsm_simulation.py:118-119, b6_auto_expansion.py:230-231 — Fixed SEED=42 makes MC and GA deterministic. Always same output for same input.
+- FINDING-19 (MEDIUM): b5_sensitivity.py:232-238 — AIM-13 modifier written as JSON dict into D01.current_modifier. Schema mismatch.
+- FINDING-20 (MEDIUM): datetime.now() without ET timezone in ~20 places across B3-B9. Same as FINDING-01.
+- FINDING-21 (MEDIUM): _compute_sharpe/_compute_pbo/_compute_dsr duplicated in b3, b5, b6.
+- FINDING-22 (MEDIUM): b7_tsm_simulation.py:147 — 10K result dicts stored but only count used.
+- FINDING-23 (MEDIUM): b8_kelly_update.py:179-205 — D12 written with shrinkage=None. Asset-level shrinkage in separate row.
+- FINDING-24 (MEDIUM): b9_diagnostic.py:833-882 — Action queue grows unbounded.
+- FINDING-25 (LOW): b3 run_account_aware_replay — 250-line god function.
+- FINDING-26 (LOW): b6 random.gauss noise deterministic after fixed seed.
+- FINDING-27 (LOW): ORDER BY DESC LIMIT 1 instead of LATEST ON in b4, b8_kelly, b9.
+
+STUBS: 0 (all B3-B9 fully implemented)
+DEAD CODE: 3 items (AlgorithmImports x8 files, unused model_m param, unused results list)
+
+DEPENDENCY ANALYSIS:
+- Used: numpy (all files), scipy.stats (b8_cb_params lazy import)
+- Unused (from requirements.txt): hmmlearn, scikit-learn, pydantic (confirmed across all B3-B9)
+- Custom vs library: _ols_regression hand-rolled when scipy.stats.linregress available
+
+QDESTDB TABLES (Offline total — Part 1 + Part 2):
+  Read:  D00, D01, D02, D03, D04, D05, D08, D12, D13, D17, D22, D25
+  Write: D01, D02, D04, D05, D06, D06b, D08, D11, D12, D13, D18, D22, D25, D26, D27, job_queue
+
+REDIS CHANNELS (Offline total):
+  Consumed: captain:trade_outcomes, captain:signal_outcomes, captain:commands
+  Published: captain:alerts (from B7 TSM simulation + B2 level escalation)
+
+EXTERNAL DEPS (full Offline inventory):
+  requirements.txt: psycopg2-binary, redis, numpy, scipy, scikit-learn*, hmmlearn*, pydantic*
+  (* = unused, safe to remove)
+  Actual imports: numpy, scipy.stats, json, logging, math, random, uuid, hashlib, collections, datetime, dataclasses, pathlib
+  Shared modules: questdb_client, redis_client, statistics, signal_replay, account_lifecycle, journal
+  Internal: version_snapshot (used by b1_dma, b1_drift, b1_aim_lifecycle, b8_kelly)
+
+CROSS-SERVICE DEPS (what Offline expects from Online/Command):
+  From Online: trade outcomes via Redis stream (captain:trade_outcomes)
+  From Online: signal outcomes via Redis stream (captain:signal_outcomes)
+  From Command: commands via Redis stream (captain:commands) — ASSET_ADDED, INJECTION, ADOPTION_DECISION, TSM_CHANGE, ACTIVATE/DEACTIVATE_AIM, ACTION_RESOLVED
+  From Online/Command: D03 trade_outcome_log populated by Command when trades close
+  From P1/P2: data/p1_outputs and data/p2_outputs for seed data and replay context
+
+PSEUDOTRADER DETAILS:
+  Modes: basic comparison, signal replay, account-aware, CB 4-layer, grid search, multistage lifecycle, dual forecast
+  Data: P3-D03 trade outcomes, SignalReplayEngine (P2 data files + QuestDB context)
+  Output: P3-D11 (results), P3-D27 (forecasts)
+
+KELLY UPDATE STEPS (7 of 7 implemented):
+  1. Per-contract normalization
+  2. Adaptive EWMA alpha from BOCPD cp_prob (SPEC-A12)
+  3. EWMA update (win_rate, avg_win, avg_loss)
+  4. Save EWMA to D05
+  5. Recompute Kelly for all 6 [regime][session] cells
+  6. Update shrinkage factor (asset-level)
+  7. SQLite WAL checkpoint
+
+CB PARAMS (4 estimated):
+  r_bar (unconditional mean), beta_b (loss serial correlation), sigma (per-trade vol), rho_bar (same-day correlation)
+  NOTE: rho_bar calculation is broken (FINDING-15)
+
+CATEGORY A/B LEARNING (confirmed across B3-B9):
+  Category A (ALL signals): Kelly/EWMA (b8_kelly_update)
+  Category B (own trades only): CB params (b8_cb_params), TSM simulation (b7_tsm_simulation)

@@ -1,0 +1,147 @@
+You are auditing Captain system. Session 3 of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-623-code-principles-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-627-observability-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Previous Session Summary
+EXEC-02 PASSOVER SUMMARY
+========================
+Session: Captain Online — AIMs & Regime (Part 2 of 8)
+Date: 2026-04-08
+Files audited: 4
+
+FILES COVERED:
+  captain-online/captain_online/blocks/b2_regime_probability.py
+  captain-online/captain_online/blocks/b3_aim_aggregation.py
+  shared/aim_compute.py
+  shared/aim_feature_loader.py
+
+KEY FINDINGS (14 total):
+
+MEDIUM:
+  1. PRIVATE ACCESS: aim_feature_loader accesses vix_provider._vix_data, _vxv_data, _ensure_loaded() — tight coupling to internals.
+     aim_feature_loader.py:67-71.
+  2. CORRELATION PROXY: replay uses raw Pearson [-1,1] as correlation_z — AIM-08 CORR_STRESS tier (>1.5) is mathematically unreachable in replay.
+     aim_feature_loader.py:193.
+  3. IMPORT INCONSISTENCY: orchestrator.py imports aim_compute via b3_aim_aggregation shim (l201) AND directly from shared.aim_compute (l383) in the same file.
+     orchestrator.py:201,383.
+  4. ORDER BY MISMATCH: volume query filters WHERE session_date but ORDER BY ts DESC — could return wrong subset if data was backfilled.
+     aim_feature_loader.py:279.
+  5. DEAD FUNCTION: _aim16_hmm() defined but not in dispatch table (removed per DEC-06). Never called.
+     aim_compute.py:637-649.
+
+LOW:
+  6. _AIM_NAMES dict recreated inside run_aim_aggregation() on every call.
+     aim_compute.py:102-107.
+  7. Duplicate z_score() in aim_compute.py:50 vs b1_features.py:357 (intentional — dependency isolation).
+  8. QuantConnect import guards (try: from AlgorithmImports) — dead in Docker.
+     b2_regime_probability.py:1-5, b3_aim_aggregation.py:1-5.
+  9. VRP fallback branch is a no-op (pass → return None).
+     b2_regime_probability.py:132-139.
+  10. Redundant assignment: regime_probs[asset_id] = probs at l75 overwritten at l83.
+      b2_regime_probability.py:75,83.
+  11. Dead assignment: vix_data = vix_provider._vix_data before _ensure_loaded(), overwritten after.
+      aim_feature_loader.py:67.
+  12-14. b3_aim_aggregation.py is a re-export shim (2 callers remain); regime falls back to 50/50 for most assets; threshold magic numbers spec-driven.
+
+STUB COUNT: 0 (new stubs in these files — all stubs are upstream in b1_features, catalogued in EXEC-01)
+
+REPLAY DATA GAPS: 7 features not loadable (pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, spread_z, cl_basis)
+
+AIM INVENTORY:
+  AIM-01 VRP         → PARTIAL (ES only)
+  AIM-02 Skew        → PARTIAL (ES only, pcr_z dead)
+  AIM-03 GEX         → DEAD-ON-ARRIVAL (upstream stub _get_option_chain)
+  AIM-04 IVTS        → FUNCTIONAL (vix_provider VIX/VXV)
+  AIM-05             → DEFERRED (by spec)
+  AIM-06 EconCal     → FUNCTIONAL (live) / GAP (replay)
+  AIM-07 COT         → DEAD-ON-ARRIVAL (upstream stubs _load_latest_cot/_load_cot_history)
+  AIM-08 CrossCorr   → FUNCTIONAL (live) / DEGRADED (replay — raw Pearson as proxy)
+  AIM-09 CrossMom    → FUNCTIONAL
+  AIM-10 Calendar    → FUNCTIONAL
+  AIM-11 RegimeWarn  → FUNCTIONAL
+  AIM-12 DynCosts    → PARTIAL (spread_z needs undocumented p3_spread_history)
+  AIM-13 Sensitivity → DEPENDS (Offline B5 state)
+  AIM-14 AutoExpand  → ALWAYS 1.0 (informational)
+  AIM-15 OpenVol     → FUNCTIONAL
+  AIM-16 HMM         → DEAD CODE (handler exists, not in dispatch, moved to Block 5)
+  EFFECTIVE: 7 functional / 3 partial / 2 dead-on-arrival / 1 depends — out of 13 active dispatch slots
+
+CODE QUALITY SCORE: 7.0/10
+DEAD CODE SCORE: 8.0/10
+
+REGIME CLASSIFIER:
+  Method: Hybrid — Pettersson binary (C4) + XGBoost classifier (C1-C3)
+  Uncertainty gate: max_prob < 0.6 → robust Kelly
+  Reality: most assets get REGIME_NEUTRAL (50/50) — classifier objects likely not populated
+
+MOE/DMA AGGREGATION:
+  Formula: weighted average of active AIM modifiers using D02 inclusion_probability
+  Clamping: [0.5, 1.5] (MODIFIER_FLOOR / MODIFIER_CEILING)
+  Forgetting factor: applied in Offline D02 updates, NOT at aggregation time
+
+CROSS-SERVICE DEPS:
+  QuestDB (replay): p3_d01, p3_d02, p3_d29, p3_d30, p3_d31, p3_d32, p3_d33
+  QuestDB (live via B1): p3_d00, p3_d01, p3_d02, p3_d05, p3_d12, p3_d29, p3_d30, p3_d31, p3_d32, p3_d33, p3_spread_history
+  Shared modules: aim_compute, aim_feature_loader, questdb_client, vix_provider
+  Kelly input: combined_modifier (float in [0.5, 1.5]) → multiplied into Kelly fraction in B4
+
+REDIS CHANNELS: None in these files (B2/B3 are pure computation)
+
+REPORT: docs/audit/captain_online.md — "## Part 2: AIMs & Regime"
+
+## Scope
+Captain Online — Kelly to Signal Output: Kelly sizing (7 layers), trade selection, quality gate, circuit breaker (4 layers), signal output, position monitoring, shadow monitoring, concentration, capacity (Blocks 4-9).
+
+## Files
+1. captain-online/captain_online/blocks/b4_kelly_sizing.py
+2. captain-online/captain_online/blocks/b5_trade_selection.py
+3. captain-online/captain_online/blocks/b5b_quality_gate.py
+4. captain-online/captain_online/blocks/b5c_circuit_breaker.py
+5. captain-online/captain_online/blocks/b6_signal_output.py
+6. captain-online/captain_online/blocks/b7_position_monitor.py
+7. captain-online/captain_online/blocks/b7_shadow_monitor.py
+8. captain-online/captain_online/blocks/b8_concentration_monitor.py
+9. captain-online/captain_online/blocks/b9_capacity_evaluation.py
+
+## Per-File Extraction Format
+For each file:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [any triggers, session refs]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, payload shape, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected]
+
+Additionally for this session, extract:
+- Kelly layers: enumerate all 7 steps. Which are implemented?
+- Circuit breaker layers: enumerate L1-L4. Trigger conditions? Recovery logic?
+- Signal output: exact Redis payload published to captain:signals:{user_id}
+- Position monitoring: how B7 tracks TP/SL, what triggers close
+- Shadow monitoring: how B7_shadow tracks theoretical parity-skipped outcomes
+- DRY violations: repeated logic across B5/B5b/B5c
+- Observability: structured logging, log levels, health metrics
+
+## Output
+APPEND to: docs/audit/captain_online.md — under heading "## Part 3: Kelly to Signal Output"
+(Parts 1-2 already exist — do NOT overwrite)
+
+## Passover
+End with:
+## Session 3 Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **Kelly layers:** [step → status inventory]
+- **CB layers:** [L1-L4 → status inventory]
+- **Redis channels (Online total):** [complete list]
+- **QuestDB tables (Online total):** [complete list]
+- **Signal contract:** [fields published to Redis]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_03.txt

@@ -1,0 +1,150 @@
+## Previous Session Summary
+---
+## Session 5 Summary
+
+- **Docs read:**
+  - `docs/AIM-Specs/new-aim-specs/P3_Dataset_Schemas.md` (V3, 565 lines) — PRIMARY
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/24_P3_Dataset_Schemas.md` (Obsidian doc 24, 265 lines) — SUPPLEMENTARY
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/25_Fee_Payout_System.md` (Obsidian doc 25, 143 lines) — PRIMARY
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/20_Signal_Distribution.md` (Obsidian doc 20, 108 lines) — PRIMARY
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/27_Contract_Rollover.md` (Obsidian doc 27, 79 lines) — PRIMARY
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/28_Pseudotrader_System.md` (Obsidian doc 28, 121 lines) — PRIMARY
+
+- **Sections written:** §9 (QuestDB Dataset Master List), §10 (Supporting Systems)
+
+- **Datasets cataloged:** 27 out of 28 possible IDs (D00–D27, D24 skipped as P1/P2 only). Plus 1 unnumbered Account entity. Total: 28 entries.
+
+- **§9 coverage per dataset:**
+  D00: asset_universe_register — 20 fields + data_sources sub-schema (7 adapter entries)
+  D01: aim_model_states — 7 fields
+  D02: aim_meta_weights — 5 fields (Category A learning)
+  D03: trade_outcome_log — 19 fields (primary feedback signal)
+  D04: decay_detector_states — 12 fields (BOCPD + CUSUM + ADWIN)
+  D05: ewma_states — 3 indexed fields (Category A learning)
+  D06: injection_history — 14 fields
+  D07: correlation_model_states — 3 fields (V3 redefines from P1/P2)
+  D08: tsm_files — 22 fields + V3 amendment (topstep_optimisation gate)
+  D09: report_archive — 5 fields
+  D10: notification_log — 17 fields (per-channel delivery tracking)
+  D11: pseudotrader_results — 9 fields
+  D12: kelly_parameters — 4 indexed fields (Category A learning)
+  D13: sensitivity_scan_results — 9 fields
+  D14: api_connection_states — 6 fields (V3 redefines from P1/P2)
+  D15: user_session_data — 9 fields (V3 redefines from P1/P2)
+  D16: user_capital_silos — 11 fields (Category B learning)
+  D17: system_monitor_state — 8 fields
+  D18: version_history_store — 6 fields
+  D19: reconciliation_log — 8 fields
+  D20: system_journal — 8 fields (SQLite WAL, NOT QuestDB)
+  D21: incident_log — 12 fields
+  D22: system_health_diagnostic — 2 top-level + 27 action item sub-fields + 8 diagnostic dimensions
+  D23: intraday_state — 4 fields [SCHEMA INCOMPLETE — Obsidian only]
+  D24: SKIPPED (P1/P2 OO scores)
+  D25: beta_b_params — 5 fields [SCHEMA INCOMPLETE — Obsidian only] (Category B learning)
+  D26: hmm_states — 7 fields [SCHEMA INCOMPLETE — Obsidian only]
+  D27: signal_distribution — 6 fields + extended schema [SCHEMA INCOMPLETE — Obsidian only]
+  Account entity: 11 fields [UNNUMBERED]
+
+- **§10 coverage:**
+  Fee Resolution: fee_schedule JSON structure, 3 TSM profiles, resolve/get_expected functions, fallback formula, TopstepX sizing optimisation (5 formulas), XFA $150K 5-tier scaling table, XFA/Live payout rules, Live funded account rules (DLL, MDD, auto-liquidation)
+  Signal Distribution: PG-30 placement, V1/V2 activation, scope (prop/broker/mixed), conflict key, 7-step algorithm, invariant, auto-updating
+  Contract Rollover: BackwardsRatio/LastTradingDay methods, 5-instrument roll timing table, 5-instrument historical data table, CL pre-2006 caveat, pseudotrader alignment requirements
+  Pseudotrader: account_config input (8 fields from D08), 11-step replay loop, per-account-type isolation, eval extensions, deterministic tick stream (SHA256 seeded), LEGACY vs IDEAL modes, parity interaction note
+
+- **Key spec requirements:**
+  1. D20 (system_journal) is SQLite WAL, NOT QuestDB — only non-QuestDB dataset
+  2. Category A learning (D02, D04, D05, D12) pools ALL signals across instances; Category B (D08, D16, D25) uses TAKEN trades only
+  3. Signal distribution invariant: two users NEVER hold same (asset, direction) in same session window
+  4. Pseudotrader IDEAL mode is default for go/no-go decisions; LEGACY is backward-compat only
+  5. XFA scaling tiers are XFA-only; Live accounts do NOT scale; Live DLL = $4,500 ($2,000 if balance ≤ $10k)
+
+- **V3 vs Obsidian conflicts resolved:**
+  - D07: V3 = correlation_model_states (P3). Obsidian = P1/P2 sample_indexed. V3 wins.
+  - D14–D21: V3 reuses IDs for P3 tables. Obsidian claims P1/P2. V3 wins.
+  - D23, D25, D26, D27: Obsidian-only, no V3 coverage. Marked [SCHEMA INCOMPLETE].
+
+- **Source priority applied:** V3 P3_Dataset_Schemas.md (565 lines, field-level) was primary for D00–D22. Obsidian doc 24 supplementary for QuestDB types + D23/D25/D26/D27. Obsidian docs 20/25/27/28 were primary for §10 supporting systems (no V3 coverage for these topics).
+
+- **Items for next sessions:**
+  - Session 6: Online blocks B1–B9 full extraction (data ingestion, regime computation, AIM aggregation, Kelly sizing, trade selection, quality gate, signal output, position monitoring, net concentration, capacity evaluation)
+  - Session 7: Architecture spec (multi-user capital siloing, TSM 5-classification system, parity-based multi-instance deployment, deployment topology, Docker process model)
+
+You are extracting spec content for the Captain System consolidated spec reference. Session 6 of 7.
+
+## Documents to Read
+CANVAS FILES (JSON — parse node/edge structure):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Functional/Programs 1-2-3.canvas — System flow across all 3 processes
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Functional/AIM System.canvas — AIM data flow
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Backend/VALIDATE Programs 1-2-3.canvas — Validation flow
+
+OBSIDIAN DOCS:
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/15_Model_Definitions.md (~188 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/16_Strategy_Type_Registry.md (~42 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/29_Operational_Policies.md (~199 lines)
+
+V3 SUPPLEMENTARY:
+- docs/AIM-Specs/new-aim-specs/Cross_Reference_PreDeploy_vs_V3.md (~367 lines)
+
+## Canvas File Parsing
+Canvas files are JSON:
+```json
+{"nodes": [{"id":"..","type":"text","text":"..","x":N,"y":N}], "edges": [{"id":"..","fromNode":"..","toNode":"..","label":".."}]}
+```
+Extract: node text content, edge labels (data flow), overall flow topology. Nodes near each other are related.
+
+## What to Extract
+
+### §11 — Feedback Loops (all 6)
+Identify ALL feedback loops from canvas files. For each:
+
+### Loop N: [Name]
+- **Trigger:** [what initiates — trade outcome, EOD, decay, etc.]
+- **Data Flow:** [step-by-step: process/block produces -> consumes -> updates]
+- **Datasets Involved:** [QuestDB tables R/W]
+- **Latency:** [real-time, per-session, daily, event-driven]
+- **Cross-Process:** [which processes — Online, Offline, Command]
+
+Look for these 6 loops:
+1. Trade outcome -> Offline learning (DMA, EWMA, Kelly, BOCPD)
+2. Decay detection -> Strategy injection
+3. AIM lifecycle changes -> Online aggregation weights
+4. Circuit breaker trigger -> Position sizing reduction
+5. Reconciliation -> Account state update
+6. Pseudotrader/shadow -> Theoretical outcome learning
+
+### §12 — Daily Lifecycle
+Complete daily timeline (all times ET):
+- 19:00 SOD reset (what resets, what persists)
+- Pre-session activities
+- Session open -> OR calculation -> signal generation
+- Trading window -> active monitoring
+- Session close -> EOD procedures
+- Post-session -> reconciliation, learning updates
+- Weekend/holiday/rollover handling
+
+### §13 — Strategy Types + Exit Grid
+- Strategy types ST-01 through ST-06 (or however many defined)
+- Per type: entry logic, exit grid, variant count
+- Exit grid structure: TP levels, SL levels, trailing stop logic
+- Strategy type mapping to (m,k) pairs from P2
+
+## Output
+Read the existing docs/audit/spec_reference.md (has §1–10 from Sessions 1–5).
+APPEND §11, §12, §13 to the end. Do NOT delete existing content.
+Also write passover to: docs/audit/.passovers/spec_exec_06.txt
+
+## Passover Format
+---
+## Session 6 Summary
+- **Docs read:** [list]
+- **Sections written:** §11, §12, §13
+- **Feedback loops confirmed:** [N]
+- **Strategy types confirmed:** [N]
+- **Key spec requirements:** [3–5 critical]
+- **ALL 13 SECTIONS SHOULD NOW BE COMPLETE**
+
+## Rules
+- Extract what the spec SAYS — do NOT read code files
+- Canvas files need structural parsing — interpret the flow, don't dump raw JSON
+- Inferred loops: tag as [INFERRED FROM CANVAS]
+- Cross-reference canvas flows against §2, §4, §7 block definitions — note inconsistencies

@@ -1,0 +1,111 @@
+EXEC-03 PASSOVER SUMMARY
+========================
+Session: Captain Online — Kelly to Signal Output (Part 3 of 8)
+Date: 2026-04-08
+Files audited: 9
+
+FILES COVERED:
+  captain-online/captain_online/blocks/b4_kelly_sizing.py
+  captain-online/captain_online/blocks/b5_trade_selection.py
+  captain-online/captain_online/blocks/b5b_quality_gate.py
+  captain-online/captain_online/blocks/b5c_circuit_breaker.py
+  captain-online/captain_online/blocks/b6_signal_output.py
+  captain-online/captain_online/blocks/b7_position_monitor.py
+  captain-online/captain_online/blocks/b7_shadow_monitor.py
+  captain-online/captain_online/blocks/b8_concentration_monitor.py
+  captain-online/captain_online/blocks/b9_capacity_evaluation.py
+
+KEY FINDINGS (18 total):
+
+MEDIUM (8):
+  M1. _parse_json() duplicated 6x across Online blocks.
+  M2. _get_ewma_for_regime() duplicated 3x across B4/B5/B6.
+  M3. _load_system_param() duplicated 6x with variant return-type strategies (float vs json.loads vs type(default)).
+  M4. Fee resolution duplicated 3x across B4/B5C/B7 (get_expected_fee, _resolve_fee, _get_expected_fee).
+  M5. _load_correlation_matrix() duplicated in B5 and B9.
+  M6. Non-atomic read-then-write for D16 capital silo and D23 CB state in B7.
+  M7. Hardcoded POINT_VALUES dict in B7 shadow monitor instead of reading from D00/constants.
+  M8. No retry/dead-letter for critical Redis trade outcome publish — Offline feedback loop breaks silently.
+
+LOW (10):
+  L1. QuantConnect import guards (dead in Docker) — all 9 files.
+  L2. Inline import math in apply_hmm_session_allocation().
+  L3. Redundant questdb_client import in _get_daily_pnl().
+  L4. MDD fallback magic number 4500.0 in L2 budget.
+  L5. Shadow monitor _get_live_price has no REST fallback (unlike real B7).
+  L6. Expired shadows produce no outcome — survivorship bias risk.
+  L7. B9 N+1 query for asset class check (10 queries instead of 1).
+  L8. B9 _load_session_log() fetches all then filters in Python.
+  L9. B9 constraint schema inconsistency — "detail" vs "message" key.
+  L10. B7 stubs: _check_vix_spike (pass) and _regime_shift_detected (returns False).
+
+STUB COUNT: 4 new stubs (7 total Online)
+  - b5c: _check_manual_halt() — L6 manual override non-functional
+  - b7: _check_vix_spike() — no mid-trade VIX monitoring
+  - b7: _regime_shift_detected() — no mid-trade regime shift detection
+  - b7: _get_api_commission() — API fill commission not wired
+
+KELLY LAYERS (12-step pipeline):
+  Step 0:  Silo drawdown check (>30%)              → IMPLEMENTED
+  Step 1:  Blended Kelly across regimes (Paper 219) → IMPLEMENTED
+  Step 2:  Shrinkage (Paper 217)                    → IMPLEMENTED
+  Step 3:  Robust Kelly fallback (Paper 218)        → IMPLEMENTED
+  Step 4:  AIM modifier application                 → IMPLEMENTED
+  Step 5:  User-level Kelly ceiling                 → IMPLEMENTED
+  Step 6:  Per-account sizing with risk_goal        → IMPLEMENTED
+  Step 6a: Risk-goal adjustment                     → IMPLEMENTED
+  Step 6b: TSM hard constraints                     → IMPLEMENTED
+  Step 6c: V3 Fee integration                       → IMPLEMENTED
+  Step 6d: V3 4-way min                             → IMPLEMENTED
+  Step 7:  User-level portfolio risk cap            → IMPLEMENTED
+  Step 8:  Level 2 sizing override                  → IMPLEMENTED
+  Verdict: 12/12 IMPLEMENTED
+
+CB LAYERS (7-layer circuit breaker):
+  L0: Scaling cap (XFA only)                → IMPLEMENTED
+  L1: Preemptive hard halt                  → IMPLEMENTED
+  L2: Budget exhausted                      → IMPLEMENTED
+  L3: Basket expectancy (cold-start safe)   → IMPLEMENTED
+  L4: Correlation Sharpe (cold-start safe)  → IMPLEMENTED
+  L5: Session halt (VIX/DATA_HOLD)          → IMPLEMENTED
+  L6: Manual override (ADMIN halt)          → STUB (always False)
+  Verdict: 6/7 IMPLEMENTED, 1 STUB
+
+REDIS CHANNELS (Online cumulative across Parts 1-3):
+  stream:signals          — B6 publish (durable stream)
+  stream:trade_outcomes   — B7 publish (durable stream, CRITICAL feedback loop)
+  stream:signal_outcomes  — B7_shadow publish (theoretical outcomes for Category A)
+  stream:commands          — Orchestrator subscribe (GROUP_ONLINE_COMMANDS)
+  captain:alerts          — B4/B7/B8 publish (priority alerts)
+  captain:status          — Orchestrator publish (heartbeat)
+
+QUESTDB TABLES (Online cumulative across Parts 1-3):
+  READ:  p3_d00_asset_universe, p3_d01_aim_model_states, p3_d02_aim_meta_weights,
+         p3_d03_trade_outcome_log, p3_d05_ewma_states, p3_d07_correlation_model_states,
+         p3_d08_tsm_state, p3_d12_kelly_params, p3_d16_user_capital_silos,
+         p3_d17_system_monitor_state, p3_d23_circuit_breaker_intraday,
+         p3_d25_circuit_breaker_params, p3_d26_hmm_opportunity_state,
+         p3_d29_ohlcv_bars, p3_d30_implied_volatility, p3_d31_options_skew,
+         p3_d32_volume_bars, p3_d33_vix_history, p3_spread_history
+  WRITE: p3_d03_trade_outcome_log, p3_d16_user_capital_silos,
+         p3_d17_system_monitor_state, p3_d23_circuit_breaker_intraday
+
+SIGNAL CONTRACT (stream:signals):
+  Fields: signal_id, user_id, asset, session, timestamp, direction, tp_level, sl_level,
+          sl_method, entry_conditions, per_account{contracts, recommendation, skip_reason,
+          account_name, category, risk_goal, remaining_mdd, remaining_mll, pass_probability,
+          risk_budget_pct, api_validated}, aim_breakdown, combined_modifier, regime_state,
+          regime_probs, expected_edge, win_rate, payoff_ratio, user_total_capital,
+          user_daily_pnl, quality_score, quality_multiplier, data_maturity, confidence_tier
+
+DRY CLUSTERS IDENTIFIED:
+  1. _parse_json() — 6 copies across Online blocks
+  2. _get_ewma_for_regime() — 3 copies (B4/B5/B6)
+  3. _load_system_param()/_load_param() — 6 copies with variant return types
+  4. Fee resolution — 3 copies (B4/B5C/B7)
+  5. _load_correlation_matrix() — 2 copies (B5/B9)
+
+CODE QUALITY SCORE: 7.0/10
+OBSERVABILITY SCORE: 6.5/10
+
+REPORT: docs/audit/captain_online.md — "## Part 3: Kelly to Signal Output"

@@ -1,0 +1,57 @@
+SESSION 5a PASSOVER — Captain Command: Core + API
+Date: 2026-04-08
+Skills: ln-621-security-auditor, ln-628-concurrency-auditor
+
+FILES AUDITED: 7
+  main.py, api.py, orchestrator.py, b1_core_routing.py,
+  b2_gui_data_server.py, b3_api_adapter.py, b4_tsm_manager.py
+
+KEY FINDINGS: 10 (6 security, 4 concurrency)
+
+SECURITY FINDINGS:
+  CRITICAL SEC-01: No auth on any of 28 endpoints (0/28 have authentication)
+  CRITICAL SEC-02: Unauthenticated RCE via POST /api/system/git-pull + Docker socket
+  HIGH     SEC-03: Docker socket (/var/run/docker.sock) mounted in container
+  HIGH     SEC-06: SQL injection in b7_notifications.py:435 (f-string role_list in IN clause)
+  MEDIUM   SEC-04: Error messages leak str(exc) to clients (9+ endpoints)
+  MEDIUM   SEC-05: WebSocket /ws/{user_id} allows user_id spoofing
+  POSITIVE SEC-07: Telegram bot token leak prevention (httpx logging suppressed)
+  POSITIVE SEC-08: sanitise_for_api() uses explicit allowlist — secure by construction
+
+CONCURRENCY FINDINGS:
+  HIGH  CONC-01: 8+ module-level globals modified from multiple threads without locks
+                 (_process_health, _api_connections, _user_stream, _account_data, etc.)
+  HIGH  CONC-02: _active_connections dict in b3 accessed from signal+health threads unlocked
+  FP    CONC-03: WebSocket session set — snapshot pattern + single event loop = safe
+  LOW   CONC-04: TOCTOU on config file reads (compliance_gate.json) — safe defaults
+
+STUB COUNT: 0
+
+API ENDPOINTS: 28 total (1 WebSocket, 27 REST)
+  GET  /api/health, /api/accounts, /api/status, /api/system-overview,
+       /api/processes/status, /api/dashboard/{user_id}, /api/aim/{aim_id}/detail,
+       /api/reports/types, /api/notifications/preferences/{user_id},
+       /api/notifications/telegram-history, /api/replay/status,
+       /api/replay/history, /api/replay/presets
+  POST /api/validate/input, /api/validate/asset-config,
+       /api/aim/{aim_id}/activate, /api/aim/{aim_id}/deactivate,
+       /api/reports/generate, /api/notifications/preferences,
+       /api/notifications/read, /api/notifications/test,
+       /api/replay/start, /api/replay/batch/start, /api/replay/control,
+       /api/replay/save, /api/replay/presets, /api/replay/whatif,
+       /api/system/git-pull
+  WS   /ws/{user_id}
+
+WEBSOCKET CONNECTIONS: 3
+  1. /ws/{user_id} — GUI bidirectional (eviction at 3 sessions, code 4001)
+  2. Redis Stream (STREAM_SIGNALS) — durable consumer group with exp backoff
+  3. Redis Pub/Sub (CH_COMMANDS, CH_ALERTS, CH_STATUS) — exp backoff reconnect
+
+PARITY FILTER: Correct. Atomic Redis INCR, deterministic odd/even split,
+  fail-open on Redis error. Both instances synchronized via shared counter.
+
+SCORES: Security 5.5/10 | Concurrency 7.5/10
+
+REMAINING FOR 5b: b5_injection_flow, b6_reports, b7_notifications,
+  b8_reconciliation, b9_incident_response, b10_data_validation,
+  b11_replay_runner, telegram_bot

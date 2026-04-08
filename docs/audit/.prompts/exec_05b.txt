@@ -1,0 +1,115 @@
+You are auditing Captain system. Session 5b of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-621-security-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-628-concurrency-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Previous Session Summary
+SESSION 5a PASSOVER — Captain Command: Core + API
+Date: 2026-04-08
+Skills: ln-621-security-auditor, ln-628-concurrency-auditor
+
+FILES AUDITED: 7
+  main.py, api.py, orchestrator.py, b1_core_routing.py,
+  b2_gui_data_server.py, b3_api_adapter.py, b4_tsm_manager.py
+
+KEY FINDINGS: 10 (6 security, 4 concurrency)
+
+SECURITY FINDINGS:
+  CRITICAL SEC-01: No auth on any of 28 endpoints (0/28 have authentication)
+  CRITICAL SEC-02: Unauthenticated RCE via POST /api/system/git-pull + Docker socket
+  HIGH     SEC-03: Docker socket (/var/run/docker.sock) mounted in container
+  HIGH     SEC-06: SQL injection in b7_notifications.py:435 (f-string role_list in IN clause)
+  MEDIUM   SEC-04: Error messages leak str(exc) to clients (9+ endpoints)
+  MEDIUM   SEC-05: WebSocket /ws/{user_id} allows user_id spoofing
+  POSITIVE SEC-07: Telegram bot token leak prevention (httpx logging suppressed)
+  POSITIVE SEC-08: sanitise_for_api() uses explicit allowlist — secure by construction
+
+CONCURRENCY FINDINGS:
+  HIGH  CONC-01: 8+ module-level globals modified from multiple threads without locks
+                 (_process_health, _api_connections, _user_stream, _account_data, etc.)
+  HIGH  CONC-02: _active_connections dict in b3 accessed from signal+health threads unlocked
+  FP    CONC-03: WebSocket session set — snapshot pattern + single event loop = safe
+  LOW   CONC-04: TOCTOU on config file reads (compliance_gate.json) — safe defaults
+
+STUB COUNT: 0
+
+API ENDPOINTS: 28 total (1 WebSocket, 27 REST)
+  GET  /api/health, /api/accounts, /api/status, /api/system-overview,
+       /api/processes/status, /api/dashboard/{user_id}, /api/aim/{aim_id}/detail,
+       /api/reports/types, /api/notifications/preferences/{user_id},
+       /api/notifications/telegram-history, /api/replay/status,
+       /api/replay/history, /api/replay/presets
+  POST /api/validate/input, /api/validate/asset-config,
+       /api/aim/{aim_id}/activate, /api/aim/{aim_id}/deactivate,
+       /api/reports/generate, /api/notifications/preferences,
+       /api/notifications/read, /api/notifications/test,
+       /api/replay/start, /api/replay/batch/start, /api/replay/control,
+       /api/replay/save, /api/replay/presets, /api/replay/whatif,
+       /api/system/git-pull
+  WS   /ws/{user_id}
+
+WEBSOCKET CONNECTIONS: 3
+  1. /ws/{user_id} — GUI bidirectional (eviction at 3 sessions, code 4001)
+  2. Redis Stream (STREAM_SIGNALS) — durable consumer group with exp backoff
+  3. Redis Pub/Sub (CH_COMMANDS, CH_ALERTS, CH_STATUS) — exp backoff reconnect
+
+PARITY FILTER: Correct. Atomic Redis INCR, deterministic odd/even split,
+  fail-open on Redis error. Both instances synchronized via shared counter.
+
+SCORES: Security 5.5/10 | Concurrency 7.5/10
+
+REMAINING FOR 5b: b5_injection_flow, b6_reports, b7_notifications,
+  b8_reconciliation, b9_incident_response, b10_data_validation,
+  b11_replay_runner, telegram_bot
+
+## Scope
+Captain Command — Reports to Replay: Injection flow, report generation, Telegram notifications, trade reconciliation, incident response, data validation, session replay, Telegram bot remote control (Blocks 5-11).
+
+## Files
+1. captain-command/captain_command/blocks/b5_injection_flow.py
+2. captain-command/captain_command/blocks/b6_reports.py
+3. captain-command/captain_command/blocks/b7_notifications.py
+4. captain-command/captain_command/blocks/b8_reconciliation.py
+5. captain-command/captain_command/blocks/b9_incident_response.py
+6. captain-command/captain_command/blocks/b10_data_validation.py
+7. captain-command/captain_command/blocks/b11_replay_runner.py
+8. captain-command/captain_command/blocks/telegram_bot.py
+
+## Per-File Extraction Format
+For each file:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [any triggers]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected]
+
+Additionally for this session, extract:
+- Telegram bot: commands exposed, auth checks, rate limiting, sensitive data?
+- Notifications: triggers, priority levels, delivery guarantees
+- Reconciliation: what compared (signal vs execution), frequency, mismatch handling
+- Replay: how B11 invokes shared/replay_engine.py, inputs/outputs
+- Security: Telegram token handling, external API auth, injection vectors
+
+## Output
+APPEND to: docs/audit/captain_command.md — under heading "## Part 2: Reports to Replay"
+(Part 1 already exists — do NOT overwrite)
+
+## Passover
+End with:
+## Session 5b Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **QuestDB tables (Command total):** [complete list]
+- **Redis channels (Command total):** [complete list]
+- **External integrations:** [Telegram, TopstepX endpoints]
+- **Notification inventory:** [alert types and triggers]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_05b.txt

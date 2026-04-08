@@ -1,0 +1,137 @@
+## Previous Session Summary
+---
+## Session 6 Summary
+
+- **Docs read:**
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Functional/Programs 1-2-3.canvas` (110 lines, JSON canvas) — PRIMARY for feedback loops
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Functional/AIM System.canvas` (34 lines, JSON canvas) — PRIMARY for AIM data flow / lifecycle
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Backend/VALIDATE Programs 1-2-3.canvas` (1 node, ASCII art) — PRIMARY for P3 block R/W specs and feedback loops
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/15_Model_Definitions.md` (189 lines) — PRIMARY for strategy types, exit grid, variant counts
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/16_Strategy_Type_Registry.md` (43 lines) — PRIMARY for ST-01 through ST-06 definitions
+  - `/mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/29_Operational_Policies.md` (200 lines) — PRIMARY for governance, incident escalation, reporting schedule, model validation
+  - `docs/AIM-Specs/new-aim-specs/Cross_Reference_PreDeploy_vs_V3.md` (367 lines) — SUPPLEMENTARY for SOD parameter formulas
+
+- **Sections written:** §11 (Feedback Loops), §12 (Daily Lifecycle), §13 (Strategy Types + Exit Grid)
+
+- **Feedback loops confirmed:** 6
+  1. AIM Meta-Learning: Trade close → D03 → Offline B1 DMA → D02 → Online B3 → combined_mod → B4
+  2. Decay Detection: Trade close → D03 → Offline B2 BOCPD → D04 → L2 sizing override (D12) or L3 injection chain (D00, D06, D11)
+  3. Kelly EWMA: Trade close → D03 → Offline B8 → D05, D12 → Online B4
+  4. beta_b Learning: Trade close → D03 → Offline B8 OLS → D25 → Online CB L3
+  5. Intraday CB State: Trade close → D23 (immediate) → Online CB L1/L2. Reset 19:00 ET.
+  6. SOD Compounding: 19:00 ET cron → broker API → D08 (topstep_state) → D23 (zeroed) → Online B4 next day
+
+- **Strategy types confirmed:** 6 (ST-01 through ST-06). No new types from Batch 2.
+  - ST-01: ORB_breakout (7 models)
+  - ST-02: ORB_reversal (18 models)
+  - ST-03: ORB_conditional (15 models)
+  - ST-04: Momentum_confirmation (8 models)
+  - ST-05: Delayed_entry (21 models)
+  - ST-06: Cross_asset_trigger (1 model: M-024)
+
+- **Key spec requirements:**
+  1. **6 feedback loops, ALL originate from P3-D03 (trade_outcome_log)** except Loop 6 (SOD cron). D03 is the universal feedback signal.
+  2. **Category A vs B split confirmed in loops:** Loops 1-3 (A: all signals, synchronized across instances), Loops 4-6 (B: taken trades only, per-instance independent).
+  3. **Trading day boundary is 19:00 ET, not midnight.** SOD reset zeros D23, recomputes D08, and compounds capital.
+  4. **Exit grid is a P1/P2 research construct (5 TP x 4 SL = 20 combos).** P3 executes the single locked (m, k) pair per asset from P2-D06 — no runtime grid sweep.
+  5. **70 models (33 PRIMARY, 19 ANTI, 18 NOVEL) produce ~14,600 variants.** P2 selects top-1 per asset via CS = OO x ln(N) x (1 + |tau|).
+
+- **ALL 13 SECTIONS NOW COMPLETE:**
+  - §1: System Overview (Session 1)
+  - §2: Process Architecture (Session 1)
+  - §3: AIM System (Session 2)
+  - §4: Offline Blocks B1-B9 (Session 3)
+  - §5: Online Blocks B1-B9 (Session 3)
+  - §6: Command Blocks B1-B10 (Session 3)
+  - §7: Circuit Breaker (5-Layer) (Session 3)
+  - §8: Kelly Sizing Pipeline (7-Layer) (Session 3)
+  - §9: QuestDB Dataset Master List D00-D27 (Session 5)
+  - §10: Supporting Systems (Session 5)
+  - §11: Feedback Loops (Session 6)
+  - §12: Daily Lifecycle (Session 6)
+  - §13: Strategy Types + Exit Grid (Session 6)
+
+- **Items for Session 7 (final):**
+  - Architecture spec: multi-user capital siloing, TSM 5-classification system, parity-based multi-instance deployment, deployment topology, Docker process model
+  - Final cross-reference pass: verify all 13 sections are internally consistent
+  - Gap analysis: identify any spec content not yet captured
+
+You are performing the Master Gap Analysis for the Captain System. Session 7 of 7 — FINAL.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before any analysis:
+1. Skill(skill: "codebase-audit-suite:ln-620-codebase-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-623-code-principles-auditor")
+3. Skill(skill: "codebase-audit-suite:ln-627-observability-auditor")
+4. Skill(skill: "codebase-audit-suite:ln-629-lifecycle-auditor")
+After loading all 4 skills, apply their checklists during the gap analysis below.
+
+## Documents to Read
+SPEC REFERENCE (completed by Sessions 1–6):
+- docs/audit/spec_reference.md — All 13 sections (§1–§13)
+
+PHASE 1 CODE AUDIT REPORTS:
+- docs/audit/captain_online.md — Online pipeline audit
+- docs/audit/captain_offline.md — Offline pipeline audit
+- docs/audit/captain_command.md — Command interface audit
+- docs/audit/cross_cutting.md — Shared library/config audit
+
+## What to Produce
+Write docs/audit/master_gap_analysis.md with this structure:
+
+### Header
+# Captain System — Master Gap Analysis
+Generated: [date]
+Spec source: docs/audit/spec_reference.md (13 sections)
+Code source: docs/audit/ (4 Phase 1 reports) + codebase verification
+Methodology: Spec-to-code cross-reference
+
+### Part 1 — Summary Statistics
+| Metric | Count |
+|--------|-------|
+| Total spec components | N |
+| Aligned (code matches spec) | N |
+| Divergent (code differs) | N |
+| Stubbed (TODO/placeholder) | N |
+| Missing (spec requires, code absent) | N |
+
+### Part 2 — Critical Gaps
+For EACH gap:
+
+### G-XXX: [Title]
+- **Severity:** CRITICAL / HIGH / MEDIUM / LOW
+- **Spec Ref:** [section:block:PG] — what spec requires
+- **Code Ref:** [file:line] — what code does (or "ABSENT")
+- **Gap:** [one-line divergence description]
+- **Impact:** [what breaks — session trading, learning, risk, etc.]
+- **Dependencies:** [other gaps that must be fixed together]
+- **Complexity:** S / M / L / XL
+
+### Part 3 — Sections
+1. Online Pipeline Gaps (B1–B9)
+2. Offline Pipeline Gaps (B1–B9)
+3. Command Pipeline Gaps (B1–B10)
+4. Session/Trigger Gaps (multi-session, timing)
+5. QuestDB Schema Gaps (tables, fields)
+6. AIM Implementation Gaps (per-AIM)
+7. Kelly/Circuit Breaker Gaps (layer-by-layer)
+8. Feedback Loop Gaps (which of 6 are broken/missing)
+9. GUI/Security Gaps (panels, security model)
+
+### Part 4 — Recommended Implementation Order
+Dependency-sorted, critical-first:
+| Priority | Gap IDs | Description | Blocked By | Complexity |
+
+## How to Find Gaps
+For each spec component in spec_reference.md:
+1. Check if Phase 1 audit already identified a finding — cite it
+2. If not covered, search the codebase: use Grep to find implementation, compare against spec
+3. Categorize: ALIGNED, DIVERGENT, STUBBED, or MISSING
+4. Note exact file:line for code references
+
+## Rules
+- Every gap MUST have BOTH spec citation AND code citation (file:line or "ABSENT")
+- Do NOT propose fixes — only document gaps. Fixes come in Phase 3.
+- Phase 1 findings that aren't spec divergences should be excluded
+- Be exhaustive — better to document a minor gap than miss a critical one
+- Gap IDs: G-001 through G-NNN, sequential within each section

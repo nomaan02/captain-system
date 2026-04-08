@@ -1,0 +1,57 @@
+[2026-04-09 00:08:07] Phase 2: Spec Consolidation + Master Gap Analysis
+[2026-04-09 00:08:07] Model: claude-opus-4-6 | Effort: max
+[2026-04-09 00:08:07] 
+[2026-04-09 00:08:07] Pre-flight checks...
+[2026-04-09 00:08:07]   OK: claude CLI found
+[2026-04-09 00:08:07]   OK: Obsidian vault (25 .md files)
+[2026-04-09 00:08:07]   OK: V3 repo specs (9 .md files)
+[2026-04-09 00:08:07] Pre-flight passed.
+[2026-04-09 00:08:07] 
+[2026-04-09 00:08:07] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2026-04-09 00:08:07]   SPEC-EXEC-07 START
+[2026-04-09 00:08:07] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2026-04-09 00:08:07]   Backed up spec_reference.md
+`docs/audit/master_gap_analysis.md` written — 660 lines. Here's the summary:
+
+---
+
+## Master Gap Analysis — Session 7 Complete
+
+### Part 1: Statistics
+| Metric | Count |
+|--------|-------|
+| Spec components surveyed | 103 |
+| Aligned | 38 |
+| Divergent | 32 |
+| Stubbed | 11 |
+| Missing | 22 |
+| **Total unique gaps (G-001–G-100)** | **100** |
+
+### By Severity
+| CRITICAL | HIGH | MEDIUM | LOW |
+|----------|------|--------|-----|
+| 7 | 22 | 38 | 33 |
+
+---
+
+### The 7 Critical Gaps
+
+| ID | Gap |
+|----|-----|
+| **G-001** | CB serial correlation always ±1.0 or NaN — Layer 4 mathematically broken |
+| **G-002** | Zero authentication on any API endpoint |
+| **G-003** | Unauthenticated `/system/git-pull` → arbitrary code execution + Docker socket escape |
+| **G-004** | Telegram uses wrong table names — `/status` and `/trades` crash at runtime |
+| **G-005** | Replay engine queries wrong CB table — CB silently absent from every replay session |
+| **G-006** | Race on open_positions/shadow_positions — trade outcomes silently dropped |
+| **G-028** | No retry on Redis trade-outcome publish — feedback loops receive biased sample |
+
+---
+
+### Broken Feedback Loops
+All 6 spec feedback loops have at least one gap. **Loops 2 (Decay) and 4 (beta_b)** are fully broken — drift detection is a no-op and CB correlation is degenerate.
+
+### Part 4: Implementation Order
+45 prioritised fix tasks across 7 priority tiers, from "fix before any live session" (P1: table names, session mismatch, CB correlation) through to code quality refactoring (P7: pseudotrader god module, DRY).
+[2026-04-09 00:29:47] SPEC-EXEC-07 DONE (660 lines in output, 21m40s)
+[2026-04-09 00:29:47]   spec_reference.md: 4101 lines, 11/13 sections

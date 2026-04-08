@@ -1,0 +1,55 @@
+You are auditing Captain system. Session 5a of 8.
+
+## Skills — Invoke FIRST
+Call these skills using the Skill tool before reading any files:
+1. Skill(skill: "codebase-audit-suite:ln-621-security-auditor")
+2. Skill(skill: "codebase-audit-suite:ln-628-concurrency-auditor")
+After loading both skills, apply their audit checklists to the files below.
+
+## Scope
+Captain Command — Core + API: Always-on FastAPI linking layer. Routes signals from Redis to GUI/TopstepX, serves WebSocket to GUI, exposes REST API, manages TSM.
+
+SECURITY NOTE: This service has Docker socket (/var/run/docker.sock) and vault access. Pay close attention to input validation, auth, and privilege escalation.
+
+## Files
+1. captain-command/captain_command/main.py
+2. captain-command/captain_command/api.py
+3. captain-command/captain_command/blocks/orchestrator.py
+4. captain-command/captain_command/blocks/b1_core_routing.py
+5. captain-command/captain_command/blocks/b2_gui_data_server.py
+6. captain-command/captain_command/blocks/b3_api_adapter.py
+7. captain-command/captain_command/blocks/b4_tsm_manager.py
+
+## Per-File Extraction Format
+For each file:
+
+### File: [path]
+- **Purpose:** [one line]
+- **Key functions/classes:** [with line numbers]
+- **Session/schedule refs:** [any triggers]
+- **QuestDB:** [table, operation, fields, line number]
+- **Redis:** [channel, pub/sub, line number]
+- **Stubs/TODOs:** [with line numbers]
+- **Notable:** [anything unexpected]
+
+Additionally for this session, extract:
+- API endpoints: method, path, auth required?, input validation?, line number
+- WebSocket connections: to GUI, from Redis; lifecycle, reconnection, error handling
+- Security: Docker socket usage, vault access, sanitization, CORS, auth
+- Parity filter: _check_parity_skip implementation, daily counter
+- Async patterns: shared state access, locks, race conditions
+
+## Output
+Write to: docs/audit/captain_command.md — under heading "# Captain Command Audit" then "## Part 1: Core + API"
+
+## Passover
+End with:
+## Session 5a Summary
+- **Files audited:** [count]
+- **Key findings:** [count and brief list]
+- **Stub count:** [count]
+- **API endpoints:** [method + path inventory]
+- **WebSocket connections:** [inventory]
+- **Security concerns:** [ranked by severity]
+
+Also write ONLY the passover summary to: docs/audit/.passovers/exec_05a.txt

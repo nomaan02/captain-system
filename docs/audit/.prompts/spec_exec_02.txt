@@ -1,0 +1,102 @@
+## Previous Session Summary
+Session 1 Passover Summary
+==========================
+
+Docs read:
+  - docs/AIM-Specs/new-aim-specs/Program3_Online.md (V3, 1,756 lines) -- PRIMARY
+  - /mnt/c/Users/nomaa/.../33_P3_Online_Full_Pseudocode.md (Obsidian doc 33, 476 lines) -- SUPPLEMENTARY
+  - /mnt/c/Users/nomaa/.../30_P1_Consolidated_Config.md (Obsidian doc 30, 89 lines) -- SUPPLEMENTARY
+
+Sections written: S1 (Session Definitions), S2 (Online Blocks 1-9 + Orchestrator + Error Handling + Data Flow)
+
+Key spec requirements:
+  1. Shared/Per-User split is architectural law: B1-3 shared once/session, B4-6 per-user, B7 per-user monitoring, B8-9 post-loop aggregation.
+  2. 7-layer Kelly pipeline with 30% silo drawdown pre-check halts all trading for that user.
+  3. Quality gate is fail-open with OPEN calibration parameters (hard_floor=0.003, ceiling=0.010 are PLACEHOLDERS). Fixed after calibration.
+  4. NET PnL (after commissions) feeds the Offline learning loop (DMA, BOCPD, EWMA, Kelly).
+  5. Circuit breaker 5-layer structure (L0-L4) is Obsidian-only -- V3 references circuit_breaker_check() but omits layer definitions.
+
+Obsidian-only content tagged:
+  - Circuit Breaker PG-27B 5-layer screen (doc 33)
+  - AIM-16 HMM session_budget_weights in Block 3 (doc 33)
+  - Anti-copy jitter in Block 6 (doc 33)
+  - Exit grid TP/SL multiples (doc 30)
+
+Ambiguous items tagged:
+  - APAC session exact open time not specified
+  - No London-session assets in current deployment
+  - AIM-16 scope discrepancy (Obsidian: AIMs 1-16, V3: AIMs 1-15)
+  - Circuit breaker placement: standalone block (Obsidian) vs orchestrator-level check (V3)
+
+Items for next sessions:
+  - S3: Offline blocks (DMA, BOCPD, pseudotrader, decay, strategy injection, Kelly)
+  - S4: Command blocks (routing, GUI server, API adapter, reconciliation)
+  - S5: Dataset schemas (P3-D00 through P3-D26)
+  - S6: AIM individual specs (per-AIM modifier logic from doc 31)
+  - S7: Architecture spec (multi-user siloing, TSM classification, circuit breaker)
+  - P2-D06/D07 locked strategy and regime model schemas
+
+You are extracting spec content for the Captain System consolidated spec reference. Session 2 of 7.
+
+## Source Priority
+V3 repo specs SUPERSEDE Obsidian vault originals. The V3 AIM_Extractions.md is ~5x longer than the Obsidian equivalent — it is the authoritative source.
+
+## Documents to Read
+PRIMARY (V3 — authoritative):
+- docs/AIM-Specs/new-aim-specs/AIM_Extractions.md (~3723 lines) — Detailed AIM paper extractions
+- docs/AIM-Specs/new-aim-specs/HMM_Opportunity_Regime_Spec.md (~578 lines) — AIM-16 HMM
+
+SUPPLEMENTARY (Obsidian vault):
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/31_AIM_Individual_Specifications.md (~767 lines)
+- /mnt/c/Users/nomaa/Documents/Quant_Project/Direct Information/22_HMM_Opportunity_Regime.md (~151 lines)
+
+## What to Extract
+
+### §3 — AIM System (AIMs 1–16)
+
+First extract the AIM system overview:
+- Total AIM count and tier structure (Tier 1, Tier 2, Tier 3)
+- AIM aggregation method (DMA/MoE meta-learning)
+- Lifecycle states (COLD, WARMING, WARM, ACTIVE, DECAYED, etc.)
+- HDWM seed type taxonomy overview
+
+Then for EACH AIM (AIM-1 through AIM-16):
+
+### AIM-N: [Name]
+- **Tier:** [1/2/3]
+- **Paper/Source:** [academic source]
+- **Data Sources:** [market data consumed]
+- **Modifier Output:** [what the AIM produces — value range, interpretation]
+- **Thresholds:** [key thresholds, cutoffs, decision boundaries]
+- **Warm-Up Requirements:** [minimum data/time before active]
+- **QuestDB Datasets:** [tables R/W, key fields]
+- **Lifecycle States:** [transitions]
+- **HDWM Seed Type:** [diversity category]
+- **Key Formula:** [primary formula if spec provides it]
+
+Special attention for AIM-16 (HMM):
+- HMM state count and transition logic
+- Budget allocation weights per regime state
+- Cold-start blending formula
+- Integration with session budgeting (Offline Block 5)
+
+## Output
+Read the existing docs/audit/spec_reference.md (has §1–2 from Session 1).
+APPEND §3 to the end of the file. Do NOT delete existing content.
+Also write ONLY the passover to: docs/audit/.passovers/spec_exec_02.txt
+
+## Passover Format (append at end of spec_reference.md AND write to passover file)
+---
+## Session 2 Summary
+- **Docs read:** [list]
+- **Sections written:** §3
+- **AIM count confirmed:** [N AIMs extracted]
+- **Key spec requirements:** [3–5 critical]
+- **Items for next sessions:** [referenced but not extracted]
+
+## Rules
+- Extract what the spec SAYS — do NOT read code files
+- Include exact formulas when provided (LaTeX notation if helpful)
+- AIM_Extractions.md is large — read it in chunks but extract ALL 16 AIMs
+- Underspecified AIMs: tag as [UNDERSPECIFIED: ...]
+- Obsidian-only content: tag as [SOURCE: Obsidian doc NN]

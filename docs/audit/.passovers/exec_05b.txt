@@ -1,0 +1,112 @@
+SESSION 5b PASSOVER — Captain Command: Reports, Notifications, Reconciliation, Replay
+Date: 2026-04-08
+
+FILES AUDITED: 8
+  b5_injection_flow.py, b6_reports.py, b7_notifications.py,
+  b8_reconciliation.py, b9_incident_response.py, b10_data_validation.py,
+  b11_replay_runner.py, telegram_bot.py
+
+KEY FINDINGS: 9 new (2 HIGH, 4 MEDIUM, 3 LOW)
+COMBINED WITH PART 1: 18 total (2 CRITICAL, 5 HIGH, 7 MEDIUM, 4 LOW)
+
+NEW FINDINGS (5b):
+  HIGH     TG-01:    Table name mismatch in telegram_bot.py — p3_d00_asset_registry (should be
+                     p3_d00_asset_universe) and p3_d03_trade_outcomes (should be
+                     p3_d03_trade_outcome_log). Runtime SQL errors on /status and /positions.
+  HIGH     RECON-02: Hardcoded f_target_max=0.03 for payout MDD% threshold in b8:336.
+                     Money-affecting — should be in config or D17 system params.
+  MEDIUM   RECON-01: b8 reconciliation balance correction only logs to session_event_log, not to
+                     D08 tsm_state. Next D08 SELECT still returns old balance — fix is ineffective.
+  MEDIUM   INC-01:   Dead code return {"error": str(exc)} at b9:257 outside except block.
+  MEDIUM   REPLAY-01: _active_sessions dict never pruned — grows unboundedly over server lifetime.
+  MEDIUM   TG-02:    send_message() uses urllib GET with bot token in URL. Token in URL strings.
+  LOW      NOTIF-01: Docstring says 26 events, code has 27 (ENTRY_PRICE_MISSING added).
+  LOW      REPLAY-02: TP/SL override code copy-pasted 3 times (start_replay, run_whatif, start_batch).
+  LOW      TG-03:    _rate_window and _mute_until dicts accessed from multiple threads without locks.
+
+CARRYOVER FROM PART 1:
+  CRITICAL SEC-01: No auth on 28 endpoints
+  CRITICAL SEC-02: RCE via git-pull + Docker socket
+  HIGH     SEC-03: Docker socket mounted
+  HIGH     SEC-06: SQL injection in b7:433 (f-string role_list)
+  HIGH     CONC-01: 8+ module-level globals unlocked
+  HIGH     CONC-02: _active_connections unlocked
+  MEDIUM   SEC-04: Error messages leak str(exc)
+  MEDIUM   SEC-05: WebSocket user_id spoofing
+  LOW      CONC-04: TOCTOU on config reads
+
+STUB COUNT: 0 (all 15 files across Part 1 + Part 2 fully implemented)
+
+QUESTDB TABLES USED BY COMMAND (17 total, Part 1 + Part 2 combined):
+  p3_d00_asset_universe         SELECT      b6, telegram_bot*
+  p3_d01_aim_model_states       SELECT      b6 (RPT-04)
+  p3_d02_aim_meta_weights       SELECT      b6 (RPT-04, JOIN with d01)
+  p3_d03_trade_outcome_log      SELECT      b6 (RPT-02/04/08/10/11), telegram_bot*
+  p3_d04_decay_detector_states  SELECT      b6 (RPT-03)
+  p3_d06_injection_history      SELECT      b5, b6 (RPT-05)
+  p3_d08_tsm_state              SELECT      main, b4, b6 (RPT-07), b8, telegram_bot
+  p3_d09_report_archive         INSERT      b6
+  p3_d10_notification_log       SELECT+INS  api, b7
+  p3_d11_pseudotrader_results   SELECT      b5
+  p3_d16_user_capital_silos     SELECT+INS  main, b7, telegram_bot
+  p3_d19_reconciliation_log     INSERT      b8
+  p3_d21_incident_log           SELECT+INS  b9
+  p3_d23_circuit_breaker_intra  INSERT      b8
+  p3_session_event_log          SELECT+INS  b5, b6, b7, b8, telegram_bot
+  p3_replay_results             SELECT+INS  api, b11
+  p3_replay_presets             SELECT+INS  api
+  * telegram_bot uses wrong table names (TG-01)
+
+REDIS CHANNELS/KEYS USED BY COMMAND (5 total):
+  STREAM_SIGNALS / GROUP_COMMAND_SIGNALS  Stream     Read+Ack   main, orchestrator
+  CH_COMMANDS (captain:commands)          Pub/Sub    Sub+Pub    orchestrator, b1, b5
+  CH_ALERTS (captain:alerts)              Pub/Sub    Sub        orchestrator
+  CH_STATUS (captain:status)              Pub/Sub    Sub+Pub    orchestrator
+  captain:signal_counter:{date}           Key INCR   R/W        orchestrator (parity)
+
+EXTERNAL INTEGRATIONS:
+  Telegram Bot API:
+    - Outbound: GET api.telegram.org/bot{token}/sendMessage (urllib, token in URL)
+    - Inbound: Long polling via python-telegram-bot ApplicationBuilder
+    - Inline callbacks: TAKEN/SKIPPED buttons on signal notifications
+    - Auth: Chat ID whitelist from D16, rate limit 60/hour, mute 1-24h
+    - Commands: /status /signals /positions /reports /tsm /mute /help
+    - Security: No strategy details in messages, audit logging of all interactions
+  TopstepX REST API (from Part 1):
+    - Auth: POST /api/Auth/login (email + API key)
+    - Accounts: GET /api/Account
+    - Orders: POST /api/Order
+    - Positions: GET /api/Position
+
+NOTIFICATION INVENTORY (27 event types):
+  CRITICAL (10): TP_HIT, SL_HIT, DECAY_LEVEL3, TSM_MDD_BREACH, TSM_MLL_BREACH,
+                 SYSTEM_CRASH, MID_TRADE_REGIME_SHIFT, API_KEY_COMPROMISE,
+                 API_CONNECTION_LOST, ENTRY_PRICE_MISSING
+  HIGH (9):      SIGNAL_GENERATED, DECAY_LEVEL2, REGIME_CHANGE, AIM_FRAGILE,
+                 INJECTION_AVAILABLE, VIX_SPIKE, AUTO_EXEC_GATE,
+                 HEALTH_DIAGNOSTIC, ACTION_ITEM_REOPENED
+  MEDIUM (4):    AIM_WARMUP_COMPLETE, WEEKLY_REPORT_READY,
+                 PARALLEL_TRACKING_DONE, API_KEY_ROTATION_DUE
+  LOW (4):       MONTHLY_REPORT_READY, RETRAIN_COMPLETE,
+                 SYSTEM_STATUS, ANNUAL_REVIEW_READY
+  Delivery: GUI (always), Telegram (HIGH+ default, queued in quiet hours),
+            Email (future v2, not implemented)
+
+INCIDENT SEVERITY ROUTING (4 levels):
+  P1_CRITICAL: GUI + Telegram -> ADMIN
+  P2_HIGH:     GUI + Telegram -> ADMIN
+  P3_MEDIUM:   GUI only -> ADMIN
+  P4_LOW:      Logged only
+
+REPORT TYPES (11):
+  RPT-01 Pre-Session Signal (in-app)
+  RPT-02 Weekly Performance (CSV)
+  RPT-03 Monthly Decay & Warm-Up (CSV)
+  RPT-04 AIM Effectiveness (CSV) -- most complex, computes per-AIM accuracy
+  RPT-05 Strategy Comparison (CSV)
+  RPT-06 Regime Change (CSV)
+  RPT-07 Daily Prop Account (in-app)
+  RPT-08 Regime Calibration (CSV)
+  RPT-09 Parameter Change Audit (CSV)
+  RPT-10 Annual Performance (CSV)
+  RPT-11 Financial Summary Export (CSV, should be ADMIN-only)

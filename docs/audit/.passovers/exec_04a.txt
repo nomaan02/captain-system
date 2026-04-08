@@ -1,0 +1,43 @@
+EXEC-04a Passover: Captain Offline — Orchestrator + B1-B2
+Date: 2026-04-08
+Files audited: 12
+
+KEY FINDINGS (14 total: 5 HIGH, 6 MEDIUM, 3 LOW):
+- FINDING-01 (HIGH): orchestrator.py:529 — datetime.now() uses system TZ, not America/New_York. Scheduler fires daily tasks at wrong time if container TZ differs from ET.
+- FINDING-02 (HIGH): orchestrator.py:572 — run_drift_detection(asset_id, {}) passes empty features dict. Function is a no-op. Feature extraction pipeline not wired.
+- FINDING-05 (HIGH): b1_aim_lifecycle.py:55 — _load_aim_states ORDER BY doesn't guarantee latest row per AIM in QuestDB append-only model. Missing LATEST ON.
+- FINDING-08 (HIGH): b1_dma_update.py:43-56 — _load_active_aims same stale-row risk without LATEST ON.
+- FINDING-13 (HIGH): b2_level_escalation.py:186 — Level 2 fires every trade with cp_prob > 0.8. No debounce/cooldown. Creates alert/DB spam.
+- FINDING-03 (MEDIUM): orchestrator.py:69 — stop() doesn't join Redis thread or wait for in-flight processing.
+- FINDING-06 (MEDIUM): b1_aim16_hmm.py — hmmlearn in requirements.txt but never imported; custom Baum-Welch used.
+- FINDING-09 (MEDIUM): b1_drift_detection.py:49 — river package imported but NOT in requirements.txt.
+- FINDING-10 (MEDIUM): b1_drift_detection.py:115 — ADWIN/autoencoder state in module-level dicts lost on restart.
+- FINDING-14 (MEDIUM): b2_level_escalation.py:186-197 — Level 2 and Level 3 can fire simultaneously.
+
+STUBS: 5 (drift autoencoder placeholder, drift state persistence, AIM retrain hook, data_pipeline_connected, version pruning)
+DEAD CODE: 8 items (AlgorithmImports shim in all files, 5 unused functions/constants, drift module effectively dead, unused variable)
+
+DEPENDENCY ISSUES:
+- Unused: hmmlearn, scikit-learn, pydantic (in requirements.txt, never imported)
+- Missing: river (imported in drift detection, not in requirements.txt)
+- Duplicate constants: TIER1_AIMS defined 3x, NUM_AIMS defined 2x
+
+SCHEDULED TASKS:
+- Daily (after 16:00 system TZ): drift detection, AIM lifecycle, warmup check, transition advance, job dispatch
+- Weekly (Monday): Tier 1 AIM retrain, HDWM diversity, diagnostic
+- Monthly (1st): Tier 2/3 AIM retrain, sensitivity scan, diagnostic
+- Quarterly (1st Jan/Apr/Jul/Oct): CUSUM recalibration
+
+EVENT HANDLERS:
+- stream:trade_outcomes -> DMA + BOCPD + CUSUM + level escalation + Kelly + CB + TSM (Cat A+B)
+- stream:signal_outcomes -> DMA + BOCPD + CUSUM + level escalation + Kelly (Cat A only)
+- stream:commands -> ASSET_ADDED, INJECTION, ADOPTION_DECISION, TSM_CHANGE, ACTIVATE/DEACTIVATE_AIM, ACTION_RESOLVED
+
+CROSS-SERVICE DEPS:
+- QuestDB: 8 tables read (D00, D01, D02, D03, D05, D08), 8 written (D01, D02, D04, D05, D12, D18, D26, job_queue)
+- Redis: 3 streams consumed (trade_outcomes, signal_outcomes, commands), 1 channel published (alerts)
+
+CATEGORY A/B LEARNING:
+- Category A (ALL signals): DMA (b1_dma_update), BOCPD (b2_bocpd), CUSUM (b2_cusum), Kelly/EWMA (b8_kelly_update), level escalation
+- Category B (own trades only): CB params (b8_cb_params), TSM simulation (b7_tsm_simulation)
+- Correctly separated in orchestrator: _handle_signal_outcome skips CB/TSM
