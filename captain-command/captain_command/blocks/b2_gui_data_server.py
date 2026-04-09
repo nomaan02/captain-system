@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import os
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 _CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.H26")
 
+# Lock protecting mutable module-level state so concurrent GUI clients
+# receive atomically-consistent financial snapshots (§7 B2).
+_state_lock = threading.Lock()
+
 # Module-level reference to UserStream (set by orchestrator on startup)
 _user_stream = None
 # Module-level account data cache (set from REST at startup, used as fallback
@@ -47,13 +52,15 @@ _account_data: dict | None = None
 def set_user_stream(stream) -> None:
     """Register the active UserStream for live account data."""
     global _user_stream
-    _user_stream = stream
+    with _state_lock:
+        _user_stream = stream
 
 
 def set_account_data(account: dict) -> None:
     """Cache account data from REST API for api_status fallback."""
     global _account_data
-    _account_data = account
+    with _state_lock:
+        _account_data = account
 
 
 # Last known pipeline stage from Online (set by command orchestrator status handler)
@@ -63,7 +70,8 @@ _pipeline_stage: str = "WAITING"
 def set_pipeline_stage(stage: str) -> None:
     """Update the cached pipeline stage for snapshot inclusion."""
     global _pipeline_stage
-    _pipeline_stage = stage
+    with _state_lock:
+        _pipeline_stage = stage
 
 # ---------------------------------------------------------------------------
 # Layer 1: Main Dashboard data assembly
@@ -99,11 +107,18 @@ def build_dashboard_snapshot(user_id: str) -> dict:
     dict
         Dashboard payload ready for WebSocket JSON push.
     """
+    # Snapshot mutable globals atomically so the dashboard payload is
+    # internally consistent even when setters fire on another thread.
+    with _state_lock:
+        stream = _user_stream
+        acct = _account_data
+        stage = _pipeline_stage
+
     return {
         "type": "dashboard",
         "timestamp": datetime.now().isoformat(),
         "user_id": user_id,
-        "capital_silo": _get_capital_silo(user_id),
+        "capital_silo": _get_capital_silo(user_id, stream),
         "open_positions": _get_open_positions(user_id),
         "pending_signals": _get_pending_signals(user_id),
         "aim_states": _get_aim_states(user_id),
@@ -115,8 +130,8 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "payout_panel": _get_payout_panel(user_id),
         "scaling_display": _get_scaling_display(user_id),
         "live_market": _get_live_market_data(),
-        "api_status": _get_api_connection_status(),
-        "pipeline_stage": _pipeline_stage,
+        "api_status": _get_api_connection_status(stream, acct),
+        "pipeline_stage": stage,
         "service_health": _get_service_health(),
     }
 
@@ -267,13 +282,13 @@ def _get_scaling_display(user_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _get_capital_silo(user_id: str) -> dict:
+def _get_capital_silo(user_id: str, user_stream=None) -> dict:
     """Fetch capital silo summary — live balance from TopstepX, fallback to P3-D16."""
     result = {}
 
     # Try live data from UserStream first
-    if _user_stream and _user_stream.account_data:
-        ad = _user_stream.account_data
+    if user_stream and user_stream.account_data:
+        ad = user_stream.account_data
         result = {
             "total_capital": ad.get("balance"),
             "daily_pnl": None,       # Computed by reconciliation
@@ -974,7 +989,7 @@ def _get_live_market_data(asset_id: str = "ES") -> dict:
     }
 
 
-def _get_api_connection_status() -> dict:
+def _get_api_connection_status(user_stream=None, account_data=None) -> dict:
     """Get TopstepX API and stream connection status."""
     from shared.topstep_stream import StreamState
 
@@ -996,17 +1011,17 @@ def _get_api_connection_status() -> dict:
     except Exception:
         pass
 
-    if _user_stream:
-        result["user_stream"] = _user_stream.state.value
-        ad = _user_stream.account_data
+    if user_stream:
+        result["user_stream"] = user_stream.state.value
+        ad = user_stream.account_data
         if ad:
             result["account_id"] = ad.get("id")
             result["account_name"] = ad.get("name")
 
     # Fallback: use REST account data cached at startup
-    if result["account_id"] is None and _account_data:
-        result["account_id"] = str(_account_data.get("id", ""))
-        result["account_name"] = _account_data.get("name", "")
+    if result["account_id"] is None and account_data:
+        result["account_id"] = str(account_data.get("id", ""))
+        result["account_name"] = account_data.get("name", "")
 
     # Market stream state is tracked by quote_cache freshness
     contract_id = resolve_contract_id("ES") or _CONTRACT_ID

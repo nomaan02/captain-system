@@ -34,6 +34,8 @@ import math
 from datetime import datetime
 from typing import Optional
 
+from shared.statistics import get_ewma_for_regime
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,7 +131,7 @@ def run_kelly_sizing(
         # Step 3: Robust Kelly fallback (Paper 218)
         if regime_uncertain.get(u, False):
             dominant_regime = max(r_probs, key=r_probs.get)
-            ewma = _get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
+            ewma = get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
             if ewma:
                 from captain_online.blocks.b1_features import get_return_bounds, compute_robust_kelly
                 bounds = get_return_bounds(ewma)
@@ -186,7 +188,7 @@ def run_kelly_sizing(
 
             # Risk per contract from EWMA (per-contract $ risk)
             dominant_regime = max(r_probs, key=r_probs.get)
-            ewma = _get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
+            ewma = get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
             risk_per_contract = ewma["avg_loss"] if ewma and ewma.get("avg_loss", 0) > 0 else strategy_sl * point_value
 
             # V3: Fee integration — add expected fee to risk per contract
@@ -288,18 +290,6 @@ def _get_shrinkage(asset_id: str, kelly_params: dict, session_id: int) -> float:
             return v.get("shrinkage_factor", 1.0)
     return 1.0
 
-
-def _get_ewma_for_regime(asset_id: str, regime: str, ewma_states: dict, session_id: int) -> dict | None:
-    """Get EWMA state for asset/regime."""
-    key = (asset_id, regime, session_id)
-    entry = ewma_states.get(key)
-    if entry:
-        return entry
-    # Fallback: try any session
-    for k, v in ewma_states.items():
-        if k[0] == asset_id and k[1] == regime:
-            return v
-    return None
 
 
 def _apply_risk_goal(kelly: float, risk_goal: str, tsm: dict) -> float:

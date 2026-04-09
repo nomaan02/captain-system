@@ -14,8 +14,11 @@ Composite decision: D_{j+1} = H(L_t, rho_j) * B(n_t) * C_b(L_b) * Q(L_b, n_t)
   Layer 2: Budget — n_t >= N (total trades today, NOT consecutive losses)
   Layer 3: Per-basket conditional expectancy — mu_b = r_bar_b + beta_b * L_b
   Layer 4: Correlation-adjusted Sharpe — S = mu_b / (sigma * sqrt(1 + 2*n_t*rho_bar))
-  Layer 5: Session-level regime halt (VIX spike, DATA_HOLD)
-  Layer 6: Manual override (ADMIN halt)
+  Layer 5: Session-level regime halt (VIX spike, DATA_HOLD)   [V3 amendment]
+  Layer 6: Manual override (ADMIN halt)                       [V3 amendment]
+
+V3 amendment (DEC-03): Original spec defines 5 layers (L0-L4). L5/L6 are
+defensive safety layers added post-spec — kept per reconciliation decision.
 
 Runtime position: AFTER Block 5B quality gate, BEFORE Block 6 signal output.
 Non-Topstep accounts bypass CB entirely.

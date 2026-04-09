@@ -21,6 +21,7 @@ import logging
 import math
 import os
 import secrets
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -148,6 +149,7 @@ _last_signal_time: str | None = None
 
 # Active WebSocket sessions — user_id → set of WebSocket objects
 _ws_sessions: dict[str, set[WebSocket]] = defaultdict(set)
+_ws_lock = threading.Lock()
 
 # Max concurrent WebSocket sessions per user. Oldest evicted with code 4001
 # (client knows not to reconnect on 4001). Allows for brief overlap during reconnects.
@@ -325,22 +327,26 @@ async def websocket_endpoint(
 
     await websocket.accept()
 
-    sessions = _ws_sessions[user_id]
+    # Mutate _ws_sessions under lock — gui_push reads from background threads.
+    with _ws_lock:
+        sessions = _ws_sessions[user_id]
 
-    # Evict oldest sessions over the limit. Use code 4001 so the client
-    # knows NOT to reconnect (normal close codes trigger reconnect).
-    stale = []
-    while len(sessions) >= MAX_SESSIONS_PER_USER:
-        try:
-            oldest = next(iter(sessions))
-            sessions.discard(oldest)
-            stale.append(oldest)
-        except StopIteration:
-            break
+        # Evict oldest sessions over the limit. Use code 4001 so the client
+        # knows NOT to reconnect (normal close codes trigger reconnect).
+        stale = []
+        while len(sessions) >= MAX_SESSIONS_PER_USER:
+            try:
+                oldest = next(iter(sessions))
+                sessions.discard(oldest)
+                stale.append(oldest)
+            except StopIteration:
+                break
 
-    sessions.add(websocket)
+        sessions.add(websocket)
+        session_count = len(sessions)
+
     logger.info("WebSocket connected: user=%s (sessions=%d, evicted=%d)",
-                user_id, len(sessions), len(stale))
+                user_id, session_count, len(stale))
 
     # Close evicted sessions AFTER adding the new one (so the new one is safe)
     for old_ws in stale:
@@ -353,9 +359,10 @@ async def websocket_endpoint(
         await websocket.send_json({"type": "connected", "user_id": user_id})
     except (RuntimeError, WebSocketDisconnect):
         # Client disconnected between accept() and first send — clean up and exit
-        _ws_sessions[user_id].discard(websocket)
-        if not _ws_sessions[user_id]:
-            _ws_sessions.pop(user_id, None)
+        with _ws_lock:
+            _ws_sessions[user_id].discard(websocket)
+            if not _ws_sessions[user_id]:
+                _ws_sessions.pop(user_id, None)
         return
 
     try:
@@ -393,10 +400,11 @@ async def websocket_endpoint(
     except Exception as exc:
         logger.error("WebSocket error for user %s: %s", user_id, exc, exc_info=True)
     finally:
-        _ws_sessions[user_id].discard(websocket)
-        remaining = len(_ws_sessions[user_id])
-        if remaining == 0:
-            _ws_sessions.pop(user_id, None)
+        with _ws_lock:
+            _ws_sessions[user_id].discard(websocket)
+            remaining = len(_ws_sessions[user_id])
+            if remaining == 0:
+                _ws_sessions.pop(user_id, None)
         logger.info("WebSocket disconnected: user=%s (remaining=%d)",
                     user_id, remaining)
 
@@ -442,7 +450,10 @@ def gui_push(user_id: str, message: dict):
 
     Safe to call from background threads (orchestrator, Redis listener).
     """
-    sessions = _ws_sessions.get(user_id, set())
+    # Snapshot sessions under lock — background threads call gui_push while
+    # the event loop mutates _ws_sessions on connect/disconnect.
+    with _ws_lock:
+        sessions = list(_ws_sessions.get(user_id, set()))
     if not sessions:
         return
 
@@ -454,7 +465,7 @@ def gui_push(user_id: str, message: dict):
 
     # Schedule each send as a fire-and-forget coroutine on the event loop.
     # No blocking — the scheduler thread returns immediately.
-    for ws in list(sessions):  # snapshot to avoid set-changed-during-iteration
+    for ws in sessions:
         asyncio.run_coroutine_threadsafe(_safe_ws_send(ws, user_id, message), loop)
 
 
@@ -465,7 +476,8 @@ async def _safe_ws_send(ws: WebSocket, user_id: str, message: dict):
     except Exception:
         # Send failed — connection is dead. Remove from set AND close properly
         # so the endpoint coroutine's finally block fires and the coroutine exits.
-        _ws_sessions[user_id].discard(ws)
+        with _ws_lock:
+            _ws_sessions[user_id].discard(ws)
         try:
             await ws.close()
         except Exception:

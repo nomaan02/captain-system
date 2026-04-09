@@ -25,6 +25,7 @@ from datetime import datetime
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS
 from shared.questdb_client import get_cursor
+from shared.statistics import get_ewma_for_regime
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def run_signal_output(
         r_probs = regime_probs.get(u, {"LOW_VOL": 0.5, "HIGH_VOL": 0.5})
         regime = max(r_probs, key=r_probs.get)
 
-        ewma = _get_ewma_for_regime(u, regime, ewma_states, session_id)
+        ewma = get_ewma_for_regime(u, regime, ewma_states, session_id)
         win_rate = ewma["win_rate"] if ewma else 0.5
         avg_win = ewma["avg_win"] if ewma else 0.0
         avg_loss = ewma["avg_loss"] if ewma else 0.0
@@ -307,15 +308,6 @@ def _get_daily_pnl(user_id: str) -> float:
         return 0.0
 
 
-def _get_ewma_for_regime(asset_id: str, regime: str, ewma_states: dict, session_id: int) -> dict | None:
-    key = (asset_id, regime, session_id)
-    entry = ewma_states.get(key)
-    if entry:
-        return entry
-    for k, v in ewma_states.items():
-        if k[0] == asset_id and k[1] == regime:
-            return v
-    return None
 
 
 def _load_system_param(key: str, default):

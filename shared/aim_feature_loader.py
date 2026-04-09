@@ -40,6 +40,22 @@ def load_replay_features(target_date: date, assets: list[str]):
         features = {}
         for asset_id in assets:
             f = {}
+            # Replay stubs: features without a historical data source in replay.
+            # Each AIM handler checks f.get(key) → None → neutral modifier.
+            #   pcr_z            — no put-call ratio data source (AIM-02)
+            #   gex              — no gamma exposure data source (AIM-03)
+            #   cot_smi          — no CFTC COT data pipeline (AIM-07, disabled DEC-08)
+            #   cot_speculator_z — no CFTC COT data pipeline (AIM-07, disabled DEC-08)
+            #   event_proximity  — no economic calendar feed (AIM-06)
+            #   events_today     — no economic calendar feed (AIM-06)
+            #   cl_basis         — no crude oil basis data (AIM-12)
+            f["pcr_z"] = None
+            f["gex"] = None
+            f["cot_smi"] = None
+            f["cot_speculator_z"] = None
+            f["event_proximity"] = None
+            f["events_today"] = None
+            f["cl_basis"] = None
             f.update(vix_features)
             f.update(_load_ohlcv_features(target_date, asset_id, cur))
             f.update(_load_iv_rv_features(target_date, asset_id, cur))

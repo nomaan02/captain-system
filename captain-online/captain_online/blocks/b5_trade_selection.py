@@ -22,6 +22,7 @@ import logging
 from typing import Optional
 
 from shared.questdb_client import get_cursor
+from shared.statistics import get_ewma_for_regime
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def run_trade_selection(
     for u in active_assets:
         r_probs = regime_probs.get(u, {"LOW_VOL": 0.5, "HIGH_VOL": 0.5})
         regime = max(r_probs, key=r_probs.get)
-        ewma = _get_ewma_for_regime(u, regime, ewma_states, session_id)
+        ewma = get_ewma_for_regime(u, regime, ewma_states, session_id)
 
         if ewma:
             edge = ewma["win_rate"] * ewma["avg_win"] - (1 - ewma["win_rate"]) * ewma["avg_loss"]
@@ -188,16 +189,6 @@ def apply_hmm_session_allocation(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _get_ewma_for_regime(asset_id: str, regime: str, ewma_states: dict, session_id: int) -> dict | None:
-    key = (asset_id, regime, session_id)
-    entry = ewma_states.get(key)
-    if entry:
-        return entry
-    for k, v in ewma_states.items():
-        if k[0] == asset_id and k[1] == regime:
-            return v
-    return None
 
 
 def _load_correlation_matrix(active_assets: list[str]) -> dict:

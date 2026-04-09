@@ -380,37 +380,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §7 B2 — real-time GUI data to multiple concurrent clients
 - **Code:** captain-command/captain_command/blocks/b2_gui_data_server.py — globals without locks
 - **Delta:** Partially-updated financial snapshots served to GUI
-- **Deps:** None | **Skill:** ln-628 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
 
 #### G-016 | HIGH | Command B2 | API
 - **Spec:** §7 B2 — broadcast trade notifications to all WebSocket clients
 - **Code:** api.py `_active_connections` — dict mutated from multiple threads
 - **Delta:** Dict mutation during iteration on trade path; notifications dropped
-- **Deps:** G-015 | **Skill:** ln-628 | **Status:** UNRESOLVED
+- **Deps:** G-015 | **Skill:** ln-628 | **Status:** FIXED
 
 #### G-078 | MEDIUM | Cross-Cutting | AIM-16
 - **Spec:** §3 AIM-16 — in dispatch table (or removed per DEC-06)
 - **Code:** shared/aim_compute.py:637-649 — `_aim16_hmm()` defined but not dispatched
 - **Delta:** Dead function; needs removal or reconnection
-- **Deps:** DEC-06 | **Skill:** ln-626 | **Status:** UNRESOLVED
+- **Deps:** DEC-06 | **Skill:** ln-626 | **Status:** FIXED
 
 #### G-079 | MEDIUM | Cross-Cutting | AIM Features
 - **Spec:** §3 — all 16 AIMs functional in replay
 - **Code:** shared/aim_feature_loader.py — 7 features unavailable in replay
 - **Delta:** pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis missing
-- **Deps:** G-073, G-074 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** G-073, G-074 | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-080 | MEDIUM | Online | CB Layers
 - **Spec:** §6 — 5 CB layers
 - **Code:** b5c_circuit_breaker.py:11 — 7 layers (L0-L6 including L5/L6 safety)
 - **Delta:** Code has extra layers; needs spec alignment or V3 amendment
-- **Deps:** DEC-03 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** DEC-03 | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-081 | MEDIUM | Multi | Kelly
 - **Spec:** §5 — DRY principle
 - **Code:** b4_kelly_sizing.py:292; b5_trade_selection.py:192; b6_signal_output.py:310
 - **Delta:** `_get_ewma_for_regime()` duplicated 3x; divergence risk
-- **Deps:** None | **Skill:** ln-623 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-623 | **Status:** FIXED
 
 ---
 
@@ -667,10 +667,10 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 12 |
+| UNRESOLVED | 6 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 45 |
+| FIXED | 51 |
 | VERIFIED | 10 |
 | **TOTAL** | **100** |
 
@@ -739,3 +739,9 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 09 | FIXED | G-057 | route_notification publishes JSON payload to CH_ALERTS (captain:alerts) Redis channel after GUI/Telegram delivery |
 | 2026-04-09 | 09 | FIXED | G-058 | get_incident_detail: moved return inside except block to fix NameError on exc; error message uses generic string (no exception leakage) |
 | 2026-04-09 | 09 | FIXED | G-059 | telegram_bot.py send_message: self._token masked with *** in exception strings before logging |
+| 2026-04-09 | 10 | FIXED | G-015 | threading.Lock (_state_lock) guards _user_stream, _account_data, _pipeline_stage. build_dashboard_snapshot snapshots atomically, passes to sub-functions |
+| 2026-04-09 | 10 | FIXED | G-016 | threading.Lock (_ws_lock) guards _ws_sessions dict. gui_push snapshots under lock; connect/disconnect/cleanup all acquire lock |
+| 2026-04-09 | 10 | FIXED | G-078 | AIM-16 _aim16_hmm re-added to dispatch table in aim_compute.py per DEC-06 resolution A |
+| 2026-04-09 | 10 | FIXED | G-079 | 7 replay-unavailable features (pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis) stubbed as None in aim_feature_loader.py |
+| 2026-04-09 | 10 | FIXED | G-080 | CB L5/L6 documented as V3 amendment per DEC-03 resolution B. Original spec has 5 layers; code keeps 7 |
+| 2026-04-09 | 10 | FIXED | G-081 | get_ewma_for_regime() extracted to shared/statistics.py; local copies removed from b4_kelly_sizing.py, b5_trade_selection.py, b6_signal_output.py |

@@ -1,0 +1,28 @@
+Session 10 Passover
+Items completed: G-015, G-016, G-078, G-079, G-080, G-081 (all 6)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-628-concurrency-auditor: running post-session (background)
+  - ln-641-pattern-analyzer: running post-session (background)
+Notes:
+  - G-015: threading.Lock (_state_lock) added to b2_gui_data_server.py. Protects _user_stream,
+    _account_data, _pipeline_stage. build_dashboard_snapshot() snapshots all three atomically
+    under lock, then passes snapshots to _get_capital_silo(user_stream=) and
+    _get_api_connection_status(user_stream=, account_data=). Lock NOT held during DB queries.
+  - G-016: threading.Lock (_ws_lock) added to api.py. Protects _ws_sessions dict across async
+    event loop (websocket_endpoint connect/disconnect) and background threads (gui_push).
+    gui_push snapshots session list under lock. All mutation sites (add, discard, pop) guarded.
+  - G-078: _aim16_hmm re-added to dispatch table in shared/aim_compute.py per DEC-06 resolution A.
+    Online B3 now invokes HMM inference for session budget allocation.
+  - G-079: 7 features without replay data sources stubbed as None in aim_feature_loader.py:
+    pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis.
+    Stubs set BEFORE real feature loading so real values override if available.
+  - G-080: b5c_circuit_breaker.py docstring updated: L5/L6 marked [V3 amendment] with explanatory
+    paragraph citing DEC-03 resolution B.
+  - G-081: _get_ewma_for_regime() extracted to shared/statistics.py as get_ewma_for_regime().
+    Local copies deleted from b4_kelly_sizing.py, b5_trade_selection.py, b6_signal_output.py.
+    All three files now import from shared.statistics.
+  - Matrix §6 Dashboard: UNRESOLVED 12→6, FIXED 45→51
+  - Matrix §7 Changelog populated with all 6 fixes.

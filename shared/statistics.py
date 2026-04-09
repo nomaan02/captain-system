@@ -3,8 +3,10 @@
 Implements:
   - compute_pbo: Probability of Backtest Overfitting via CSCV (Paper 152)
   - compute_dsr: Deflated Sharpe Ratio (Paper 150)
+  - get_ewma_for_regime: EWMA state lookup with session fallback
 
-These are used by B3 (pseudotrader), B5 (sensitivity), B6 (auto-expansion).
+These are used by B3 (pseudotrader), B4 (Kelly), B5 (trade selection/sensitivity),
+B6 (signal output/auto-expansion).
 """
 
 import math
@@ -14,6 +16,22 @@ from itertools import combinations
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def get_ewma_for_regime(asset_id: str, regime: str, ewma_states: dict, session_id: int) -> dict | None:
+    """Get EWMA state for asset/regime, with fallback to any session.
+
+    Lookup order: exact (asset_id, regime, session_id) key first,
+    then any entry matching (asset_id, regime) regardless of session.
+    """
+    key = (asset_id, regime, session_id)
+    entry = ewma_states.get(key)
+    if entry:
+        return entry
+    for k, v in ewma_states.items():
+        if k[0] == asset_id and k[1] == regime:
+            return v
+    return None
 
 
 def _sharpe_on_returns(returns: np.ndarray) -> float:

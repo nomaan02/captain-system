@@ -205,8 +205,7 @@ def compute_aim_modifier(aim_id: int, features: dict, asset_id: str, state: dict
         13: _aim13_sensitivity,
         14: _aim14_expansion,
         15: _aim15_volume,
-        # AIM-16 removed from B3 dispatch per DEC-06: session budget allocator
-        # now handled by apply_hmm_session_allocation() in Block 5 (b5_trade_selection.py)
+        16: _aim16_hmm,  # DEC-06 resolved: re-added — Online B3 needs HMM inference
     }
 
     handler = dispatch.get(aim_id)
