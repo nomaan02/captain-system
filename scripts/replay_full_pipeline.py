@@ -147,7 +147,7 @@ def run_phase_a(session_id: int) -> dict | None:
     """
     from captain_online.blocks.b1_data_ingestion import run_data_ingestion
     from captain_online.blocks.b2_regime_probability import run_regime_probability
-    from captain_online.blocks.b3_aim_aggregation import run_aim_aggregation
+    from shared.aim_compute import run_aim_aggregation
     from captain_online.blocks.b4_kelly_sizing import run_kelly_sizing
     from captain_online.blocks.b5_trade_selection import run_trade_selection, apply_hmm_session_allocation
     from captain_online.blocks.b5b_quality_gate import run_quality_gate

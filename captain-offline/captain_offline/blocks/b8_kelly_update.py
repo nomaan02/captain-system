@@ -133,6 +133,22 @@ def run_kelly_update(trade_outcome: dict):
     Args:
         trade_outcome: Dict with keys: asset, pnl, contracts,
                       regime_at_entry, session
+
+    D12 Join Strategy (offline writer <-> online consumer):
+        This function writes two types of rows to p3_d12_kelly_parameters:
+
+        1. Per-cell rows: (asset_id, regime, session) -> kelly_full
+           - regime in {LOW_VOL, HIGH_VOL}, session in {1, 2, 3}
+           - 6 rows per asset, one for each regime x session combination
+
+        2. Shrinkage row: (asset_id, "ALL", 0) -> shrinkage_factor
+           - One per asset, derived from total trade count
+           - shrinkage = max(0.3, 1 - 1/sqrt(n_trades))
+
+        Online consumer (b4_kelly_sizing) reads D12 keyed by (asset_id, regime, session):
+        - _get_kelly_for_regime() matches exact (asset, regime, session) for kelly_full
+        - _get_shrinkage() matches (asset, "ALL", *) for shrinkage_factor
+        - Final position size fraction = kelly_full * shrinkage_factor
     """
     asset_id = trade_outcome["asset"]
     pnl = trade_outcome["pnl"]

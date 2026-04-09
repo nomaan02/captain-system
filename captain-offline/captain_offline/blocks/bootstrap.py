@@ -115,11 +115,11 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
 
     for regime in ["LOW_VOL", "HIGH_VOL"]:
         for session in [1, 2, 3]:
-            # Filter trades by regime and session
+            # Filter trades by regime for all sessions (P1 historical
+            # trades lack per-session labels, so regime is the key filter)
             regime_session_trades = [
                 t["r"] for t in historical_trades
                 if regime_labels.get(t.get("date", ""), "LOW_VOL") == regime
-                and session == default_session  # simplified session derivation
             ]
 
             if len(regime_session_trades) >= MIN_PER_CELL_TRADES:

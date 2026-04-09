@@ -203,7 +203,7 @@ class OnlineOrchestrator:
             from captain_online.blocks.b7_position_monitor import update_regime_cache
             update_regime_cache(regime.get("regime_probs"))
 
-            from captain_online.blocks.b3_aim_aggregation import run_aim_aggregation
+            from shared.aim_compute import run_aim_aggregation
             aim = run_aim_aggregation(
                 data["active_assets"], data["features"],
                 data["aim_states"], data["aim_weights"]

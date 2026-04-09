@@ -34,6 +34,8 @@ from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
 
+MAX_ACTION_QUEUE_SIZE = 1000
+
 # Thresholds from Arch §9
 STALENESS_MEDIUM_DAYS = 90
 STALENESS_HIGH_DAYS = 180
@@ -868,6 +870,10 @@ def run_diagnostic(mode: str = "WEEKLY") -> dict:
         "open_count": sum(1 for i in action_queue if i["status"] == "OPEN"),
         "stale_count": sum(1 for i in action_queue if i["status"] == "STALE"),
     }
+
+    # Cap action queue: drop oldest entries when exceeding max size
+    if len(action_queue) > MAX_ACTION_QUEUE_SIZE:
+        action_queue = action_queue[-MAX_ACTION_QUEUE_SIZE:]
 
     # Store to P3-D22
     with get_cursor() as cur:

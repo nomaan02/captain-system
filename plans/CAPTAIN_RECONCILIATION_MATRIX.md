@@ -300,37 +300,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §4 Offline Orch — multi-session bootstrap applies regime filtering to all sessions
 - **Code:** captain-offline/captain_offline/bootstrap.py:122 — only `default_session` filtered
 - **Delta:** Non-default sessions get unfiltered data in bootstrap
-- **Deps:** None | **Skill:** ln-629 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
 
 #### G-046 | MEDIUM | Offline B1 | AIM-16 HMM
 - **Spec:** §3 AIM-16 — HMM implementation
 - **Code:** b1_aim16_hmm.py — hand-rolled Baum-Welch; `hmmlearn` in requirements unused
 - **Delta:** Spec-referenced library unused; hand-rolled may diverge
-- **Deps:** DEC-05 | **Skill:** ln-625 | **Status:** UNRESOLVED
+- **Deps:** DEC-05 | **Skill:** ln-625 | **Status:** FIXED
 
 #### G-049 | MEDIUM | Offline B5 | Sensitivity
 - **Spec:** §3 AIM-13 — modifier written as float
 - **Code:** b5_sensitivity.py:232-238 — JSON dict not float
 - **Delta:** Same as G-076; fix both together
-- **Deps:** G-076 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** G-076 | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-050 | MEDIUM | Offline B9 | Diagnostic
 - **Spec:** §4 B9 — bounded action queue
 - **Code:** b9_diagnostic.py:833-882 — action queue loaded/stored with no size cap
 - **Delta:** Unbounded growth; memory risk on long-running container
-- **Deps:** None | **Skill:** ln-654 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-654 | **Status:** FIXED
 
 #### G-052 | MEDIUM | Offline B8 | Kelly Update
 - **Spec:** §5 Kelly — shrinkage row linkage documented for online consumer
 - **Code:** b8_kelly_update.py:179-205 — join strategy undocumented
 - **Delta:** Online consumer must guess join strategy; fragile coupling
-- **Deps:** None | **Skill:** ln-643 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-643 | **Status:** FIXED
 
 #### G-034 | MEDIUM | Online B3 | AIM Aggregation
 - **Spec:** §2 B3 — AIM aggregation block
 - **Code:** b3_aim_aggregation.py — pure re-export shim to aim_compute
 - **Delta:** Dead indirection layer; adds confusion without value
-- **Deps:** None | **Skill:** ln-626 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-626 | **Status:** FIXED
 
 ---
 
@@ -667,10 +667,10 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 24 |
+| UNRESOLVED | 18 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 33 |
+| FIXED | 39 |
 | VERIFIED | 10 |
 | **TOTAL** | **100** |
 
@@ -727,3 +727,9 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 07 | FIXED | G-074 | D30-based realised vol fallback for all assets in _get_realised_vol + _get_trailing_overnight_vrp; replay path in aim_feature_loader.py updated; ES-only docstrings removed |
 | 2026-04-09 | 07 | FIXED | G-076 | b5_sensitivity.py:238: json.dumps({asset_id: FRAGILE_MODIFIER}) → plain FRAGILE_MODIFIER float |
 | 2026-04-09 | 07 | FIXED | G-077 | aim_feature_loader.py: replay path builds rolling 20d correlation series + z_score() instead of using raw Pearson r |
+| 2026-04-09 | 08 | FIXED | G-045 | bootstrap.py: removed `session == default_session` filter so regime filtering applies to all sessions in multi-session bootstrap |
+| 2026-04-09 | 08 | FIXED | G-046 | b1_aim16_hmm.py: replaced hand-rolled Baum-Welch (~150 lines) with hmmlearn.hmm.GaussianHMM per DEC-05 resolution |
+| 2026-04-09 | 08 | FIXED | G-049 | Already resolved by G-076 (Session 07) — FRAGILE_MODIFIER passed as plain float, not JSON dict |
+| 2026-04-09 | 08 | FIXED | G-050 | b9_diagnostic.py: MAX_ACTION_QUEUE_SIZE=1000; oldest entries dropped when exceeded before D22 store |
+| 2026-04-09 | 08 | FIXED | G-052 | b8_kelly_update.py: comprehensive docstring documenting D12 join strategy (per-cell kelly_full + shrinkage row at regime=ALL,session=0) |
+| 2026-04-09 | 08 | FIXED | G-034 | Removed dead b3_aim_aggregation.py shim; inlined imports to shared.aim_compute in orchestrator.py and replay_full_pipeline.py |
