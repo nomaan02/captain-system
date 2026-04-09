@@ -220,37 +220,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §1 — B1 latency budget <9s; parallel asset data fetch
 - **Code:** captain-online/captain_online/blocks/b1_data_ingestion.py:497-558 — synchronous sequential REST
 - **Delta:** Up to 90 sequential calls; 90-180s latency on slow API day
-- **Deps:** G-018 | **Skill:** ln-653 | **Status:** FIXED
+- **Deps:** G-018 | **Skill:** ln-653 | **Status:** VERIFIED
 
 #### G-018 | HIGH | Cross-Cutting | TopstepX Client
 - **Spec:** §10 — TopstepX REST handles rate limiting and timeout gracefully
 - **Code:** shared/topstep_client.py — no `timeout=` on any `requests.post()`; no 429 logic
 - **Delta:** Hung API blocks thread indefinitely; no rate limit handling
-- **Deps:** None | **Skill:** ln-653 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-653 | **Status:** VERIFIED
 
 #### G-030 | MEDIUM | Online B7 | Position Monitor
 - **Spec:** §2 B7 — VIX spike, regime shift, and API commission checks
 - **Code:** b7_position_monitor.py:419-427 — all stubs returning True/None
 - **Delta:** Three monitoring checks are no-ops
-- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED (PARTIAL: VIX z-score gap + wrong table name)
 
 #### G-031 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — per-asset point values from D00
 - **Code:** b7_shadow_monitor.py:217-221 — POINT_VALUES dict hardcoded
 - **Delta:** Breaks if assets change; doesn't match D00
-- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED (PARTIAL: wrong table name prefix)
 
 #### G-032 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — expired shadow positions publish TIMEOUT outcome
 - **Code:** b7_shadow_monitor.py:87-93 — expired positions silently dropped
 - **Delta:** No TIMEOUT outcome published; shadow learning incomplete
-- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-629 | **Status:** VERIFIED
 
 #### G-033 | MEDIUM | Online B7 | Position Monitor
 - **Spec:** §11 Loop 5 — atomic capital/CB state updates
 - **Code:** b7_position_monitor.py:279-296 — non-atomic D16/D23 updates
 - **Delta:** Concurrent close races drift capital silo
-- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-628 | **Status:** VERIFIED
 
 ---
 
@@ -260,37 +260,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §3 AIM-12 — spread_z from `p3_spread_history`
 - **Code:** b1_features.py:700-706 — table not in init_questdb.py
 - **Delta:** spread_z always None on fresh DB; AIM-12 non-functional
-- **Deps:** None | **Skill:** ln-614 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-614 | **Status:** FIXED (table already in init_questdb.py:647-664)
 
 #### G-069 | MEDIUM | QuestDB | Schema
 - **Spec:** §9 — all tables created by init scripts
 - **Code:** b1_features.py:700-706,1270 — `p3_spread_history` written/read but absent from init_questdb.py
 - **Delta:** Undocumented table; must be added to init script and schema docs
-- **Deps:** None | **Skill:** ln-614 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-614 | **Status:** FIXED (table + comment present in init_questdb.py:647-664)
 
 #### G-073 | MEDIUM | Online B1 | AIM-07 COT
 - **Spec:** §3 AIM-07 — COT Sentiment from CFTC data
 - **Code:** b1_features.py (COT section) — `cot_smi` and `cot_speculator_z` never populated
 - **Delta:** AIM-07 always fires on null; no data source
-- **Deps:** DEC-08 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** DEC-08 | **Skill:** ln-641 | **Status:** FIXED (AIM-07 disabled in dispatch + features per DEC-08)
 
 #### G-074 | MEDIUM | Online B1 | AIM-01/02
 - **Spec:** §3 AIM-01/02 — applicable to multiple assets
 - **Code:** aim_compute.py + b1_features.py — features ES-only
 - **Delta:** Non-ES assets get null/0 inputs for AIM-01/02
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED (D30 realised vol fallback for all assets; ES-only docstrings removed)
 
 #### G-076 | MEDIUM | Offline B5 | AIM-13
 - **Spec:** §3 AIM-13 — modifier is a float written to D01
 - **Code:** captain-offline/captain_offline/blocks/b5_sensitivity.py:232-238 — writes JSON dict `{"asset_id": val}`
 - **Delta:** Downstream parse errors; modifier not a plain float
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED (write FRAGILE_MODIFIER float directly, not json.dumps dict)
 
 #### G-077 | MEDIUM | Cross-Cutting | AIM-08
 - **Spec:** §3 AIM-08 — CORR_STRESS = z-score of rolling correlation
 - **Code:** shared/aim_feature_loader.py:193 — raw Pearson correlation used as z-score proxy
 - **Delta:** `corr_z > 1.5` tier mathematically unreachable; AIM-08 never fires high stress
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED (replay path: rolling 20d correlation series + z_score instead of raw Pearson r)
 
 ---
 
@@ -667,11 +667,11 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 30 |
+| UNRESOLVED | 24 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 31 |
-| VERIFIED | 6 |
+| FIXED | 33 |
+| VERIFIED | 10 |
 | **TOTAL** | **100** |
 
 ---
@@ -720,3 +720,10 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 06 | FIXED | G-031 | _get_point_value(): replaced hardcoded POINT_VALUES dict with D00 asset_universe LATEST ON query, fallback to 50.0 |
 | 2026-04-09 | 06 | FIXED | G-032 | Expired shadows now call _resolve_shadow("TIMEOUT", live_price) instead of silently dropping; Offline Category A learning gets complete signal universe |
 | 2026-04-09 | 06 | FIXED | G-033 | _update_capital_and_cb(): D16 + D23 reads and writes in single cursor context; replaces separate _update_capital_silo + _update_intraday_cb_state calls |
+| 2026-04-09 | 06-V | VERIFIED | G-023, G-018, G-032, G-033 | Validation Cycle 06: 4 ALIGNED, 2 PARTIAL. G-030 PARTIAL: VIX uses flat threshold not z-score + wrong table `system_params`. G-031 PARTIAL: wrong table `asset_universe`. Both runtime-breaking. |
+| 2026-04-09 | 07 | FIXED | G-075 | Already resolved — p3_spread_history table present in init_questdb.py:647-664 with correct schema |
+| 2026-04-09 | 07 | FIXED | G-069 | Already resolved — table + comment documented in init_questdb.py:647-664 |
+| 2026-04-09 | 07 | FIXED | G-073 | DEC-08: AIM-07 disabled — removed from dispatch table (aim_compute.py), features set to None (b1_features.py), feature map cleared |
+| 2026-04-09 | 07 | FIXED | G-074 | D30-based realised vol fallback for all assets in _get_realised_vol + _get_trailing_overnight_vrp; replay path in aim_feature_loader.py updated; ES-only docstrings removed |
+| 2026-04-09 | 07 | FIXED | G-076 | b5_sensitivity.py:238: json.dumps({asset_id: FRAGILE_MODIFIER}) → plain FRAGILE_MODIFIER float |
+| 2026-04-09 | 07 | FIXED | G-077 | aim_feature_loader.py: replay path builds rolling 20d correlation series + z_score() instead of using raw Pearson r |

@@ -235,7 +235,7 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
                 """INSERT INTO p3_d01_aim_model_states
                    (aim_id, asset_id, status, current_modifier, last_updated)
                    VALUES (%s, %s, 'ACTIVE', %s, now())""",
-                (13, asset_id, json.dumps({asset_id: FRAGILE_MODIFIER})),
+                (13, asset_id, FRAGILE_MODIFIER),
             )
         logger.warning("Sensitivity scan %s: FRAGILE (%s) — AIM-13 modifier -> %.2f",
                        asset_id, flags, FRAGILE_MODIFIER)

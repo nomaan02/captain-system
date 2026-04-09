@@ -100,7 +100,7 @@ def run_aim_aggregation(
 
     # AIM name lookup for readable logging
     _AIM_NAMES = {
-        1: "VRP", 2: "Skew", 3: "GEX", 4: "IVTS", 5: "DEFERRED",
+        1: "VRP", 2: "Skew", 3: "GEX", 4: "IVTS", 5: "DEFERRED", 7: "DISABLED",
         6: "EconCal", 7: "COT", 8: "CrossCorr", 9: "CrossMom",
         10: "Calendar", 11: "RegimeWarn", 12: "DynCosts", 13: "Sensitivity",
         14: "AutoExpand", 15: "OpenVol", 16: "HMM",
@@ -196,7 +196,7 @@ def compute_aim_modifier(aim_id: int, features: dict, asset_id: str, state: dict
         4: _aim04_ivts,
         # 5: DEFERRED
         6: _aim06_calendar,
-        7: _aim07_cot,
+        # 7: DISABLED per DEC-08 — no CFTC COT data pipeline
         8: _aim08_correlation,
         9: _aim09_momentum,
         10: _aim10_calendar_effects,

@@ -156,21 +156,32 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
         else:
             f["cross_momentum"] = 0.0
 
-    # correlation_z: 20-day rolling correlation with ES (requires ES data too)
+    # correlation_z: z-score of 20-day rolling correlation with ES
     if asset_id != "ES":
         cur.execute(
             "SELECT trade_date, close FROM p3_d30_daily_ohlcv "
-            "WHERE asset_id = 'ES' AND trade_date <= %s ORDER BY trade_date DESC LIMIT 30",
+            "WHERE asset_id = 'ES' AND trade_date <= %s ORDER BY trade_date DESC LIMIT 120",
             (target_str,),
         )
         es_rows = cur.fetchall()
         if es_rows and len(es_rows) >= 20:
             es_rows = list(reversed(es_rows))
-            es_closes = [r[1] for r in es_rows]
+
+            # Also fetch extended asset data for rolling window
+            cur.execute(
+                "SELECT trade_date, open, high, low, close FROM p3_d30_daily_ohlcv "
+                "WHERE asset_id = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT 120",
+                (asset_id, target_str),
+            )
+            ext_asset_rows = cur.fetchall()
+            if ext_asset_rows and len(ext_asset_rows) >= 20:
+                ext_asset_rows = list(reversed(ext_asset_rows))
+            else:
+                ext_asset_rows = rows  # fall back to original 30 rows
 
             # Align by trade_date
             es_by_date = {r[0]: r[1] for r in es_rows}
-            asset_by_date = {r[0]: r[4] for r in rows}
+            asset_by_date = {r[0]: r[4] for r in ext_asset_rows}
             common_dates = sorted(set(es_by_date.keys()) & set(asset_by_date.keys()))
 
             if len(common_dates) >= 20:
@@ -184,13 +195,19 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
                         es_rets.append((es_cur - es_prev) / es_prev)
                         asset_rets.append((a_cur - a_prev) / a_prev)
 
-                if len(es_rets) >= 10:
-                    corr = _pearson(es_rets[-20:], asset_rets[-20:])
-                    if corr is not None:
-                        # z-score the correlation (use trailing correlations as baseline)
-                        # Simplified: use the correlation value directly as proxy z-score
-                        # since we don't have a long history of rolling correlations
-                        f["correlation_z"] = corr
+                if len(es_rets) >= 20:
+                    # Build rolling 20-day correlation series for z-score baseline
+                    rolling_corrs = []
+                    for end in range(20, len(es_rets) + 1):
+                        c = _pearson(es_rets[end - 20:end], asset_rets[end - 20:end])
+                        if c is not None:
+                            rolling_corrs.append(c)
+                    if rolling_corrs:
+                        current_corr = rolling_corrs[-1]
+                        if len(rolling_corrs) >= 5:
+                            f["correlation_z"] = z_score(current_corr, rolling_corrs)
+                        else:
+                            f["correlation_z"] = current_corr  # not enough history
     else:
         # ES correlation with itself is 1.0 — always normal
         f["correlation_z"] = 0.0
@@ -199,40 +216,59 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# IV/RV features (AIM-01 VRP) — ES only
+# IV/RV features (AIM-01 VRP)
 # ---------------------------------------------------------------------------
 
 def _load_iv_rv_features(target_date: date, asset_id: str, cur) -> dict:
-    """Compute VRP from p3_d31_implied_vol. Currently only ES has data."""
+    """Compute VRP z-score. Tries D31 IV/RV pairs, falls back to D30 realised vol series."""
     f = {}
 
+    # Primary: D31 IV/RV pairs
     cur.execute(
         "SELECT trade_date, atm_iv_30d, realized_vol_20d FROM p3_d31_implied_vol "
         "WHERE asset_id = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT 30",
         (asset_id, target_date.isoformat()),
     )
     rows = cur.fetchall()
-    if not rows or len(rows) < 10:
-        return f
+    if rows and len(rows) >= 10:
+        vrps = []
+        for _, iv, rv in reversed(rows):
+            if iv is not None and rv is not None:
+                vrps.append(iv - rv)
+        if vrps:
+            f["vrp_overnight_z"] = z_score(vrps[-1], vrps)
+            return f
 
-    # VRP = IV - RV (positive means implied > realized, uncertainty premium)
-    vrps = []
-    for _, iv, rv in reversed(rows):
-        if iv is not None and rv is not None:
-            vrps.append(iv - rv)
-
-    if vrps:
-        f["vrp_overnight_z"] = z_score(vrps[-1], vrps)
+    # Fallback: rolling realised vol from D30 daily closes (all assets)
+    cur.execute(
+        "SELECT close FROM p3_d30_daily_ohlcv "
+        "WHERE asset_id = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT 80",
+        (asset_id, target_date.isoformat()),
+    )
+    close_rows = cur.fetchall()
+    if close_rows and len(close_rows) >= 30:
+        closes = [float(r[0]) for r in reversed(close_rows) if r[0] is not None]
+        if len(closes) >= 30:
+            import math
+            rv_series = []
+            for i in range(20, len(closes)):
+                window = closes[i - 20:i]
+                rets = [(window[j] / window[j - 1]) - 1 for j in range(1, len(window))]
+                mean = sum(rets) / len(rets)
+                var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+                rv_series.append(math.sqrt(var * 252))
+            if len(rv_series) >= 5:
+                f["vrp_overnight_z"] = z_score(rv_series[-1], rv_series)
 
     return f
 
 
 # ---------------------------------------------------------------------------
-# Skew features (AIM-02) — ES only
+# Skew features (AIM-02)
 # ---------------------------------------------------------------------------
 
 def _load_skew_features(target_date: date, asset_id: str, cur) -> dict:
-    """Compute skew_z from p3_d32_options_skew. Currently only ES has data."""
+    """Compute skew_z from p3_d32_options_skew. Returns empty if no data for asset."""
     f = {}
 
     cur.execute(

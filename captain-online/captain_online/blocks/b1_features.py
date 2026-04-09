@@ -498,7 +498,7 @@ AIM_FEATURE_MAP = {
     4: ["ivts", "overnight_return_z", "is_eia_wednesday"],
     5: [],  # AIM-05 is DEFERRED
     6: ["events_today", "event_proximity"],
-    7: ["cot_smi", "cot_speculator_z"],
+    7: [],  # DISABLED per DEC-08 — no CFTC COT data pipeline
     8: ["correlation_20d", "correlation_z"],
     9: ["cross_momentum"],
     10: ["is_opex_window", "day_of_week"],
@@ -607,11 +607,9 @@ def compute_all_features(
             session_open = _get_session_open_time(asset_id)
             f["event_proximity"] = min_distance_to_event(f["events_today"], session_open or today)
 
-        # AIM-07: COT positioning
-        aim07_state = aim_states.get("by_asset_aim", {}).get((asset_id, 7))
-        if aim07_state and aim07_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
-            f["cot_smi"] = latest_smi_polarity(asset_id)
-            f["cot_speculator_z"] = speculator_z_score(asset_id)
+        # AIM-07: COT positioning — DISABLED per DEC-08 (no CFTC data pipeline)
+        f["cot_smi"] = None
+        f["cot_speculator_z"] = None
 
         # AIM-08: Cross-asset correlation (dynamic per-asset pairs)
         aim08_state = aim_states.get("by_asset_aim", {}).get((asset_id, 8))
@@ -819,7 +817,7 @@ def _get_historical_session_volumes(asset_id: str, lookback: int = 20) -> Option
     return None
 
 def _get_atm_implied_vol(asset_id: str, maturity: str = "30d") -> Optional[float]:
-    """Latest ATM 30-day implied vol from P3-D31 (ES only, from QC extract)."""
+    """Latest ATM 30-day implied vol from P3-D31. Returns None if no data for asset."""
     from shared.questdb_client import get_cursor
     try:
         with get_cursor() as cur:
@@ -838,7 +836,7 @@ def _get_atm_implied_vol(asset_id: str, maturity: str = "30d") -> Optional[float
     return None
 
 def _get_realised_vol(asset_id: str) -> Optional[float]:
-    """Latest 20-day realised vol from P3-D31 (ES only, from QC extract)."""
+    """Latest 20-day realised vol. Tries D31 first, falls back to D30 daily closes."""
     from shared.questdb_client import get_cursor
     try:
         with get_cursor() as cur:
@@ -854,6 +852,12 @@ def _get_realised_vol(asset_id: str) -> Optional[float]:
             return float(row[0])
     except Exception:
         pass
+    # Fallback: compute 20-day realised vol from D30 daily closes (all assets)
+    returns = _get_daily_returns(asset_id, lookback=20)
+    if returns and len(returns) >= 10:
+        mean = sum(returns) / len(returns)
+        variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+        return math.sqrt(variance * 252)  # annualised
     return None
 
 def _get_overnight_range(asset_id: str) -> Optional[float]:
@@ -862,9 +866,11 @@ def _get_overnight_range(asset_id: str) -> Optional[float]:
 def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing VRP (IV - RV) values for z-score computation (spec: 60d).
 
-    Reads from P3-D31 implied_vol table. VRP = atm_iv_30d - realized_vol_20d.
+    Tries D31 first (IV - RV pairs). Falls back to trailing realised vol from D30
+    daily closes so non-D31 assets still get a z-scorable series.
     """
     from shared.questdb_client import get_cursor
+    # Primary path: D31 IV/RV pairs
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -875,16 +881,28 @@ def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[l
                 (asset_id, lookback),
             )
             rows = cur.fetchall()
-        if not rows or len(rows) < 10:
-            return None
-        # VRP = IV - RV per day, reversed to ascending order
-        vrp_values = []
-        for iv, rv in reversed(rows):
-            if iv is not None and rv is not None:
-                vrp_values.append(float(iv) - float(rv))
-        return vrp_values if len(vrp_values) >= 10 else None
+        if rows and len(rows) >= 10:
+            vrp_values = []
+            for iv, rv in reversed(rows):
+                if iv is not None and rv is not None:
+                    vrp_values.append(float(iv) - float(rv))
+            if len(vrp_values) >= 10:
+                return vrp_values
     except Exception:
-        return None
+        pass
+    # Fallback: rolling realised vol series from D30 daily closes (all assets)
+    closes = _get_daily_closes(asset_id, lookback + 21)
+    if closes and len(closes) >= 30:
+        rv_series = []
+        for i in range(20, len(closes)):
+            window = closes[i - 20:i]
+            rets = [(window[j] / window[j - 1]) - 1 for j in range(1, len(window))]
+            mean = sum(rets) / len(rets)
+            var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+            rv_series.append(math.sqrt(var * 252))
+        if len(rv_series) >= 10:
+            return rv_series
+    return None
 
 def _get_trailing_overnight_returns(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing |overnight_return| values for AIM-04 gap z-score (spec: 60d).
@@ -924,7 +942,7 @@ def _get_trailing_pcr(asset_id: str, lookback: int = 30) -> Optional[list[float]
 def _get_trailing_skew(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing skew_spread_proxy values for z-score computation (spec: 60d).
 
-    Reads from P3-D32 options_skew table (ES only, from QC CBOE SKEW extract).
+    Reads from P3-D32 options_skew table. Returns None if no data for asset.
     """
     from shared.questdb_client import get_cursor
     try:
@@ -968,8 +986,8 @@ def _get_contract_multiplier(asset_id: str) -> float:
             if row and row[0] is not None:
                 return float(row[0])
     except Exception:
-        logger.warning("Failed to load point_value for %s from D00, using ES default", asset_id)
-    return 50.0  # ES fallback
+        logger.warning("Failed to load point_value for %s from D00, defaulting to 50.0", asset_id)
+    return 50.0  # conservative fallback; D00 is authoritative source
 
 def _get_risk_free_rate() -> float:
     return 0.05  # approximate
