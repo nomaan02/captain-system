@@ -5,9 +5,13 @@ New findings:
   - G-NEW-001: Duplicate key 7 in _AIM_NAMES dict (aim_compute.py:103-104). 7:"DISABLED" then 7:"COT", first is dead.
   - G-NEW-002: CB trips never publish to captain:alerts (b5c_circuit_breaker.py). Only logger.info, no Redis alert.
   - G-NEW-003: L6 _check_manual_halt is a permanent stub returning False. No D17 parameter lookup wired.
+  - G-NEW-004 (HIGH): api.py _process_health, _api_connections, _last_signal_time written by bg threads, read by health()/status() with no lock.
+  - G-NEW-005 (MEDIUM): api.py status() and health() read _ws_sessions without _ws_lock.
+  - G-NEW-006 (MEDIUM): api.py route_command() called synchronously inside async websocket_endpoint, blocks event loop during DB writes.
+  - G-NEW-007 (LOW): api.py set_event_loop() and set_telegram_bot() write globals without lock (write-once-at-startup, comment-only fix).
 Test status: 95 passed / 0 failed
 Audit skill results:
-  - ln-628-concurrency-auditor: running post-session (background)
+  - ln-628-concurrency-auditor: completed. Score 7.8/10 (up from 5.3). 4 remaining gaps flagged.
   - ln-641-pattern-analyzer: completed. AIM dispatch correct, CB V3 documented. 3 new findings flagged.
 Notes:
   - G-015: threading.Lock (_state_lock) added to b2_gui_data_server.py. Protects _user_stream,
