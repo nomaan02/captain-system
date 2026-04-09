@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 
 # Patch config paths before import so ORTracker finds session_registry.json
-import captain_online.blocks.or_tracker as ort
-from captain_online.blocks.or_tracker import (
+import captain_online.blocks.b8_or_tracker as ort
+from captain_online.blocks.b8_or_tracker import (
     ORTracker, ORState, AssetORSession,
     get_asset_session_type, get_or_times,
 )

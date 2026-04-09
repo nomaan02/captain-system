@@ -25,7 +25,7 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
-from captain_online.blocks.or_tracker import ORTracker
+from captain_online.blocks.b8_or_tracker import ORTracker
 
 ROLE = os.environ.get("CAPTAIN_ROLE", "ONLINE")
 

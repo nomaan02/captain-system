@@ -918,17 +918,13 @@ def _get_recent_incidents(limit: int = 50) -> list[dict]:
 
 
 def _get_compliance_gate() -> dict:
-    """Read compliance gate status from config file."""
-    gate_path = os.environ.get(
-        "COMPLIANCE_GATE_PATH", "/captain/config/compliance_gate.json"
-    )
+    """Read compliance gate status via B12 enforcement block."""
+    from captain_command.blocks.b12_compliance_gate import get_gate_status
     try:
-        if os.path.exists(gate_path):
-            with open(gate_path) as f:
-                return json.load(f)
+        return get_gate_status()
     except Exception as exc:
         logger.error("Compliance gate read failed: %s", exc, exc_info=True)
-    return {"execution_mode": "MANUAL", "requirements": {}}
+    return {"execution_mode": "MANUAL", "_enforcement": {"allowed": False}}
 
 
 # ---------------------------------------------------------------------------

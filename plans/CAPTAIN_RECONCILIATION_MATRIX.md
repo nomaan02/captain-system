@@ -420,43 +420,43 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §4 B3 — single-responsibility block
 - **Code:** b3_pseudotrader.py — 1,432 lines, 6 responsibilities, CC>20
 - **Delta:** God module; impossible to test in isolation
-- **Deps:** DEC-04 | **Skill:** ln-623 | **Status:** UNRESOLVED
+- **Deps:** DEC-04 | **Skill:** ln-623 | **Status:** DEFERRED (DEC-04 resolution C)
 
 #### G-026 | HIGH | Command Main | Multi-User
 - **Spec:** §1 REQ-6 — multi-user from day one; never hardcode single-user
 - **Code:** captain-command/captain_command/main.py:131 — `primary_user` hardcoded
 - **Delta:** Multi-user TSM linking broken
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-035 | MEDIUM | Online B4 | DRY
 - **Spec:** DRY principle
 - **Code:** b4_kelly_sizing.py:461 + 5 others — `_parse_json()` duplicated 6x
 - **Delta:** 8-line function copied into 6 blocks
-- **Deps:** None | **Skill:** ln-623 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-623 | **Status:** FIXED
 
 #### G-037 | MEDIUM | Online B2 | Regime Classifier
 - **Spec:** §2 B2 — regime probabilities per asset
 - **Code:** b2_regime_probability.py:150-154 — returns 50/50 for C1-C3 assets
 - **Delta:** Classifier is a no-op for 3 classifier tiers
-- **Deps:** None | **Skill:** ln-624 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-624 | **Status:** FIXED
 
 #### G-038 | MEDIUM | Online B9 | Capacity Evaluator
 - **Spec:** §2 B9 — efficient data access
 - **Code:** b9_capacity_evaluation.py:108-117 — D00 queried per-asset in loop
 - **Delta:** N+1 query for 10 assets
-- **Deps:** None | **Skill:** ln-651 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-651 | **Status:** FIXED
 
 #### G-039 | MEDIUM | Online B9 | Capacity Evaluator
 - **Spec:** §2 B9 — efficient data access
 - **Code:** b9_capacity_evaluation.py:160-177 — fetches ALL D17 session_log; filters in Python
 - **Delta:** Entire table loaded when only current session needed
-- **Deps:** None | **Skill:** ln-651 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-651 | **Status:** FIXED
 
 #### G-040 | MEDIUM | Online B9 | Capacity Evaluator
 - **Spec:** — consistent constraint API
 - **Code:** b9_capacity_evaluation.py:124 — uses `"detail"` key; others use `"message"`
 - **Delta:** Inconsistent constraint response format
-- **Deps:** None | **Skill:** ln-643 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-643 | **Status:** FIXED
 
 ---
 
@@ -464,21 +464,21 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 
 #### G-066 | MEDIUM | Online | Session Controller
 - **Spec:** §2 — B9 session controller block
-- **Code:** No `b9_session_controller.py`; B9 is capacity evaluator
-- **Delta:** Session trigger logic absent as named block
-- **Deps:** DEC-09 | **Skill:** ln-629 | **Status:** UNRESOLVED
+- **Code:** `b9_session_controller.py` created; orchestrator imports schedule + detection from it
+- **Delta:** RESOLVED — session schedule, asset routing, and open detection centralised
+- **Deps:** DEC-09 | **Skill:** ln-629 | **Status:** FIXED (Session 12)
 
 #### G-067 | MEDIUM | Online | OR Tracker Naming
 - **Spec:** §2 — B8 OR tracker
-- **Code:** `or_tracker.py` has no block prefix; spec calls it B8
-- **Delta:** Naming inconsistency; no functional gap
-- **Deps:** None | **Skill:** NONE | **Status:** UNRESOLVED
+- **Code:** Renamed `or_tracker.py` → `b8_or_tracker.py`; all imports updated (4 files, 6 statements)
+- **Delta:** RESOLVED — naming consistent with block convention
+- **Deps:** None | **Skill:** NONE | **Status:** FIXED (Session 12)
 
 #### G-068 | MEDIUM | Online | Compliance Gate
 - **Spec:** §2 — compliance gate block
-- **Code:** compliance_gate.json exists; no block enforcing it
-- **Delta:** Compliance gate config exists but no runtime enforcement
-- **Deps:** DEC-10 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Code:** `b12_compliance_gate.py` created in captain-command; reads flat rts6_* flags correctly; B3+B2 delegate to it
+- **Delta:** RESOLVED — standalone enforcement block with correct JSON parsing
+- **Deps:** DEC-10 | **Skill:** ln-641 | **Status:** FIXED (Session 12)
 
 ---
 
@@ -667,12 +667,12 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 6 |
+| UNRESOLVED | 0 |
 | DECISION_NEEDED | 0 |
-| DEFERRED | 33 |
-| FIXED | 51 |
+| DEFERRED | 34 |
+| FIXED | 60 |
 | VERIFIED | 10 |
-| **TOTAL** | **100** |
+| **TOTAL** | **104** |
 
 ---
 
@@ -745,3 +745,14 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 10 | FIXED | G-079 | 7 replay-unavailable features (pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis) stubbed as None in aim_feature_loader.py |
 | 2026-04-09 | 10 | FIXED | G-080 | CB L5/L6 documented as V3 amendment per DEC-03 resolution B. Original spec has 5 layers; code keeps 7 |
 | 2026-04-09 | 10 | FIXED | G-081 | get_ewma_for_regime() extracted to shared/statistics.py; local copies removed from b4_kelly_sizing.py, b5_trade_selection.py, b6_signal_output.py |
+| 2026-04-09 | 11 | DEFERRED | G-025 | Pseudotrader god module deferred per DEC-04 resolution C — revisit post-live-trading stabilization |
+| 2026-04-09 | 11 | FIXED | G-026 | main.py _link_tsm_to_account: hardcoded "primary_user" replaced with os.environ.get("BOOTSTRAP_USER_ID", "primary_user") |
+| 2026-04-09 | 11 | FIXED | G-035 | _parse_json() extracted to shared/json_helpers.py as parse_json(); local copies removed from 6 online blocks |
+| 2026-04-09 | 11 | FIXED | G-037 | _classifier_regime: attempts classifier inference first; REGIME_NEUTRAL 50/50 only as fallback when no classifier object |
+| 2026-04-09 | 11 | FIXED | G-038 | b9_capacity_evaluation: asset class homogeneity check batched into single D00 query with IN clause |
+| 2026-04-09 | 11 | FIXED | G-039 | _load_session_log: added param_key LIKE filter to D17 query — loads only current session instead of full table |
+| 2026-04-09 | 11 | FIXED | G-040 | b9_capacity_evaluation: "detail" key renamed to "message" for consistent constraint response format |
+| 2026-04-09 | 12 | FIXED | G-066 | Created b9_session_controller.py: centralises session schedule, asset routing, open detection from session_registry.json; orchestrator delegates to it |
+| 2026-04-09 | 12 | FIXED | G-067 | Renamed or_tracker.py → b8_or_tracker.py; updated imports in main.py, orchestrator.py, replay_full_pipeline.py, test_or_tracker.py |
+| 2026-04-09 | 12 | FIXED | G-068 | Created b12_compliance_gate.py: reads flat rts6_* flags correctly (fixes b3 bug reading missing "requirements" key); B3+B2 delegate to it |
+| 2026-04-09 | 12 | NEW | G-NEW-027 | Block slot collision: b8_or_tracker.py shares b8 with b8_concentration_monitor.py; b9_session_controller.py shares b9 with b9_capacity_evaluation.py — recommend sub-slot rename (b8b_, b9b_) per established b5b/b5c pattern |

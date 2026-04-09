@@ -334,7 +334,7 @@ def _replay_recompute_aim15(asset_id: str, b1: dict, b3: dict,
         from shared.aim_compute import (
             _aim15_volume, MODIFIER_FLOOR, MODIFIER_CEILING, _clamp,
         )
-        from captain_online.blocks.or_tracker import get_asset_session_type
+        from captain_online.blocks.b8_or_tracker import get_asset_session_type
 
         locked = b1.get("locked_strategies", {}).get(asset_id, {})
         or_min = get_or_window_minutes(locked)
@@ -507,7 +507,7 @@ def run_replay(target_date: date, session_type: str = "NY"):
         return
 
     # Step 3: Set up OR tracker and feed historical ticks
-    from captain_online.blocks.or_tracker import ORTracker
+    from captain_online.blocks.b8_or_tracker import ORTracker
 
     tracker = ORTracker(cutoff_minutes=30)
 

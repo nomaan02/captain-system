@@ -28,6 +28,7 @@ from typing import Any
 from shared.questdb_client import get_cursor
 from shared.vault import get_api_key
 from shared.journal import write_checkpoint
+from captain_command.blocks.b12_compliance_gate import check_compliance_gate
 from shared.constants import PROHIBITED_EXTERNAL_FIELDS, SANITISED_SIGNAL_FIELDS
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import (
@@ -465,47 +466,9 @@ def get_connection_summary() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 3.4 — Compliance Gate
+# 3.4 — Compliance Gate (enforcement moved to B12)
+# check_compliance_gate() imported from captain_command.blocks.b12_compliance_gate
 # ---------------------------------------------------------------------------
-
-COMPLIANCE_GATE_PATH = os.environ.get(
-    "COMPLIANCE_GATE_PATH", "/captain/config/compliance_gate.json"
-)
-
-
-def check_compliance_gate() -> dict:
-    """Check if automated execution is permitted.
-
-    All 11 RTS 6 requirements must be ``satisfied == True`` before
-    automated execution is allowed.  In V1, this gate is ALWAYS LOCKED.
-
-    Returns
-    -------
-    dict
-        ``{allowed: bool, execution_mode: str, unsatisfied: list[str]}``
-    """
-    try:
-        if os.path.exists(COMPLIANCE_GATE_PATH):
-            with open(COMPLIANCE_GATE_PATH) as f:
-                gate = json.load(f)
-        else:
-            gate = {}
-    except Exception as exc:
-        logger.error("Failed to read compliance gate: %s", exc, exc_info=True)
-        gate = {}
-
-    requirements = gate.get("requirements", {})
-    unsatisfied = [
-        req_id for req_id, status in requirements.items()
-        if not status
-    ]
-
-    return {
-        "allowed": len(unsatisfied) == 0 and len(requirements) == 11,
-        "execution_mode": gate.get("execution_mode", "MANUAL"),
-        "unsatisfied": unsatisfied,
-        "total_requirements": len(requirements),
-    }
 
 
 # ---------------------------------------------------------------------------

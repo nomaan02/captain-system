@@ -38,20 +38,17 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint
 from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE
+from captain_online.blocks.b9_session_controller import (
+    get_session_open_times,
+    is_session_opening as _sc_is_session_opening,
+)
 
 _ET = ZoneInfo(SYSTEM_TIMEZONE)
 
 logger = logging.getLogger(__name__)
 
-# Session open times (hour, minute) in America/New_York
-SESSION_OPEN_TIMES = {
-    1: (9, 30),   # NY
-    2: (3, 0),    # LON (08:00 London ≈ 03:00 EST)
-    3: (20, 0),   # APAC (approximate — asset-specific)
-}
-
-# Tolerance window for session detection (minutes)
-SESSION_WINDOW_MINUTES = 2
+# Session open times — loaded from session_registry.json via B9 session controller.
+SESSION_OPEN_TIMES = get_session_open_times()
 
 
 class OnlineOrchestrator:
@@ -139,9 +136,7 @@ class OnlineOrchestrator:
         if self._session_evaluated_today.get(session_id) == today:
             return False
 
-        target_minute = hour * 60 + minute
-        current_minute = now.hour * 60 + now.minute
-        return abs(current_minute - target_minute) <= SESSION_WINDOW_MINUTES
+        return _sc_is_session_opening(now, session_id, hour, minute)
 
     def _run_session(self, session_id: int):
         """Execute session evaluation pipeline.
@@ -286,7 +281,7 @@ class OnlineOrchestrator:
         which assets have breakout or expiry, injects OR data into features,
         and runs B6 for those assets only.
         """
-        from captain_online.blocks.or_tracker import ORState
+        from captain_online.blocks.b8_or_tracker import ORState
 
         self._or_tracker.check_expirations()
 
@@ -388,7 +383,7 @@ class OnlineOrchestrator:
             from shared.aim_compute import (
                 _aim15_volume, MODIFIER_FLOOR, MODIFIER_CEILING, _clamp,
             )
-            from captain_online.blocks.or_tracker import get_asset_session_type
+            from captain_online.blocks.b8_or_tracker import get_asset_session_type
 
             # Get OR window minutes from locked strategy
             locked = data.get("locked_strategies", {}).get(asset, {})
