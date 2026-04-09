@@ -94,37 +94,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §6 CB — Level 2 triggers once per changepoint event; debounced
 - **Code:** captain-offline/captain_offline/blocks/b2_level_escalation.py:186 — fires every trade where `cp_prob > 0.8`
 - **Delta:** No cooldown; Level 2 fires repeatedly during elevated cp_prob
-- **Deps:** None | **Skill:** ln-624 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-624 | **Status:** FIXED
 
 #### G-012 | HIGH | Offline B2 | Level Escalation
 - **Spec:** §6 CB — Level 2 and Level 3 are mutually exclusive escalation tiers
 - **Code:** b2_level_escalation.py:186-197 — no `return`/`elif` between Level 2 and Level 3 checks
 - **Delta:** Both Level 2 and Level 3 fire when cp_prob > 0.9; conflicting actions
-- **Deps:** G-011 | **Skill:** ln-624 | **Status:** UNRESOLVED
+- **Deps:** G-011 | **Skill:** ln-624 | **Status:** FIXED
 
 #### G-028 | HIGH | Online B7 | Position Monitor
 - **Spec:** §11 Feedback Loop 1 — trade outcome must reliably reach Offline via Redis
 - **Code:** captain-online/captain_online/blocks/b7_position_monitor.py:336-360 — no retry on Redis publish failure
 - **Delta:** Trade outcomes silently dropped on Redis blip; biased learning sample
-- **Deps:** None | **Skill:** ln-628 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
 
 #### G-006 | HIGH | Online B7 | Orchestrator
 - **Spec:** §2 B7, §11 Loop 1 — correct trade outcome delivery
 - **Code:** captain-online/captain_online/orchestrator.py:61-62,762,769 — position lists mutated from 2 threads without lock
 - **Delta:** Race condition; trade outcomes silently dropped
-- **Deps:** None | **Skill:** ln-628 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
 
 #### G-044 | MEDIUM | Offline Orch | Shutdown
 - **Spec:** §12 Lifecycle — graceful shutdown joins all threads
 - **Code:** captain-offline/captain_offline/orchestrator.py:69 — `stop()` doesn't join Redis listener thread
 - **Delta:** Mid-write outcome interrupted on SIGTERM; partial data in QuestDB
-- **Deps:** None | **Skill:** ln-629 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
 
 #### G-014 | HIGH | Offline B6/B7 | MC + GA
 - **Spec:** §4 B6 — stochastic GA exploration for new strategy candidates
 - **Code:** b7_tsm_simulation.py:118; b6_auto_expansion.py:230 — `SEED=42` globally
 - **Delta:** MC and GA fully deterministic; same output every run regardless of market state
-- **Deps:** None | **Skill:** ln-624 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-624 | **Status:** FIXED
 
 ---
 
@@ -667,10 +667,10 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 55 |
+| UNRESOLVED | 49 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 12 |
+| FIXED | 18 |
 | VERIFIED | 0 |
 | **TOTAL** | **100** |
 
@@ -694,3 +694,9 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 02 | FIXED | G-008 | orchestrator.py _run_daily: load AIM modifiers from D01 instead of passing empty dict |
 | 2026-04-09 | 02 | FIXED | G-047 | Added river>=0.21 to captain-offline/requirements.txt |
 | 2026-04-09 | 02 | FIXED | G-048 | ADWIN/autoencoder state persistence via D04.adwin_states with pickle+JSON serialization |
+| 2026-04-09 | 03 | FIXED | G-011 | Level 2 debounce: _level2_active dict tracks per-asset changepoint events, fires once per event |
+| 2026-04-09 | 03 | FIXED | G-012 | Level 3 check moved before Level 2 with early return — mutually exclusive tiers |
+| 2026-04-09 | 03 | FIXED | G-028 | _publish_trade_outcome: 3-attempt retry with exponential backoff (0.5s, 1s, 2s) |
+| 2026-04-09 | 03 | FIXED | G-006 | threading.Lock guards open_positions + shadow_positions across main and listener threads |
+| 2026-04-09 | 03 | FIXED | G-044 | stop() joins _redis_thread with 5s timeout; thread ref stored in __init__ |
+| 2026-04-09 | 03 | FIXED | G-014 | Removed SEED=42 from b7_tsm_simulation.py and b6_auto_expansion.py — system entropy used |

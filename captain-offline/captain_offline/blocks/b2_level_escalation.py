@@ -38,6 +38,11 @@ LEVEL3_SUSTAINED_WINDOW = 5
 REDUCTION_SLOPE = 2.5
 REDUCTION_FLOOR = 0.5
 
+# Debounce state: Level 2 fires ONCE per changepoint event, not every trade.
+# Tracks {asset_id: True} when a changepoint event is active (cp_prob > threshold).
+# Cleared when cp_prob drops below threshold, allowing next event to fire.
+_level2_active = {}  # {asset_id: bool}
+
 
 def _compute_reduction_factor(severity: float) -> float:
     """Level 2 sizing reduction formula.
@@ -182,16 +187,23 @@ def check_level_escalation(asset_id: str, cp_probability: float,
         cp_history: Recent cp_probability values
         cusum_signal: "BREACH" or "OK" from CUSUM update
     """
-    # Level 2: BOCPD cp_prob > 0.8
-    if cp_probability > LEVEL2_THRESHOLD:
-        trigger_level2(asset_id, cp_probability, "BOCPD")
-
-    # Level 2: CUSUM breach
-    if cusum_signal == "BREACH":
-        trigger_level2(asset_id, 0.85, "CUSUM")
-
-    # Level 3: BOCPD sustained > 0.9 for 5+ consecutive
+    # Level 3 check first — takes precedence over Level 2 (mutually exclusive)
     if len(cp_history) >= LEVEL3_SUSTAINED_WINDOW:
         recent = cp_history[-LEVEL3_SUSTAINED_WINDOW:]
         if all(p > LEVEL3_THRESHOLD for p in recent):
             trigger_level3(asset_id, "BOCPD_sustained")
+            _level2_active.pop(asset_id, None)  # clear debounce state
+            return
+
+    # Level 2: BOCPD cp_prob > 0.8 — debounced (once per changepoint event)
+    if cp_probability > LEVEL2_THRESHOLD:
+        if not _level2_active.get(asset_id):
+            _level2_active[asset_id] = True
+            trigger_level2(asset_id, cp_probability, "BOCPD")
+    else:
+        # cp_prob dropped below threshold — reset debounce for next event
+        _level2_active.pop(asset_id, None)
+
+    # Level 2: CUSUM breach — fires once per breach (CUSUM resets itself)
+    if cusum_signal == "BREACH":
+        trigger_level2(asset_id, 0.85, "CUSUM")

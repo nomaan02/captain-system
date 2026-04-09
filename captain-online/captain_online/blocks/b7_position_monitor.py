@@ -336,30 +336,47 @@ def _update_intraday_cb_state(account_id: str, net_pnl: float, outcome: str, mod
 
 
 def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage):
-    """CRITICAL: Publish trade outcome to Redis Stream for Offline learning loop."""
-    try:
-        publish_to_stream(STREAM_TRADE_OUTCOMES, {
-            "trade_id": trade_id,
-            "user_id": pos["user_id"],
-            "asset": pos["asset"],
-            "direction": pos.get("direction", 1),
-            "entry_price": pos.get("entry_price", 0),
-            "exit_price": exit_price,
-            "contracts": pos.get("contracts", 0),
-            "pnl": net_pnl,
-            "commission": commission,
-            "slippage": slippage,
-            "outcome": outcome,
-            "regime_at_entry": pos.get("regime_state"),
-            "aim_modifier_at_entry": pos.get("combined_modifier"),
-            "aim_breakdown_at_entry": pos.get("aim_breakdown"),
-            "session": pos.get("session"),
-            "account": pos.get("account"),
-            "timestamp": datetime.now().isoformat(),
-        })
-        logger.info("ON-B7: Published trade outcome %s to stream", trade_id)
-    except Exception as e:
-        logger.error("ON-B7: FAILED to publish trade outcome %s: %s", trade_id, e)
+    """CRITICAL: Publish trade outcome to Redis Stream for Offline learning loop.
+
+    Retries up to 3 times with exponential backoff (0.5s, 1s, 2s).
+    Trade outcomes MUST reach Offline for the feedback loop to function.
+    """
+    import time
+
+    payload = {
+        "trade_id": trade_id,
+        "user_id": pos["user_id"],
+        "asset": pos["asset"],
+        "direction": pos.get("direction", 1),
+        "entry_price": pos.get("entry_price", 0),
+        "exit_price": exit_price,
+        "contracts": pos.get("contracts", 0),
+        "pnl": net_pnl,
+        "commission": commission,
+        "slippage": slippage,
+        "outcome": outcome,
+        "regime_at_entry": pos.get("regime_state"),
+        "aim_modifier_at_entry": pos.get("combined_modifier"),
+        "aim_breakdown_at_entry": pos.get("aim_breakdown"),
+        "session": pos.get("session"),
+        "account": pos.get("account"),
+        "timestamp": datetime.now().isoformat(),
+    }
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            publish_to_stream(STREAM_TRADE_OUTCOMES, payload)
+            logger.info("ON-B7: Published trade outcome %s to stream", trade_id)
+            return
+        except Exception as e:
+            if attempt < max_attempts:
+                delay = 0.5 * (2 ** (attempt - 1))
+                logger.warning("ON-B7: Retry %d/%d publishing trade outcome %s: %s (backoff %.1fs)",
+                               attempt, max_attempts, trade_id, e, delay)
+                time.sleep(delay)
+            else:
+                logger.error("ON-B7: FAILED to publish trade outcome %s after %d attempts: %s",
+                             trade_id, max_attempts, e)
 
 
 # ---------------------------------------------------------------------------

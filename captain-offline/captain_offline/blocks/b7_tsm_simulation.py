@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 # Simulation parameters
 N_PATHS = 10_000
 BLOCK_SIZES = [3, 5, 7]
-SEED = 42
 
 
 def _block_bootstrap_path(trade_returns: list[float], n_days: int) -> list[float]:
@@ -115,8 +114,7 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
         logger.warning("TSM simulation %s: insufficient trades (%d < 10)", account_id, len(trade_returns))
         return {"pass_probability": None, "alert": None}
 
-    random.seed(SEED)
-    np.random.seed(SEED)
+    # No fixed seed — MC simulation must produce different paths each run
 
     starting_balance = tsm_config.get("starting_balance", 150000)
     current_balance = tsm_config.get("current_balance", starting_balance)

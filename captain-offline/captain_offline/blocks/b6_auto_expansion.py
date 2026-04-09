@@ -53,7 +53,6 @@ SEARCH_SPACE = {
 PBO_THRESHOLD = 0.5
 DSR_THRESHOLD = 0.5
 
-SEED = 42
 
 
 @dataclass
@@ -227,8 +226,7 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
     Returns:
         List of viable candidates (may be empty)
     """
-    random.seed(SEED)
-    np.random.seed(SEED)
+    # No fixed seed — GA must explore different candidates each run
 
     # Initialize population
     population = [_random_candidate() for _ in range(POPULATION_SIZE)]

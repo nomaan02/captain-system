@@ -48,6 +48,7 @@ class OfflineOrchestrator:
         self.running = False
         self._detectors = {}  # {asset_id: (bocpd_detector, cusum_detector)}
         self._active_transitions = {}  # {asset_id: TransitionPhaser}
+        self._redis_thread = None  # Stored for graceful shutdown join
 
     def start(self):
         """Start the orchestrator event loop."""
@@ -59,16 +60,20 @@ class OfflineOrchestrator:
         self._resume_transitions()
 
         # Start Redis subscriber in background thread
-        thread = threading.Thread(target=self._redis_listener, daemon=True)
-        thread.start()
+        self._redis_thread = threading.Thread(target=self._redis_listener, daemon=True)
+        self._redis_thread.start()
 
         # Start scheduler in main thread
         self._run_scheduler()
 
     def stop(self):
-        """Stop the orchestrator."""
+        """Stop the orchestrator. Joins Redis listener to flush in-flight outcomes."""
         self.running = False
         logger.info("Offline orchestrator stopping...")
+        if self._redis_thread and self._redis_thread.is_alive():
+            self._redis_thread.join(timeout=5.0)
+            if self._redis_thread.is_alive():
+                logger.warning("Redis listener thread did not exit within 5s timeout")
 
     def _redis_listener(self):
         """Read trade outcomes and commands from Redis Streams.

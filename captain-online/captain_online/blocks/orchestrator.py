@@ -61,6 +61,7 @@ class OnlineOrchestrator:
         self.running = False
         self.open_positions = []  # Active positions across all users
         self.shadow_positions = []  # Shadow positions for theoretical outcome tracking
+        self._position_lock = threading.Lock()  # Guards open_positions + shadow_positions
         self._session_evaluated_today = {}  # {session_id: date} — prevent double-eval
         self._all_signals = []  # Collect signals for B8 concentration
         self._or_tracker = or_tracker
@@ -570,7 +571,8 @@ class OnlineOrchestrator:
             from captain_online.blocks.b7_shadow_monitor import register_shadow_position
             for sig in signals:
                 shadow = register_shadow_position(sig, session_id)
-                self.shadow_positions.append(shadow)
+                with self._position_lock:
+                    self.shadow_positions.append(shadow)
 
             return signals
 
@@ -592,22 +594,24 @@ class OnlineOrchestrator:
         from captain_online.blocks.b7_position_monitor import monitor_positions
         from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
         tsm_configs = _load_tsm_configs()
-        resolved = monitor_positions(self.open_positions, tsm_configs)
-        for pos in resolved:
-            try:
-                self.open_positions.remove(pos)
-            except ValueError:
-                logger.warning("Position already removed from tracking: %s", pos)
+        with self._position_lock:
+            resolved = monitor_positions(self.open_positions, tsm_configs)
+            for pos in resolved:
+                try:
+                    self.open_positions.remove(pos)
+                except ValueError:
+                    logger.warning("Position already removed from tracking: %s", pos)
 
     def _run_shadow_monitor(self):
         """Run shadow position monitoring pass for theoretical outcomes."""
         from captain_online.blocks.b7_shadow_monitor import monitor_shadow_positions
-        resolved = monitor_shadow_positions(self.shadow_positions)
-        for shadow in resolved:
-            try:
-                self.shadow_positions.remove(shadow)
-            except ValueError:
-                pass
+        with self._position_lock:
+            resolved = monitor_shadow_positions(self.shadow_positions)
+            for shadow in resolved:
+                try:
+                    self.shadow_positions.remove(shadow)
+                except ValueError:
+                    pass
 
     def _circuit_breaker_check(self, session_id: int) -> bool:
         """Per Arch §19.6: DATA_HOLD >= 3 OR VIX > threshold OR manual_halt."""
@@ -759,16 +763,16 @@ class OnlineOrchestrator:
                 "tsm_id": data.get("tsm_id"),
                 "entry_time": datetime.now(_ET),
             }
-            self.open_positions.append(position)
+            with self._position_lock:
+                self.open_positions.append(position)
+                # Remove shadow position — real B7 supersedes theoretical tracking.
+                # The real trade outcome from B7 will feed into ALL offline blocks
+                # (both Category A and Category B), so the shadow is redundant.
+                self.shadow_positions = [
+                    s for s in self.shadow_positions if s.get("signal_id") != signal_id
+                ]
             logger.info("Position opened: %s for user %s (%d contracts)",
                         data.get("asset"), user_id, position["contracts"])
-
-            # Remove shadow position — real B7 supersedes theoretical tracking.
-            # The real trade outcome from B7 will feed into ALL offline blocks
-            # (both Category A and Category B), so the shadow is redundant.
-            self.shadow_positions = [
-                s for s in self.shadow_positions if s.get("signal_id") != signal_id
-            ]
 
         elif action == "SKIPPED":
             logger.info("Signal %s SKIPPED by user %s — shadow monitor will track outcome",
