@@ -26,6 +26,7 @@ import logging
 import uuid
 from datetime import datetime
 
+from shared.questdb_client import get_cursor
 from shared.redis_client import publish_to_stream, STREAM_SIGNAL_OUTCOMES
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
@@ -83,13 +84,14 @@ def monitor_shadow_positions(shadow_positions: list[dict]) -> list[dict]:
         if direction == 0:
             continue
 
-        # Expire stale shadows
+        # Expire stale shadows — publish TIMEOUT outcome for Offline learning
         age = (datetime.now() - shadow["created_at"]).total_seconds()
         if age > SHADOW_MAX_AGE_SECONDS:
-            shadow["resolved"] = True
+            exit_price = _get_live_price(shadow["asset"]) or shadow.get("entry_price", 0)
+            _resolve_shadow(shadow, "TIMEOUT", exit_price)
             resolved.append(shadow)
-            logger.debug("Shadow expired: %s %s (age=%ds)",
-                         shadow["signal_id"], shadow["asset"], int(age))
+            logger.info("Shadow TIMEOUT: %s %s (age=%ds)",
+                        shadow["signal_id"], shadow["asset"], int(age))
             continue
 
         # Get live price
@@ -213,13 +215,21 @@ def _get_shadow_contracts(signal: dict) -> int:
 
 
 def _get_point_value(asset_id: str) -> float:
-    """Get point value for asset (used for P&L calculation)."""
-    POINT_VALUES = {
-        "ES": 50.0, "MES": 5.0, "NQ": 20.0, "MNQ": 2.0,
-        "M2K": 5.0, "MYM": 0.5, "NKD": 5.0, "MGC": 10.0,
-        "ZB": 1000.0, "ZN": 1000.0,
-    }
-    return POINT_VALUES.get(asset_id, 50.0)
+    """Get point value for asset from D00 (used for P&L calculation)."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT point_value FROM asset_universe "
+                "LATEST ON ts PARTITION BY asset_id "
+                "WHERE asset_id = $1",
+                [asset_id],
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+    except Exception:
+        logger.warning("_get_point_value: D00 lookup failed for %s, using default 50.0", asset_id)
+    return 50.0
 
 
 def _get_live_price(asset_id: str) -> float | None:

@@ -25,6 +25,8 @@ BASE_URL = "https://api.topstepx.com/api"
 
 # Token refresh threshold — revalidate 4 hours before expiry (~24h token)
 TOKEN_REFRESH_THRESHOLD_S = 20 * 3600  # 20 hours
+RATE_LIMIT_MAX_RETRIES = 3
+RATE_LIMIT_BASE_DELAY_S = 1.0  # exponential backoff: 1s, 2s, 4s
 
 
 class TopstepXClientError(Exception):
@@ -106,7 +108,7 @@ class TopstepXClient:
             f"{BASE_URL}/Auth/loginKey",
             headers={"Content-Type": "application/json"},
             json={"userName": self._username, "apiKey": self._api_key},
-            timeout=15,
+            timeout=10,
         )
         data = self._parse_response(resp, "Auth/loginKey")
         if not data.get("success") and not data.get("token"):
@@ -342,22 +344,36 @@ class TopstepXClient:
 
     def _post(self, endpoint: str, payload: dict,
               skip_refresh: bool = False) -> dict:
-        """POST to TopstepX API with auto token management."""
+        """POST to TopstepX API with auto token management and 429 backoff."""
         if not skip_refresh:
             self._ensure_token()
         url = f"{BASE_URL}{endpoint}"
-        try:
-            resp = self._session.post(
-                url,
-                headers=self._auth_headers(),
-                json=payload,
-                timeout=15,
-            )
-            return self._parse_response(resp, endpoint)
-        except requests.Timeout:
-            raise APIError(f"Timeout on {endpoint}", status_code=408)
-        except requests.ConnectionError as e:
-            raise APIError(f"Connection error on {endpoint}: {e}")
+        for attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                resp = self._session.post(
+                    url,
+                    headers=self._auth_headers(),
+                    json=payload,
+                    timeout=10,
+                )
+                if resp.status_code == 429:
+                    if attempt < RATE_LIMIT_MAX_RETRIES:
+                        retry_after = resp.headers.get("Retry-After")
+                        delay = float(retry_after) if retry_after else (
+                            RATE_LIMIT_BASE_DELAY_S * (2 ** attempt)
+                        )
+                        logger.warning("429 rate-limited on %s — retry %d/%d in %.1fs",
+                                       endpoint, attempt + 1, RATE_LIMIT_MAX_RETRIES, delay)
+                        time.sleep(delay)
+                        continue
+                    raise APIError(f"Rate limited on {endpoint} after {RATE_LIMIT_MAX_RETRIES} retries",
+                                   status_code=429)
+                return self._parse_response(resp, endpoint)
+            except requests.Timeout:
+                raise APIError(f"Timeout on {endpoint}", status_code=408)
+            except requests.ConnectionError as e:
+                raise APIError(f"Connection error on {endpoint}: {e}")
+        raise APIError(f"Exhausted retries on {endpoint}", status_code=429)
 
     @staticmethod
     def _parse_response(resp: requests.Response, endpoint: str) -> dict:

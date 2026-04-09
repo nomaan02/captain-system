@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from shared.questdb_client import get_cursor
@@ -346,10 +347,44 @@ def _load_system_param(key: str, default=None):
 
 
 # ---------------------------------------------------------------------------
+# Concurrent market-data pre-fetch (G-023)
+# ---------------------------------------------------------------------------
+
+def _prefetch_market_data(assets: list[dict]) -> dict:
+    """Fetch latest price, prior close, and 20d avg volume for all assets
+    concurrently using a thread pool.  Returns dict keyed by asset_id."""
+
+    def _fetch_one(asset_id: str) -> tuple[str, dict]:
+        return asset_id, {
+            "latest_price": _get_latest_price(asset_id),
+            "prior_close": _get_prior_close(asset_id),
+            "avg_volume_20d": _get_avg_session_volume_20d(asset_id),
+        }
+
+    result: dict = {}
+    with ThreadPoolExecutor(max_workers=min(len(assets), 10)) as pool:
+        futures = {pool.submit(_fetch_one, a["asset_id"]): a["asset_id"] for a in assets}
+        for future in as_completed(futures):
+            asset_id = futures[future]
+            try:
+                aid, data = future.result()
+                result[aid] = data
+            except Exception:
+                logger.warning("_prefetch_market_data: failed for %s", asset_id)
+                result[asset_id] = {
+                    "latest_price": None,
+                    "prior_close": None,
+                    "avg_volume_20d": None,
+                }
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Data Moderator
 # ---------------------------------------------------------------------------
 
-def _run_data_moderator(assets: list[dict], session_id: int, aim_states: dict | None = None) -> list[dict]:
+def _run_data_moderator(assets: list[dict], session_id: int, aim_states: dict | None = None,
+                        market_data: dict | None = None) -> list[dict]:
     """Run pre-ingestion data quality checks on all assets.
 
     Returns updated asset list (some may be set to DATA_HOLD).
@@ -364,8 +399,10 @@ def _run_data_moderator(assets: list[dict], session_id: int, aim_states: dict | 
         flag = "CLEAN"
 
         # Price bounds check — 5% deviation from prior close
-        current_price = _get_latest_price(asset_id)
-        prior_close = _get_prior_close(asset_id)
+        # Use pre-fetched data (G-023) or fall back to sequential calls
+        mdata = (market_data or {}).get(asset_id, {})
+        current_price = mdata.get("latest_price") if market_data else _get_latest_price(asset_id)
+        prior_close = mdata.get("prior_close") if market_data else _get_prior_close(asset_id)
 
         if prior_close and prior_close > 0 and current_price and current_price > 0:
             price_deviation = abs(current_price - prior_close) / prior_close
@@ -383,7 +420,7 @@ def _run_data_moderator(assets: list[dict], session_id: int, aim_states: dict | 
 
         # Volume sanity check
         current_volume = _get_current_session_volume(asset_id)
-        avg_volume = _get_avg_session_volume_20d(asset_id)
+        avg_volume = mdata.get("avg_volume_20d") if market_data else _get_avg_session_volume_20d(asset_id)
 
         if avg_volume and avg_volume > 0:
             if current_volume == 0:
@@ -768,8 +805,11 @@ def run_data_ingestion(session_id: int) -> dict | None:
     # Load AIM states early so Data Moderator can resolve required features
     aim_states = _load_aim_states()
 
+    # Pre-fetch market data for all assets concurrently (G-023: <9s for 10 assets)
+    market_data = _prefetch_market_data(assets)
+
     # Step 1b: Data Moderator — pre-ingestion validation
-    assets = _run_data_moderator(assets, session_id, aim_states=aim_states)
+    assets = _run_data_moderator(assets, session_id, aim_states=aim_states, market_data=market_data)
     if not assets:
         logger.warning("ON-B1: All assets held by Data Moderator")
         return None

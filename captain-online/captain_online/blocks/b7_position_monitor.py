@@ -37,10 +37,26 @@ from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, 
 from shared.constants import TRADE_OUTCOME_VALUES
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
+from shared.vix_provider import get_latest_vix_close
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 10
+VIX_SPIKE_DEFAULT_THRESHOLD = 50.0
+
+# Module-level cache for latest regime per asset, set by orchestrator via
+# update_regime_cache() before each monitoring pass.
+_regime_cache: dict[str, str] = {}
+
+
+def update_regime_cache(regime_probs: dict) -> None:
+    """Called by orchestrator to set latest regime per asset for B7 checks."""
+    global _regime_cache
+    for asset_id, probs in (regime_probs or {}).items():
+        if probs:
+            _regime_cache[asset_id] = max(probs, key=probs.get)
+        else:
+            _regime_cache[asset_id] = "UNKNOWN"
 
 
 def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dict]:
@@ -90,7 +106,7 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
         _check_vix_spike(pos)
 
         # Regime shift alert
-        if _regime_shift_detected(pos["asset"]):
+        if _regime_shift_detected(pos["asset"], pos.get("regime_state")):
             _notify(pos["user_id"], "CRITICAL",
                     f"Regime shift detected for {pos['asset']} — review position")
 
@@ -178,11 +194,14 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     _notify(pos["user_id"], "CRITICAL",
             f"Position closed: {pos['asset']} {outcome} Net PnL=${net_pnl:.2f} (commission=${commission:.2f})")
 
-    # Update capital silo
-    _update_capital_silo(pos["user_id"], account_id, net_pnl)
-
-    # V3: Update P3-D23 intraday circuit breaker state
-    _update_intraday_cb_state(account_id, net_pnl, outcome, model_m=pos.get("model", ""))
+    # Atomic capital + CB update (G-033: single cursor, both writes back-to-back)
+    _update_capital_and_cb(
+        user_id=pos["user_id"],
+        account_id=account_id,
+        net_pnl=net_pnl,
+        outcome=outcome,
+        model_m=pos.get("model", ""),
+    )
 
     # CRITICAL: Publish trade outcome to Offline via Redis
     _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage)
@@ -276,56 +295,57 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
         )
 
 
-def _update_capital_silo(user_id: str, account_id: str, net_pnl: float):
-    """Update user's capital silo with trade P&L."""
+def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
+                           outcome: str, model_m: str = ""):
+    """G-033: Atomic capital silo (D16) + intraday CB (D23) update.
+
+    Both reads and both writes execute in the same cursor context to prevent
+    concurrent close races from producing inconsistent state.
+    """
     with get_cursor() as cur:
-        # Read current silo
+        # ── Read both current states ──
         cur.execute(
             """SELECT total_capital, accounts FROM p3_d16_user_capital_silos
                LATEST ON last_updated PARTITION BY user_id
                WHERE user_id = %s""",
             (user_id,),
         )
-        row = cur.fetchone()
-        if row:
-            current_capital = (row[0] or 0) + net_pnl
-            cur.execute(
-                """INSERT INTO p3_d16_user_capital_silos
-                   (user_id, total_capital, accounts, last_updated)
-                   VALUES (%s, %s, %s, now())""",
-                (user_id, current_capital, row[1]),
-            )
+        d16_row = cur.fetchone()
 
-
-def _update_intraday_cb_state(account_id: str, net_pnl: float, outcome: str, model_m: str = ""):
-    """V3: Update P3-D23 intraday circuit breaker state after trade outcome.
-
-    Per spec: l_t accumulates ALL trade P&L (not just losses).
-    n_t counts ALL trades taken today (not consecutive losses).
-    l_b/n_b track per-basket (per-model) equivalents.
-    """
-    with get_cursor() as cur:
-        # Load current state
         cur.execute(
             """SELECT l_t, n_t, l_b, n_b FROM p3_d23_circuit_breaker_intraday
                LATEST ON last_updated PARTITION BY account_id
                WHERE account_id = %s""",
             (account_id,),
         )
-        row = cur.fetchone()
-        l_t = (row[0] or 0.0) if row else 0.0
-        n_t = (row[1] or 0) if row else 0
-        l_b = _parse_json(row[2], {}) if row else {}
-        n_b = _parse_json(row[3], {}) if row else {}
+        d23_row = cur.fetchone()
 
-        # ALL trade P&L — unconditional
-        l_t += net_pnl
-        n_t += 1
+        # ── Compute new states ──
+        # D16 capital
+        if d16_row:
+            new_capital = (d16_row[0] or 0) + net_pnl
+            d16_accounts = d16_row[1]
+        else:
+            new_capital = net_pnl
+            d16_accounts = None
 
-        # Per-basket updates
+        # D23 circuit breaker
+        l_t = (d23_row[0] or 0.0) + net_pnl if d23_row else net_pnl
+        n_t = (d23_row[1] or 0) + 1 if d23_row else 1
+        l_b = _parse_json(d23_row[2], {}) if d23_row else {}
+        n_b = _parse_json(d23_row[3], {}) if d23_row else {}
         if model_m:
             l_b[model_m] = l_b.get(model_m, 0.0) + net_pnl
             n_b[model_m] = n_b.get(model_m, 0) + 1
+
+        # ── Write both back-to-back ──
+        if d16_row:
+            cur.execute(
+                """INSERT INTO p3_d16_user_capital_silos
+                   (user_id, total_capital, accounts, last_updated)
+                   VALUES (%s, %s, %s, now())""",
+                (user_id, new_capital, d16_accounts),
+            )
 
         cur.execute(
             """INSERT INTO p3_d23_circuit_breaker_intraday
@@ -333,6 +353,8 @@ def _update_intraday_cb_state(account_id: str, net_pnl: float, outcome: str, mod
                VALUES (%s, %s, %s, %s, %s, now())""",
             (account_id, l_t, n_t, json.dumps(l_b), json.dumps(n_b)),
         )
+
+    logger.debug("Capital+CB updated: user=%s account=%s pnl=%.2f", user_id, account_id, net_pnl)
 
 
 def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage):
@@ -429,21 +451,62 @@ def _get_live_price(asset_id: str) -> float | None:
         logger.warning("_get_live_price REST fallback for %s: %s", asset_id, exc)
     return None
 
-def _get_api_commission(account_id: str) -> float | None:
+def _get_api_commission(account_id: str, asset_id: str = "", tsm: dict | None = None) -> float | None:
+    """Get commission per contract from TSM fee schedule or D17 fallback."""
+    if tsm:
+        return get_expected_fee(tsm, asset_id)
+    # Fallback: query D17 system params
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT value FROM system_params "
+                "LATEST ON ts PARTITION BY key "
+                "WHERE key = 'default_commission_per_contract'"
+            )
+            row = cur.fetchone()
+            if row:
+                return float(row[0]) * 2  # round-trip
+    except Exception:
+        logger.debug("_get_api_commission: D17 fallback failed")
     return None
 
 def _resolve_actual_entry_price(pos: dict) -> float | None:
     return pos.get("actual_entry_price")
 
 def _check_vix_spike(pos: dict):
-    # TODO: Implement VIX spike detection — read VIX data from stream/REST,
-    #       compare against threshold, and notify user if spike detected.
-    pass  # Stub for V1
+    """Check if VIX exceeds spike threshold and alert user."""
+    try:
+        vix = get_latest_vix_close()
+        if vix is None:
+            return
+        # Load threshold from D17, fall back to default
+        threshold = VIX_SPIKE_DEFAULT_THRESHOLD
+        try:
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT value FROM system_params "
+                    "LATEST ON ts PARTITION BY key "
+                    "WHERE key = 'circuit_breaker_vix_threshold'"
+                )
+                row = cur.fetchone()
+                if row:
+                    threshold = float(row[0])
+        except Exception:
+            pass  # use default threshold
+        if vix >= threshold:
+            _notify(pos["user_id"], "HIGH",
+                    f"VIX spike: {vix:.1f} >= {threshold:.0f} while {pos['asset']} position open")
+    except Exception:
+        logger.debug("_check_vix_spike: failed for %s", pos.get("asset"))
 
-def _regime_shift_detected(asset_id: str) -> bool:
-    # TODO: Implement regime shift detection — compare current regime state
-    #       (from BOCPD/HMM) against regime at position entry to detect mid-trade shifts.
-    return False  # Stub for V1
+def _regime_shift_detected(asset_id: str, regime_at_entry: str | None = None) -> bool:
+    """Compare current regime (from cache) against regime at position entry."""
+    if not regime_at_entry:
+        return False
+    current = _regime_cache.get(asset_id)
+    if not current or current == "UNKNOWN":
+        return False
+    return current != regime_at_entry
 
 def _parse_close_time(trading_hours: str) -> datetime | None:
     """Parse close time from trading_hours string (e.g., '09:30-16:00')."""

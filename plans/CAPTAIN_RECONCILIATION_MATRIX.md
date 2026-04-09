@@ -220,37 +220,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §1 — B1 latency budget <9s; parallel asset data fetch
 - **Code:** captain-online/captain_online/blocks/b1_data_ingestion.py:497-558 — synchronous sequential REST
 - **Delta:** Up to 90 sequential calls; 90-180s latency on slow API day
-- **Deps:** G-018 | **Skill:** ln-653 | **Status:** UNRESOLVED
+- **Deps:** G-018 | **Skill:** ln-653 | **Status:** FIXED
 
 #### G-018 | HIGH | Cross-Cutting | TopstepX Client
 - **Spec:** §10 — TopstepX REST handles rate limiting and timeout gracefully
 - **Code:** shared/topstep_client.py — no `timeout=` on any `requests.post()`; no 429 logic
 - **Delta:** Hung API blocks thread indefinitely; no rate limit handling
-- **Deps:** None | **Skill:** ln-653 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-653 | **Status:** FIXED
 
 #### G-030 | MEDIUM | Online B7 | Position Monitor
 - **Spec:** §2 B7 — VIX spike, regime shift, and API commission checks
 - **Code:** b7_position_monitor.py:419-427 — all stubs returning True/None
 - **Delta:** Three monitoring checks are no-ops
-- **Deps:** None | **Skill:** ln-629 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
 
 #### G-031 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — per-asset point values from D00
 - **Code:** b7_shadow_monitor.py:217-221 — POINT_VALUES dict hardcoded
 - **Delta:** Breaks if assets change; doesn't match D00
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-032 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — expired shadow positions publish TIMEOUT outcome
 - **Code:** b7_shadow_monitor.py:87-93 — expired positions silently dropped
 - **Delta:** No TIMEOUT outcome published; shadow learning incomplete
-- **Deps:** None | **Skill:** ln-629 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
 
 #### G-033 | MEDIUM | Online B7 | Position Monitor
 - **Spec:** §11 Loop 5 — atomic capital/CB state updates
 - **Code:** b7_position_monitor.py:279-296 — non-atomic D16/D23 updates
 - **Delta:** Concurrent close races drift capital silo
-- **Deps:** None | **Skill:** ln-628 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
 
 ---
 
@@ -667,10 +667,10 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 36 |
+| UNRESOLVED | 30 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 25 |
+| FIXED | 31 |
 | VERIFIED | 6 |
 | **TOTAL** | **100** |
 
@@ -714,3 +714,9 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 05 | FIXED | G-036 | _get_session_open_time(): reads per-session or_start from session_registry.json instead of hardcoded 09:30 |
 | 2026-04-09 | 05 | FIXED | G-065 | ZN/ZB already mapped to NY in Session 01 (G-017); status updated from UNRESOLVED to FIXED |
 | 2026-04-09 | 05 | FIXED | G-007 | _get_contract_multiplier(): queries D00 point_value per asset instead of hardcoded 50.0 (ES) |
+| 2026-04-09 | 06 | FIXED | G-023 | _prefetch_market_data(): ThreadPoolExecutor(max_workers=10) fetches price/volume for all assets concurrently; _run_data_moderator uses pre-fetched data |
+| 2026-04-09 | 06 | FIXED | G-018 | _post(): timeout=10, 429 retry with exponential backoff (1s/2s/4s), Retry-After header support; authenticate() timeout=10 |
+| 2026-04-09 | 06 | FIXED | G-030 | VIX spike: vix_provider + D17 threshold; regime shift: module-level cache set by orchestrator after B2; commission: wired to get_expected_fee() + D17 fallback |
+| 2026-04-09 | 06 | FIXED | G-031 | _get_point_value(): replaced hardcoded POINT_VALUES dict with D00 asset_universe LATEST ON query, fallback to 50.0 |
+| 2026-04-09 | 06 | FIXED | G-032 | Expired shadows now call _resolve_shadow("TIMEOUT", live_price) instead of silently dropping; Offline Category A learning gets complete signal universe |
+| 2026-04-09 | 06 | FIXED | G-033 | _update_capital_and_cb(): D16 + D23 reads and writes in single cursor context; replaces separate _update_capital_silo + _update_intraday_cb_state calls |
