@@ -1,11 +1,14 @@
 Session 10 Passover
 Items completed: G-015, G-016, G-078, G-079, G-080, G-081 (all 6)
 Items remaining: none
-New findings: none
+New findings:
+  - G-NEW-001: Duplicate key 7 in _AIM_NAMES dict (aim_compute.py:103-104). 7:"DISABLED" then 7:"COT", first is dead.
+  - G-NEW-002: CB trips never publish to captain:alerts (b5c_circuit_breaker.py). Only logger.info, no Redis alert.
+  - G-NEW-003: L6 _check_manual_halt is a permanent stub returning False. No D17 parameter lookup wired.
 Test status: 95 passed / 0 failed
 Audit skill results:
   - ln-628-concurrency-auditor: running post-session (background)
-  - ln-641-pattern-analyzer: running post-session (background)
+  - ln-641-pattern-analyzer: completed. AIM dispatch correct, CB V3 documented. 3 new findings flagged.
 Notes:
   - G-015: threading.Lock (_state_lock) added to b2_gui_data_server.py. Protects _user_stream,
     _account_data, _pipeline_stage. build_dashboard_snapshot() snapshots all three atomically
