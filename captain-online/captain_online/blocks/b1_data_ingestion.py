@@ -31,7 +31,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from shared.questdb_client import get_cursor
-from shared.constants import SYSTEM_TIMEZONE, SESSION_IDS
+from shared.constants import SYSTEM_TIMEZONE, SESSION_IDS, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
@@ -433,7 +433,7 @@ def _check_roll_calendar(assets: list[dict]) -> list[dict]:
 
     Sets ROLL_PENDING for assets at/past roll date.
     """
-    today = datetime.now().date()
+    today = now_et().date()
     result = []
 
     for asset in assets:
@@ -687,7 +687,7 @@ def _publish_alert(priority: str, message: str, action_required: bool = False):
             "message": message,
             "action_required": action_required,
             "source": "ONLINE_B1",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
         })
         client.publish(CH_ALERTS, payload)
     except Exception as e:

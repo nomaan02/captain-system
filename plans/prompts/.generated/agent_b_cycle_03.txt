@@ -1,0 +1,78 @@
+# Agent B — Validation Cycle for Session 03
+
+You are **Agent B (Validator)**. This is validation cycle 03.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 03)
+
+Session 03 Passover
+Items completed: G-011, G-012, G-028, G-006, G-044, G-014 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-007: online orchestrator.py _run_position_monitor holds _position_lock during blocking I/O (QuestDB writes, Redis publishes with retry sleeps). Lock contention can delay TAKEN position registration by seconds. Fix: snapshot list under lock, release lock, process snapshot, re-acquire to remove resolved.
+  - G-NEW-008: online orchestrator.py:121,127 reads open_positions/shadow_positions without lock for truthiness check. Benign TOCTOU — worst case is one cycle delay (1s). Document or guard inside lock.
+  - G-NEW-009: offline main.py does not pre-initialize STREAM_SIGNAL_OUTCOMES consumer group at startup. Group is created lazily in _redis_listener. If process crashes before listener starts, signal outcomes are never consumed until next restart.
+  - G-NEW-010: offline orchestrator _redis_listener has 2.5s combined block wait per iteration (1000+500+1000ms). The 5s join timeout in stop() may fire spuriously on quiet streams.
+  - G-NEW-011: offline orchestrator stop() assumes signal-handler-only invocation (caller also calls sys.exit(0)). Calling stop() from other paths leaves _run_scheduler loop running on main thread.
+Test status: 95 passed / 0 failed
+Audit skill results:
+  ln-628 (concurrency): 5 findings — 2 CRITICAL (lock scope too wide), 2 LOW (TOCTOU + running flag), 1 HIGH (blocking I/O in lock)
+  ln-629 (lifecycle): 3 findings — consumer group not pre-initialized, join timeout marginal, stop() design assumption
+Notes:
+  - G-011: Module-level _level2_active dict tracks {asset_id: bool}. Set True on first cp_prob > 0.8; cleared when cp_prob drops below threshold. CUSUM breach is not debounced (CUSUM resets itself after each breach).
+  - G-012: Level 3 check moved to top of check_level_escalation with early return. Level 2 BOCPD and CUSUM checks only run if Level 3 did not trigger.
+  - G-028: Retry uses time.sleep inside the function. This is acceptable for the current synchronous architecture but note G-NEW-007 — the retry delay executes while _position_lock is held if called from _run_position_monitor → monitor_positions → resolve_position.
+  - G-006: _position_lock added to __init__. Guards: _run_position_monitor (full body), _run_shadow_monitor (full body), _handle_taken_skipped (append+shadow removal), _run_b6_for_user (shadow append). Note G-NEW-007 for lock scope refinement.
+  - G-044: _redis_thread stored in __init__, assigned in start(). stop() joins with 5s timeout, warns if thread is still alive. Thread remains daemon=True so sys.exit(0) will not hang.
+  - G-014: Removed SEED=42 constant and random.seed(SEED)/np.random.seed(SEED) calls from both files. Python's random and numpy will use OS entropy by default.
+  - Matrix §6 Dashboard updated: UNRESOLVED 55→49, FIXED 12→18.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 03:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 03 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

@@ -1,0 +1,141 @@
+All 10 checks complete. Here's the consolidated report:
+
+---
+
+# Code Quality Audit Report — Captain System
+
+**Date:** 2026-04-09 | **Scope:** `captain-online/`, `captain-offline/`, `captain-command/`, `shared/` | **Files scanned:** ~80 Python modules
+
+---
+
+## Score: 5.2 / 10
+
+| Check | Category | Findings | Worst Severity | Weight |
+|-------|----------|----------|----------------|--------|
+| 1 | Cyclomatic Complexity | 103 functions > CC10 | CRITICAL (CC=82) | Heavy |
+| 2 | Deep Nesting | 152 functions > 4 levels | CRITICAL (depth 11) | Heavy |
+| 3 | Long Methods | 75 functions > 50 lines | HIGH (311 lines) | Medium |
+| 4 | God Classes | 24 files > 500 lines | HIGH (2066 lines) | Medium |
+| 5 | Too Many Parameters | 6 functions > 5 params | MEDIUM | Light |
+| 6 | O(n^2) Algorithms | 1 real concern (53 patterns, most bounded) | HIGH | Light |
+| 7 | N+1 Queries | 28 instances, 1 critical API path | CRITICAL | Heavy |
+| 8 | Constants Management | 2 magic values, scattered strings | HIGH | Medium |
+| 9 | Method Signatures | 61+ bare `dict`/`list` returns | HIGH | Medium |
+| 10 | Side-Effect Cascades | 8 deep pipes (depth 4-7) | HIGH | Heavy |
+
+**Issue Totals: C:3 H:22 M:~85 L:~140+**
+
+---
+
+## CRITICAL Findings (Fix First)
+
+### C1. `shared/replay_engine.py:59` — `load_replay_config()` CC=82, 311 lines
+Monolithic config loader with 10+ DB queries and nested try/except. Highest complexity in codebase.
+**Fix:** Extract per-config-type loaders (`_load_strategies()`, `_load_kelly()`, etc.).
+
+### C2. `captain-offline/.../b3_pseudotrader.py:1349` — `generate_dual_forecasts()` nesting=11
+Triple-nested DB operations inside business logic loops.
+**Fix:** Extract inner loop to helper; flatten with early returns.
+
+### C3. `captain-online/.../b9_capacity_evaluation.py:107` — N+1 in API hot path
+```python
+for asset_id in active_assets:
+    cur.execute("SELECT locked_strategy ... WHERE asset_id = %s")
+```
+~20-50 individual queries per request.
+**Fix:** Single `SELECT ... WHERE asset_id IN (...)` batch query.
+
+---
+
+## HIGH Findings (Plan This Sprint)
+
+### Complexity & Structure
+| File | Function | Issue | Metric |
+|------|----------|-------|--------|
+| `b3_pseudotrader.py:1073` | `generate_forecast()` | Cyclomatic complexity | CC=52 |
+| `b3_pseudotrader.py:169` | `run_account_aware_replay()` | Long method + complexity | CC=43, 252 lines |
+| `replay_engine.py` | (module) | God class | 2066 lines |
+| `b2_gui_data_server.py` | (module) | God class | 1484 lines |
+| `b3_pseudotrader.py` | (module) | God class | 1431 lines |
+| `telegram_bot.py:315` | `_run_bot()` | Long method | 215 lines |
+
+### N+1 Queries
+| File | Pattern | Context |
+|------|---------|---------|
+| `captain-offline/main.py:67` | Nested INSERT loop (16 x N_assets) | Bootstrap — batch with `executemany()` |
+| `captain-offline/.../bootstrap.py:160` | Multiple nested INSERT loops | Bootstrap — consolidate to batch syntax |
+| `shared/trade_source.py:293` | Per-trade INSERT in loop | Use `executemany()` |
+
+### Side-Effect Cascades
+| File | Function | Depth | Risk |
+|------|----------|-------|------|
+| `b7_notifications.py:161` | `route_notification()` | **7** | Sync network I/O to 100+ users, partial delivery |
+| `b7_position_monitor.py:127` | `resolve_position()` | **5** | No transaction wrapping — ledger divergence if mid-chain failure |
+| `b1_core_routing.py:144` | `route_command()` | **5-6** | DB log succeeds but GUI/API fails = inconsistent state |
+| `b8_reconciliation.py` | `run_daily_reconciliation()` | **6** | Email/Telegram I/O blocks reconciliation |
+
+### Constants Management
+| Issue | Severity | Details |
+|-------|----------|---------|
+| `"REGIME_NEUTRAL"` magic string | HIGH | 5 occurrences across 4 modules — not in `constants.py` |
+| `aim_id == 16` magic number | HIGH | 3 occurrences in `b2_gui_data_server.py` — needs `AIM_ID_HMM` constant |
+
+---
+
+## MEDIUM Findings (Background Refactoring)
+
+### Method Signatures (Check 9)
+- **36+ functions** return bare `dict` without TypedDict/schema — callers must read function body
+- **25+ functions** return bare `list` without element type
+- **25+ functions** accept `dict` params without documented key schema
+- Naming convention (`_load_*` / `get_*` / `fetch_*`) is actually semantically consistent but undocumented
+
+### Constants (Check 8)
+- AIM status strings (`"INSTALLED"`, `"SUPPRESSED"`, etc.) used as raw strings in `b1_aim_lifecycle.py` instead of importing from `constants.py`
+- Command type strings (`"TAKEN_SKIPPED"`) used as raw strings in routing logic
+
+### Parameters (Check 5)
+- 4 functions in `b11_replay_runner.py` have 7 params — consolidate into `ReplayConfig` dataclass
+- `b7_position_monitor.py:338` `_publish_trade_outcome()` has 7 params — use `TradeOutcome` NamedTuple
+
+### Algorithms (Check 6)
+- `b5_trade_selection.py:75` — O(assets^2 x accounts) pairwise correlation loop. Bounded at ~400 iterations but could be vectorized with NumPy.
+
+---
+
+## Module Risk Heatmap
+
+| Module | CC | Nesting | Length | God | N+1 | Cascades | Overall |
+|--------|----|---------|--------|-----|-----|----------|---------|
+| `shared/replay_engine.py` | :red_circle: | :orange_circle: | :red_circle: | :red_circle: | - | - | **CRITICAL** |
+| `b3_pseudotrader.py` | :red_circle: | :red_circle: | :red_circle: | :red_circle: | - | - | **CRITICAL** |
+| `b7_position_monitor.py` | :orange_circle: | :orange_circle: | - | - | - | :red_circle: | **HIGH** |
+| `b7_notifications.py` | - | - | - | :orange_circle: | - | :red_circle: | **HIGH** |
+| `b1_core_routing.py` | - | - | :orange_circle: | :orange_circle: | - | :red_circle: | **HIGH** |
+| `b2_gui_data_server.py` | :orange_circle: | - | :orange_circle: | :red_circle: | - | - | **HIGH** |
+| `b9_capacity_evaluation.py` | - | - | - | - | :red_circle: | - | **HIGH** |
+| `b1_data_ingestion.py` | - | :orange_circle: | - | :orange_circle: | - | - | MEDIUM |
+| `account_lifecycle.py` | :orange_circle: | :red_circle: | - | :orange_circle: | - | - | MEDIUM |
+
+---
+
+## Side-Effect Sink Ratio Summary
+
+| Module | Sinks (0-1) | Shallow (2) | Deep (3+) | Sink Ratio |
+|--------|-------------|-------------|-----------|------------|
+| captain-offline blocks | 7 | 1 | 1 (orchestrator) | 78% |
+| captain-online blocks | 6 | 2 | 1 (b7_monitor) | 67% |
+| captain-command blocks | 3 | 2 | 5 | 30% |
+| shared | 8 | 2 | 0 | 80% |
+
+Captain-command has the lowest sink ratio — most side-effect risk lives there.
+
+---
+
+## Top 5 Recommended Actions
+
+1. **Batch the N+1 in `b9_capacity_evaluation.py:107`** — CRITICAL API path, single query fix. Effort: S
+2. **Wrap `resolve_position()` DB writes in transaction** — prevents ledger divergence on partial failure. Effort: M
+3. **Add `REGIME_NEUTRAL` and `AIM_ID_HMM=16` to `constants.py`** — eliminates scattered magic values. Effort: S
+4. **Extract `load_replay_config()` into sub-loaders** — drops CC from 82 to ~15 each. Effort: M
+5. **Async-ify `route_notification()` network I/O** — depth-7 cascade blocks thread for 100+ users. Effort: L

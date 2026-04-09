@@ -1,0 +1,73 @@
+# Agent C — Executor Session 01: Critical Fixes
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+Previous session: First session — no passover.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-004 | CRITICAL | Telegram Bot Table Names
+**File:** captain-command/captain_command/telegram_bot.py
+**Lines:** 102, 112, 160
+**Fix:** Replace `p3_d00_asset_registry` → `p3_d00_asset_universe` and `p3_d03_trade_outcomes` → `p3_d03_trade_outcome_log`
+**Spec:** §9 D00, D03 table names
+
+### 2. G-005 | CRITICAL | Replay Engine CB Table Name
+**File:** shared/replay_engine.py
+**Line:** 289
+**Fix:** Replace `p3_d25_circuit_breaker` → `p3_d25_circuit_breaker_params`
+**Spec:** §9 D25 table name
+
+### 3. G-017 | HIGH | Session Name Mismatch
+**Files:** shared/constants.py, config/session_registry.json
+**Fix:** Reconcile `LON` vs `LONDON` naming. Use `LON` per spec §1. Add `NY_PRE` to SESSION_IDS if needed.
+**Spec:** §1 Session Definitions
+**Note:** Blocked by DEC-07 (ZN/ZB mapping) — if DEC-07 is UNRESOLVED, fix LON→LON naming only and flag ZN/ZB for later.
+
+### 4. G-001 | CRITICAL | CB Layer 4 Correlation Broken
+**File:** captain-offline/captain_offline/blocks/b8_cb_params.py
+**Lines:** 119-120
+**Fix:** Replace `np.corrcoef` on 2-element array with proper OLS sliding window per spec §6 CB Layer 4: `beta_b = OLS(loss_sequence)` with minimum window size.
+**Spec:** §6 CB Layer 4
+
+### 5. G-013 | HIGH | CB Per-Model Filtering Missing
+**File:** captain-offline/captain_offline/blocks/b8_cb_params.py
+**Lines:** 40-54
+**Fix:** Add `model_m` filter to SQL query so CB params are estimated per-model, not globally.
+**Spec:** §6 CB per-model parameter estimation
+**Deps:** G-001 (fix first)
+
+### 6. G-027 | HIGH | Data Moderator Disabled
+**File:** captain-online/captain_online/blocks/b1_data_ingestion.py
+**Lines:** 574, 578
+**Fix:** Implement actual data quality checks (stale data, bad timestamps) instead of unconditional `return True`. Set DATA_HOLD flag when checks fail.
+**Spec:** §2 B1 REQ-3
+
+## Post-Fix
+
+After ALL items:
+1. Run `/ln-614-docs-fact-checker` targeting table name changes
+2. Run `/ln-624-code-quality-auditor` targeting b8_cb_params.py
+
+## Rules
+
+1. **ONE ITEM AT A TIME.** After each: show the diff, run `python3 -B -m pytest tests/ --ignore=tests/test_integration_e2e.py --ignore=tests/test_pipeline_e2e.py --ignore=tests/test_pseudotrader_account.py --ignore=tests/test_offline_feedback.py --ignore=tests/test_stress.py --ignore=tests/test_account_lifecycle.py -v --tb=short 2>&1 | head -80` to check for breakage.
+2. After each item: update the matrix row status from UNRESOLVED → FIXED.
+3. New issues discovered → add as G-NEW-XXX, flag, do NOT fix without approval.
+4. After all items: update §6 Dashboard counts.
+5. Git commit after completing all items in this session.
+
+## Passover
+
+When session is complete, write to `plans/prompts/.passovers/session_01.txt`:
+```
+Session 01 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

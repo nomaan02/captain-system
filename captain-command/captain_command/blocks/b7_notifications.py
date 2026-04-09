@@ -429,11 +429,12 @@ def _get_users_by_roles(roles: list[str]) -> list[str]:
                     "WHERE status = 'ACTIVE'"
                 )
             else:
-                # Query by role tags
-                role_list = ",".join(f"'{r}'" for r in roles)
+                # Query by role tags — parameterized to prevent SQL injection
+                placeholders = ",".join(f"${i + 1}" for i in range(len(roles)))
                 cur.execute(
                     f"SELECT DISTINCT user_id FROM p3_d16_user_capital_silos "
-                    f"WHERE status = 'ACTIVE' AND role IN ({role_list})"
+                    f"WHERE status = 'ACTIVE' AND role IN ({placeholders})",
+                    roles,
                 )
             return [row[0] for row in cur.fetchall()]
     except Exception as exc:

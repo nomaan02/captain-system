@@ -1,0 +1,50 @@
+Report written to `docs/audit/ln-629--global.md`.
+
+---
+
+**Score: 7.3/10** | Issues: 5 (C:0 H:1 M:3 L:1)
+
+---
+
+## Lifecycle Audit — Findings Summary
+
+### HIGH (1)
+
+**captain-command: Signal handlers overridden by uvicorn** (`main.py:355-364`)
+
+`signal.signal(SIGTERM/SIGINT, shutdown_handler)` is registered before `uvicorn.run()`. Uvicorn installs its own async signal handlers when its event loop starts, silently replacing the custom handler. On Docker SIGTERM: uvicorn shuts down cleanly, but `orchestrator.stop()` and `telegram_bot.stop()` are **never called**. All orchestrator daemon threads die abruptly.
+
+**Fix:** Replace `signal.signal()` with a FastAPI lifespan shutdown hook:
+```python
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    orchestrator.stop()
+    if telegram_bot: telegram_bot.stop()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+---
+
+### MEDIUM (3)
+
+1. **Shallow health checks for captain-offline and captain-online** — Both probe `http://questdb:9000/exec?query=SELECT%201` (an external service). A crashed orchestrator loop still passes. Docker won't detect or restart a dead process until QuestDB itself goes down. captain-command's own `/api/health` endpoint is the correct pattern — offline/online need equivalent process-liveness signals (e.g., heartbeat file written by the scheduler loop).
+
+2. **Redis connection pool never explicitly closed** — The singleton `_client` (redis-py with internal pool) is never closed in any shutdown handler. TCP sockets are cleaned up by the OS after exit, but no clean `CLIENT QUIT` is sent to Redis. Low practical impact but breaks clean-shutdown semantics.
+
+3. **SIGHUP unhandled in all 3 processes** — Python default for SIGHUP is process termination. Any accidental SIGHUP from logrotate or a shell script would kill a trading process uncleanly mid-session. Minimum fix: `signal.signal(signal.SIGHUP, signal.SIG_IGN)`.
+
+---
+
+### LOW (1)
+
+4. **Online orchestrator `stop()` doesn't join `_command_listener` thread** (`orchestrator.py:86-88`) — captain-offline correctly joins its Redis thread (5s timeout); captain-online just sets `running=False` and returns. The thread is daemon=True so the OS kills it, but this is inconsistent and mid-iteration ACKs can be lost. One-line fix to mirror the offline pattern.
+
+---
+
+### PASSED
+
+- **Bootstrap initialization order** — All 3 processes correctly sequence: QuestDB verify → Redis verify → consumer groups → business logic. No dependency used before it's initialized.
+- **Docker healthchecks exist** with `start_period: 60s` and 3-retry tolerance for all 6 containers.
+- **stop_grace_period: 30s** is set for captain-command (the only process that could need it for uvicorn drain).

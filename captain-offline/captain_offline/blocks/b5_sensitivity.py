@@ -25,6 +25,7 @@ from datetime import datetime
 
 import numpy as np
 
+from shared.constants import now_et
 from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
         "robustness_status": robustness_status,
         "flags": flags,
         "perturbation_grid_results": grid_results,
-        "scan_date": datetime.now().isoformat(),
+        "scan_date": now_et().isoformat(),
     }
 
     # Store in P3-D13

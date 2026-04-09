@@ -1,0 +1,21 @@
+## Session 03 Complete
+
+**All 6 gaps fixed** across 7 files (8 with passover). 95 tests passing.
+
+| Gap | Fix | File(s) |
+|-----|-----|---------|
+| G-011 | Level 2 debounce via `_level2_active` dict | `b2_level_escalation.py` |
+| G-012 | Level 3 checked first with `return` | `b2_level_escalation.py` |
+| G-028 | 3-attempt retry with exponential backoff | `b7_position_monitor.py` |
+| G-006 | `threading.Lock` on position lists | online `orchestrator.py` |
+| G-044 | Thread join with 5s timeout in `stop()` | offline `orchestrator.py` |
+| G-014 | Removed `SEED=42`, OS entropy used | `b7_tsm_simulation.py`, `b6_auto_expansion.py` |
+
+**Matrix:** UNRESOLVED 55 → 49, FIXED 12 → 18
+
+**New findings flagged (not fixed):**
+- **G-NEW-007**: `_position_lock` held during blocking I/O — should use snapshot pattern
+- **G-NEW-008**: Benign TOCTOU on position list truthiness checks (LOW)
+- **G-NEW-009**: `STREAM_SIGNAL_OUTCOMES` consumer group not pre-initialized in `main.py`
+- **G-NEW-010**: 2.5s combined block wait may cause spurious join timeout warnings
+- **G-NEW-011**: `stop()` assumes signal-handler-only invocation

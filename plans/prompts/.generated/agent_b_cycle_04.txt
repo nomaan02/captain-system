@@ -1,0 +1,77 @@
+# Agent B — Validation Cycle for Session 04
+
+You are **Agent B (Validator)**. This is validation cycle 04.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 04)
+
+Session 04 Passover
+Items completed: G-002, G-003, G-021, G-055, G-020, G-089, G-056 (all 7)
+Items remaining: none
+New findings:
+  - G-NEW-012: captain-gui Dockerfile runs non-root but /gui-dist is a named Docker volume. On existing deployments where the volume was created as root, the non-root user will fail to write. Fix: `docker compose down -v` to recreate volumes, or add an entrypoint that chowns the mount.
+  - G-NEW-013: api.py str(exc) patterns remain in b11_replay_runner.py (lines 184, 193, 198, 536), b9_incident_response.py (lines 189, 257), b8_reconciliation.py (line 85), b5_injection_flow.py (line 146), b3_api_adapter.py (lines 189, 274). These are internal block return values, not direct HTTP responses — lower priority than the api.py/b6 fixes but should be reviewed in a future session.
+Decisions still needed: none
+Test status: 95 passed / 0 failed
+Audit skill results: pending (ln-621, ln-643 to be run post-session)
+Notes:
+  - G-002: JWT middleware uses BaseHTTPMiddleware. Exempt paths: /api/health, /api/status, /auth/token, /docs, /openapi.json, /redoc. WebSocket bypasses middleware (auth handled in endpoint). JWT_SECRET_KEY and API_SECRET_KEY env vars required — add to .env before next deploy. If JWT_SECRET_KEY not set, ephemeral key generated (tokens won't persist across restarts).
+  - G-003: Entire git-pull endpoint + _rebuild helper deleted (108 lines). The documented update path is `captain-update.sh` from the host.
+  - G-021: QuestDB uses $N positional parameters (psycopg2 wire protocol). The role list is passed as a Python list to cur.execute().
+  - G-055: WebSocket connects via /ws/{user_id}?token=<jwt>. Token sub claim must match path user_id. Close code 4003 used for auth failures (before accept()).
+  - G-020: Docker CLI (docker-27.5.1), Compose plugin (v2.35.1), git, /captain/repo bind mount, and /var/run/docker.sock all removed. git removed from apt-get install since it was only needed for the git-pull feature.
+  - G-089: All 4 Dockerfiles now create appuser with UID 1000 (matches typical WSL2 host user). captain-command also creates /captain/logs and /captain/vault-backup directories. captain-gui creates /gui-dist pre-volume-mount for Docker volume initialization.
+  - G-056: 12 str(exc) replaced in api.py (10 replay endpoints, 1 telegram history, 1 git-pull already removed). 2 str(exc) replaced in b6_reports.py (RPT-01, RPT-07). All replacements use generic messages; original exceptions logged at ERROR level.
+  - Matrix §6 Dashboard updated: UNRESOLVED 49->42, FIXED 12->19.
+  - Matrix §7 Changelog populated with all 7 fixes.
+  - New env vars needed in .env: API_SECRET_KEY, JWT_SECRET_KEY, JWT_EXPIRY_HOURS (optional, defaults to 24).
+  - GUI frontend will need updating to: (1) call POST /auth/token to get JWT, (2) send Authorization: Bearer header on all API calls, (3) pass ?token= query param on WebSocket connections.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 04:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 04 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

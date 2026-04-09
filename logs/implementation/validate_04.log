@@ -1,0 +1,132 @@
+File edits were blocked. Here are the complete validation findings — approve the edits when ready, or I can retry.
+
+---
+
+```
+=== VALIDATION CYCLE 04 REPORT ===
+Findings validated: 7
+  ALIGNED:   7
+  PARTIAL:   0
+  DIVERGENT: 0
+Cumulative: 25 / 67 total (12 FIXED + 13 VERIFIED)
+Open concerns: G-NEW-012 (GUI volume ownership on existing deploys),
+               G-NEW-013 (11 internal str(exc) in non-HTTP blocks)
+```
+
+---
+
+### G-002 | JWT Auth Middleware | ALIGNED -> VERIFIED
+
+**Spec:** §8 — JWT issued at login, WebSocket authenticated with JWT, 24h expiry
+
+**Evidence:**
+- `_JWTAuthMiddleware` at `api.py:88-117` — validates `Bearer` token on all non-exempt paths
+- `/auth/token` endpoint at `api.py:261-286` — issues JWT (HS256), configurable expiry (default 24h matches spec)
+- `hmac.compare_digest` for timing-safe API key validation
+- `PyJWT>=2.8` in `requirements.txt`
+- Exempt paths: `/api/health`, `/api/status`, `/auth/token`, `/docs`, `/openapi.json`, `/redoc`
+- Ephemeral key fallback with warning when `JWT_SECRET_KEY` not set
+
+**Regressions:** None. Health/status remain public (correct for monitoring).
+
+---
+
+### G-003 | Git-Pull RCE Removal | ALIGNED -> VERIFIED
+
+**Spec:** §10 — secure remote update mechanism (DEC-02: remove entirely)
+
+**Evidence:**
+- Zero grep matches for `git.pull`, `git-pull`, or `_rebuild` in api.py
+- Dockerfile diff confirms Docker CLI (27.5.1), Compose plugin (v2.35.1), and `git` removed from `apt-get install`
+- Update path is `captain-update.sh` from host
+
+**Regressions:** None.
+
+---
+
+### G-021 | SQL Injection Fix | ALIGNED -> VERIFIED
+
+**Spec:** §10 — parameterized SQL queries throughout
+
+**Evidence:**
+- `b7_notifications.py:432-438` — `$N` positional parameters via `",".join(f"${i + 1}" for i in range(len(roles)))`
+- Roles list passed as parameter tuple to `cur.execute()`, not interpolated
+- QuestDB psycopg2 wire protocol supports `$N` placeholders natively
+- TRADER branch uses static SQL with no user input
+
+**Regressions:** None.
+
+---
+
+### G-055 | WebSocket Authentication | ALIGNED -> VERIFIED
+
+**Spec:** §8 — WebSocket authenticated with JWT; `user_id` verified against session token
+
+**Evidence:**
+- `api.py:294-324` — `/ws/{user_id}?token=<jwt>` route
+- Token decoded **before** `websocket.accept()` (line 326)
+- JWT `sub` claim compared to path `user_id` — mismatch closes with code 4003
+- Covers: missing token, user mismatch, expired token, invalid token
+- Middleware correctly bypasses `/ws/` paths (auth handled in endpoint)
+
+**Regressions:** None. Session management (MAX_SESSIONS_PER_USER=3) unaffected.
+
+---
+
+### G-020 | Docker CLI/Git Removal | ALIGNED -> VERIFIED
+
+**Spec:** §10 — minimal container attack surface; least privilege
+
+**Evidence:**
+- Dockerfile diff: removed `git` from `apt-get`, removed 7-line Docker CLI + Compose plugin block
+- docker-compose.yml diff: removed `.:/captain/repo` bind mount and `/var/run/docker.sock` socket mount
+- Remaining system deps: `tzdata`, `curl` (needed for healthcheck)
+
+**Regressions:** None.
+
+---
+
+### G-089 | Non-Root User in All Dockerfiles | ALIGNED -> VERIFIED
+
+**Spec:** §10 — containers run as non-root
+
+**Evidence (all 4 Dockerfiles inspected):**
+- **captain-command:** `appuser` UID 1000, creates `/captain/logs` + `/captain/vault-backup`, `USER appuser`
+- **captain-online:** `appuser` UID 1000, creates `/captain/logs`, `USER appuser`
+- **captain-offline:** `appuser` UID 1000, creates `/captain/logs`, `USER appuser`
+- **captain-gui:** Alpine `adduser -S appuser`, creates `/gui-dist` with correct ownership, `USER appuser`
+
+**Note:** G-NEW-012 (existing volumes may be root-owned) is a deployment concern — mitigated by `docker compose down -v`.
+
+**Regressions:** None.
+
+---
+
+### G-056 | str(exc) Information Leakage | ALIGNED -> VERIFIED
+
+**Spec:** §10 — generic error responses; no internal details exposed
+
+**Evidence:**
+- Zero `str(exc)` matches in `api.py` (grep confirmed)
+- Zero `str(exc)` matches in `b6_reports.py` (grep confirmed)
+- Generic messages used: `"Report generation failed"` (b6:137, b6:396)
+- Original exceptions logged at ERROR level server-side
+
+**Scope note:** G-NEW-013 correctly identifies 11 remaining `str(exc)` in other blocks (b11:4, b9:2, b8:1, b5:1, b3:2, b4:1). These are internal return values, not HTTP responses.
+
+**Regressions:** None to HTTP-facing responses.
+
+---
+
+### Pending File Edits (blocked by permissions)
+
+**Matrix (`plans/CAPTAIN_RECONCILIATION_MATRIX.md`):**
+- Lines 137, 143, 149, 155, 161, 167, 173: Change `FIXED` to `VERIFIED` for G-002, G-003, G-021, G-055, G-020, G-089, G-056
+- Dashboard line 670: `FIXED` count 19 -> 12
+- Dashboard line 674: `VERIFIED` count 6 -> 13
+- Add changelog entry: `2026-04-09 | 04-V | VERIFIED | G-002, G-003, G-021, G-055, G-020, G-089, G-056 | Validation Cycle 04: all 7 ALIGNED. G-NEW-012/013 tracked as follow-ups`
+
+**Progress log (`docs/audit/validation_progress_log.md`):**
+- Append full cycle 04 validation entries (per-finding detail + summary)
+
+Want me to retry the edits?

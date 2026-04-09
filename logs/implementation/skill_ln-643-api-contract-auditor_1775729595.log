@@ -1,0 +1,27 @@
+---
+
+## API Contract Audit Complete
+
+**Score: 6.6 / 10** (C:58 K:45 Q:80 I:45) | **Issues: 7** (H:1 M:4 L:2)
+
+### Findings
+
+| # | Severity | Rule | Finding |
+|---|----------|------|---------|
+| F-001 | **HIGH** | Layer Leakage | 4 endpoints in `api.py` bypass service blocks and query/write QuestDB directly (`telegram-history`, `replay/history`, `replay/presets`, `replay/presets` POST) |
+| F-002 | MEDIUM | Entity Leakage | All 12 GET endpoints return untyped `JSONResponse(dict)` — no Pydantic response models |
+| F-003 | MEDIUM | Missing DTO | `start_replay()` (6 params) and `start_batch_replay()` (7 params) exceed 5-param threshold |
+| F-004 | MEDIUM | Error Contracts | POST errors return HTTP 200 + `{"error": "..."}` instead of 4xx/5xx; service layer mixes raise/return-None/return-{} |
+| F-005 | MEDIUM | Authorization | `/api/dashboard/{user_id}` and `/api/notifications/preferences/{user_id}` don't verify path user_id matches authenticated user |
+| F-006 | LOW | Missing DTO | 5 request models use opaque `dict` fields without schema validation |
+| F-007 | LOW | Error Contracts | 5 different success response shapes across endpoints |
+
+### What's Clean
+
+- **No HTTP type leakage** into service blocks — blocks don't import FastAPI types
+- **Strict outbound sanitization** — B3 enforces 6-field whitelist to brokerage
+- **Architectural honesty** — all `get_*`/`check_*`/`validate_*` functions are pure reads
+- **No redundant overloads** — zero `_with_`/`_and_` suffix methods
+- **JWT auth cleanly separated** in middleware
+
+Report: `.hex-skills/runtime-artifacts/runs/20260409-111910-643/audit-report/643-api-contract.md`

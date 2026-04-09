@@ -1,0 +1,72 @@
+# Agent B — Validation Cycle for Session 01
+
+You are **Agent B (Validator)**. This is validation cycle 01.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 01)
+
+Session 01 Passover
+Items completed: G-004, G-005, G-017, G-001, G-013, G-027 (all 6)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  ln-614 (fact-checker): PASS — zero residual old table names in Python code; all 3 corrected names verified in place
+  ln-624 (code-quality): PASS — no quality issues in modified b8_cb_params.py functions
+Notes:
+  - G-017: shared/constants.py is marked FROZEN in CLAUDE.md. Added NY_PRE (entry 4) to SESSION_IDS as the matrix explicitly required it. Nomaan should confirm this is acceptable.
+  - G-017: Changed ZN/ZB from NY_PRE to NY per DEC-07 resolution. ZT remains NY_PRE.
+  - G-017: LONDON→LON change applied across 8 code/config files (session_registry.json, replay_engine.py, replay_session.py, bootstrap_opening_volumes.py, b1_aim16_hmm.py, test_or_tracker.py, ReplayConfigPanel.jsx, replayStore.js). Doc files (.md) NOT updated — they reference LONDON but are not functional code.
+  - G-001: The bug was in rho_bar (same-day correlation), not beta_b. beta_b was already correct via _ols_regression. The np.corrcoef([scalar], [scalar]) always returned ±1/NaN. Fixed with paired-vector approach requiring min 3 pairs.
+  - G-027: Implemented real checks for _check_data_source_for_feature (checks quote_cache for market features) and _has_valid_timestamp (checks cache presence + staleness via timestamp field with 5-min threshold). Both previously returned True unconditionally.
+  - Matrix §6 Dashboard updated: UNRESOLVED 67→61, FIXED 0→6.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 01:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 01 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

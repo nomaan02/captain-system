@@ -24,6 +24,7 @@ import json
 import logging
 from datetime import datetime
 
+from shared.constants import now_et
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS
 
@@ -59,7 +60,7 @@ def _compute_reduction_factor(severity: float) -> float:
 def _log_decay_event(asset_id: str, level: int, severity: float, source: str):
     """Append decay event to P3-D04.decay_events."""
     event = json.dumps({
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "asset": asset_id,
         "level": level,
         "severity": severity,
@@ -104,7 +105,7 @@ def _publish_alert(asset_id: str, level: int, severity: float, source: str):
             "severity": severity,
             "source": source,
             "priority": "CRITICAL" if level >= 3 else "HIGH",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
         })
         client.publish(CH_ALERTS, alert)
     except Exception as e:

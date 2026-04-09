@@ -1,0 +1,18 @@
+Report written to `docs/audit/ln-621--global.md`. Here's the summary:
+
+## Security Audit: 6.5 / 10
+
+| Severity | Count | Key Findings |
+|----------|-------|-------------|
+| CRITICAL | 1 | `pickle.loads` in drift detection — arbitrary code exec if DB compromised |
+| HIGH | 3 | No pip lockfile/hashes, unvalidated `user_id`/date path params |
+| MEDIUM | 4 | Ephemeral JWT fallback, fixed vault salt, `str(exc)` leakage, weak Pydantic models |
+| LOW | 4 | Internal-only SQL f-strings, unpinned Docker images, unbounded speed/type fields |
+| INFO | 2 | No CORS middleware (protective by default), Telegram tokens in `docker inspect` |
+
+**Clean areas:** No hardcoded secrets, no XSS, no command injection, no `eval`/`exec`, all ports on `127.0.0.1`, non-root containers, JWT on all endpoints, AES-256-GCM vault.
+
+**Top 3 action items:**
+1. **`b1_drift_detection.py:106`** — replace `pickle.loads` with JSON/msgpack or `RestrictedUnpickler`
+2. **All `requirements.txt`** — add `pip-compile --generate-hashes` lockfiles
+3. **`api.py` endpoints** — add `constr`/`Literal`/range validation on all path params and date strings

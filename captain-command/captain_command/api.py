@@ -15,18 +15,22 @@ Spec: Program3_Command.md Block 1.0 (lines 34-53), Block 1 (lines 55-161),
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import math
 import os
+import secrets
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import jwt as pyjwt
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from captain_command.blocks.b1_core_routing import (
     route_command,
@@ -54,6 +58,66 @@ from captain_command.blocks.b7_notifications import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Captain Command API", version="1.0.0")
+
+
+# ---------------------------------------------------------------------------
+# JWT Authentication (G-002 / DEC-01)
+# ---------------------------------------------------------------------------
+
+_JWT_SECRET: str = os.environ.get("JWT_SECRET_KEY", "")
+_JWT_ALGORITHM = "HS256"
+_JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
+_API_SECRET_KEY: str = os.environ.get("API_SECRET_KEY", "")
+
+if not _JWT_SECRET:
+    _JWT_SECRET = secrets.token_hex(32)
+    logger.warning("JWT_SECRET_KEY not set — using ephemeral key (tokens won't survive restarts)")
+if not _API_SECRET_KEY:
+    logger.warning("API_SECRET_KEY not set — /auth/token login will be unavailable")
+
+_AUTH_EXEMPT_PATHS = frozenset({
+    "/api/health",
+    "/api/status",
+    "/auth/token",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+})
+
+
+class _JWTAuthMiddleware(BaseHTTPMiddleware):
+    """Validates Bearer JWT on all HTTP endpoints except exempt paths."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Health, status, login, and docs are public
+        if path in _AUTH_EXEMPT_PATHS or request.method == "OPTIONS":
+            return await call_next(request)
+        # WebSocket auth handled inside the endpoint (query-param token)
+        if path.startswith("/ws/"):
+            return await call_next(request)
+
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Missing or invalid authorization header"},
+            )
+
+        token = auth[7:]
+        try:
+            payload = pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+            request.state.user_id = payload.get("sub", "")
+            request.state.token_payload = payload
+        except pyjwt.ExpiredSignatureError:
+            return JSONResponse(status_code=401, content={"error": "Token expired"})
+        except pyjwt.InvalidTokenError:
+            return JSONResponse(status_code=401, content={"error": "Invalid token"})
+
+        return await call_next(request)
+
+
+app.add_middleware(_JWTAuthMiddleware)
 
 
 @app.on_event("startup")
@@ -185,18 +249,80 @@ async def status():
 
 
 # ---------------------------------------------------------------------------
+# Authentication: Token Issuer
+# ---------------------------------------------------------------------------
+
+
+class _AuthTokenRequest(BaseModel):
+    api_key: str
+    user_id: str = "primary_user"
+
+
+@app.post("/auth/token")
+def auth_token(req: _AuthTokenRequest):
+    """Issue a JWT in exchange for a valid API secret key."""
+    if not _API_SECRET_KEY:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Authentication not configured (API_SECRET_KEY not set)"},
+        )
+    if not hmac.compare_digest(req.api_key, _API_SECRET_KEY):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid API key"},
+        )
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": req.user_id,
+        "iat": now,
+        "exp": now + timedelta(hours=_JWT_EXPIRY_HOURS),
+    }
+    token = pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    return JSONResponse({
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": _JWT_EXPIRY_HOURS * 3600,
+    })
+
+
+# ---------------------------------------------------------------------------
 # WebSocket hub — GUI real-time updates
 # ---------------------------------------------------------------------------
 
 
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    user_id: str,
+    token: str = Query(default=""),
+):
     """WebSocket endpoint for GUI real-time updates.
+
+    Authentication: token query param must be a valid JWT whose ``sub``
+    claim matches the ``user_id`` path parameter.
 
     Session management: new connections are added to the set, and stale
     sessions beyond MAX_SESSIONS_PER_USER are closed immediately.
     Cleanup on disconnect happens in the finally block.
     """
+    # Verify JWT token before accepting connection
+    if not token:
+        await websocket.close(code=4003, reason="Missing authentication token")
+        return
+    try:
+        payload = pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+        token_user = payload.get("sub", "")
+        if token_user != user_id:
+            await websocket.close(code=4003, reason="User ID mismatch")
+            return
+    except pyjwt.ExpiredSignatureError:
+        await websocket.close(code=4003, reason="Token expired")
+        return
+    except pyjwt.InvalidTokenError:
+        await websocket.close(code=4003, reason="Invalid token")
+        return
+
     await websocket.accept()
 
     sessions = _ws_sessions[user_id]
@@ -580,7 +706,7 @@ def api_telegram_history(limit: int = 50):
             return JSONResponse({"items": items, "count": len(items)})
     except Exception as exc:
         logger.error("Telegram history query failed: %s", exc)
-        return JSONResponse({"items": [], "count": 0, "error": str(exc)})
+        return JSONResponse({"items": [], "count": 0, "error": "Failed to fetch notification history"})
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +766,7 @@ def api_replay_start(req: ReplayStartRequest):
         return JSONResponse({"replay_id": replay_id})
     except Exception as exc:
         logger.error("Replay start failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 class BatchReplayStartRequest(BaseModel):
@@ -668,7 +794,7 @@ def api_batch_replay_start(req: BatchReplayStartRequest):
         return JSONResponse({"replay_id": replay_id, "mode": "batch"})
     except Exception as exc:
         logger.error("Batch replay start failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.post("/api/replay/control")
@@ -680,7 +806,7 @@ def api_replay_control(req: ReplayControlRequest):
         return JSONResponse(result)
     except Exception as exc:
         logger.error("Replay control failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.post("/api/replay/save")
@@ -692,7 +818,7 @@ def api_replay_save(req: ReplaySaveRequest):
         return JSONResponse(result)
     except Exception as exc:
         logger.error("Replay save failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.get("/api/replay/status")
@@ -706,7 +832,7 @@ def api_replay_status():
         return JSONResponse(result)
     except Exception as exc:
         logger.error("Replay status failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.get("/api/replay/history")
@@ -741,7 +867,7 @@ def api_replay_history():
         return JSONResponse({"replays": results})
     except Exception as exc:
         logger.error("Replay history failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.get("/api/replay/presets")
@@ -774,7 +900,7 @@ def api_replay_presets():
         return JSONResponse({"presets": presets})
     except Exception as exc:
         logger.error("Replay presets fetch failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.post("/api/replay/presets")
@@ -799,7 +925,7 @@ def api_replay_preset_save(req: ReplayPresetRequest):
         })
     except Exception as exc:
         logger.error("Replay preset save failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
+        return JSONResponse({"error": "Internal server error"})
 
 
 @app.post("/api/replay/whatif")
@@ -814,114 +940,4 @@ def api_replay_whatif(req: ReplayStartRequest):
         return JSONResponse(_make_json_safe(result))
     except Exception as exc:
         logger.error("Replay what-if failed: %s", exc, exc_info=True)
-        return JSONResponse({"error": str(exc)})
-
-
-# ---------------------------------------------------------------------------
-# System: Git Pull + Rebuild
-# ---------------------------------------------------------------------------
-
-@app.post("/api/system/git-pull")
-def api_git_pull():
-    """Pull latest code from GitHub and rebuild containers.
-
-    Runs entirely on the local machine:
-    1. git pull origin main (in /captain/repo)
-    2. docker compose up -d --build (rebuilds all containers)
-
-    The rebuild runs in a background thread because this container will
-    be recreated as part of the rebuild.
-    """
-    import subprocess
-    import threading
-
-    repo_dir = "/captain/repo"
-
-    try:
-        # Mark repo as safe (mounted volume has different owner than container)
-        subprocess.run(
-            ["git", "config", "--global", "--add", "safe.directory", repo_dir],
-            capture_output=True, timeout=5,
-        )
-
-        # Step 1: git pull
-        pull_result = subprocess.run(
-            ["git", "pull", "origin", "main"],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if pull_result.returncode != 0:
-            logger.error("Git pull failed: %s", pull_result.stderr)
-            return JSONResponse({
-                "status": "error",
-                "phase": "git_pull",
-                "message": pull_result.stderr.strip() or "Git pull failed",
-            })
-
-        pull_output = pull_result.stdout.strip()
-        already_up_to_date = "Already up to date" in pull_output
-
-        # Step 2: Check what changed
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        changed_files = diff_result.stdout.strip().split("\n") if diff_result.stdout.strip() else []
-
-        # Determine if rebuild is needed
-        needs_rebuild = not already_up_to_date and any(
-            not f.startswith("shared/") and not f.startswith("config/") and not f.startswith("data/")
-            for f in changed_files
-        )
-
-        if already_up_to_date:
-            return JSONResponse({
-                "status": "up_to_date",
-                "message": "Already up to date. No changes to pull.",
-                "changed_files": [],
-                "rebuild": False,
-            })
-
-        # Step 3: Rebuild in background (this container will be recreated)
-        def _rebuild():
-            try:
-                logger.info("Starting docker compose rebuild...")
-                subprocess.run(
-                    ["docker", "compose",
-                     "-f", "docker-compose.yml",
-                     "-f", "docker-compose.local.yml",
-                     "up", "-d", "--build"],
-                    cwd=repo_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                logger.info("Docker compose rebuild complete")
-            except Exception as exc:
-                logger.error("Rebuild failed: %s", exc)
-
-        if needs_rebuild:
-            rebuild_thread = threading.Thread(
-                target=_rebuild, daemon=True, name="git-pull-rebuild"
-            )
-            rebuild_thread.start()
-
-        return JSONResponse({
-            "status": "success",
-            "message": pull_output,
-            "changed_files": changed_files,
-            "rebuild": needs_rebuild,
-            "rebuild_started": needs_rebuild,
-        })
-
-    except subprocess.TimeoutExpired:
-        return JSONResponse({"status": "error", "message": "Git pull timed out"})
-    except Exception as exc:
-        logger.error("Git pull failed: %s", exc, exc_info=True)
-        return JSONResponse({"status": "error", "message": str(exc)})
+        return JSONResponse({"error": "Internal server error"})

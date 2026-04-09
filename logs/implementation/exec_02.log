@@ -1,0 +1,16 @@
+## Session 02 Complete
+
+**All 6 items resolved:**
+
+| Gap | Severity | Fix |
+|-----|----------|-----|
+| G-009 | HIGH | 4 queries in `b1_aim_lifecycle.py` migrated to `LATEST ON last_updated PARTITION BY aim_id, asset_id` |
+| G-010 | HIGH | `_load_active_aims` and `_load_ewma_regime` in `b1_dma_update.py` migrated to `LATEST ON` |
+| G-070 | MEDIUM | **33 queries** across **22 files** converted from `ORDER BY DESC LIMIT 1` to `LATEST ON`. 6 global singletons (D07, D22, D26) correctly skipped. |
+| G-008 | HIGH | `orchestrator.py _run_daily` now loads AIM modifier values from D01 instead of passing `{}` |
+| G-047 | MEDIUM | `river>=0.21` added to `captain-offline/requirements.txt` |
+| G-048 | MEDIUM | ADWIN/autoencoder state persisted to D04.adwin_states via pickle+JSON serialization, loaded lazily per-asset |
+
+**Tests:** 95 passed / 0 failed
+**Matrix:** UNRESOLVED 67 -> 55, FIXED 0 -> 12
+**New findings flagged:** 6 (G-NEW-001 through G-NEW-006, documented in passover)

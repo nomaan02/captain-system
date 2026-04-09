@@ -1,0 +1,30 @@
+Report written to `docs/audit/ln-628--global.md`.
+
+## Concurrency Audit Results — Score: 5.3/10
+
+**14 issues found** (C:1 H:1 M:5 L:7) across 7 checks.
+
+### Critical & High Priority
+
+| # | Severity | Location | Issue |
+|---|----------|----------|-------|
+| CP-01 | **CRITICAL** | `captain-offline/.../orchestrator.py` | **D02 AIM meta-weights write race** — Redis listener thread and scheduler thread both INSERT to `p3_d02_aim_meta_weights` with zero coordination. Stale lifecycle write can silently overwrite fresh DMA weights, corrupting AIM inputs for Kelly sizing. |
+| CP-02 | **HIGH** | `captain-command/.../api.py:825` | **Git pull/rebuild no concurrency guard** — Two simultaneous `/api/system/git-pull` requests can launch parallel `docker compose up --build`, corrupting build cache mid-trade. |
+
+### Medium Priority (5)
+
+- **DL-01**: `_position_lock` held during 3 network round-trips (QuestDB + Redis) — blocks TAKEN signal registration
+- **BIO-01**: Sync QuestDB write in `async def websocket_endpoint` blocks the uvicorn event loop
+- **TS-01**: `_api_connections` dict shared between orchestrator thread and async handlers without lock
+- **AR-01/TS-04**: Telegram bot `_rate_window` and `_mute_until` dicts accessed from 2 threads unsynchronized
+- **RC-01**: QuestDB creates a new TCP connection per query — no connection pool
+
+### Low Priority (7)
+
+Mostly GIL-protected scalar races (`_last_signal_time`, `_pipeline_stage`), benign cache races (`contract_resolver`, `vix_provider`), and future-risk patterns (`telegram urllib`).
+
+### Clean Areas
+
+`topstep_client.py`, `redis_client.py`, `or_tracker.py`, `b11_replay_runner.py`, `b7_notifications.py`, and Redis Streams cross-process delivery are all **correctly synchronized**.
+
+**Fix CP-01 and CP-02 before the next NY session open.** Total estimated effort for all 13 fixes: ~6-8 hours.

@@ -30,6 +30,7 @@ import threading
 import time
 from datetime import datetime
 
+from shared.constants import now_et
 from shared.redis_client import (
     get_redis_client,
     ensure_consumer_group, read_stream, ack_message,
@@ -531,7 +532,7 @@ class OfflineOrchestrator:
         last_quarterly = None
 
         while self.running:
-            now = datetime.now()
+            now = now_et()
 
             # Daily close (after 16:00 ET, run once)
             if now.hour >= 16 and last_daily != now.date():

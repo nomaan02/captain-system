@@ -32,6 +32,7 @@ from typing import Optional
 
 import numpy as np
 
+from shared.constants import now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
@@ -543,7 +544,7 @@ def compute_all_features(
 
     Returns: {asset_id: {feature_name: value, ...}, ...}
     """
-    today = datetime.now()
+    today = now_et()
     features = {}
 
     for asset in assets:
@@ -953,7 +954,22 @@ def _get_option_chain(asset_id: str, max_maturity_days: int = 30) -> Optional[li
     return None
 
 def _get_contract_multiplier(asset_id: str) -> float:
-    return 50.0  # ES default
+    """Per-asset contract multiplier (point_value) from D00."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT point_value FROM p3_d00_asset_universe "
+                "LATEST ON last_updated PARTITION BY asset_id "
+                "WHERE asset_id = %s",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+    except Exception:
+        logger.warning("Failed to load point_value for %s from D00, using ES default", asset_id)
+    return 50.0  # ES fallback
 
 def _get_risk_free_rate() -> float:
     return 0.05  # approximate
@@ -1071,15 +1087,27 @@ def _get_all_universe_assets() -> list[str]:
     return [r[0] for r in rows] if rows else []
 
 def _get_session_open_time(asset_id: str) -> Optional[datetime]:
-    """Session open time — ES regular trading hours 9:30 ET."""
+    """Session open time for this asset's session (NY=09:30, LON=03:00, APAC=18:00 ET)."""
     try:
-        import pytz
-        et = pytz.timezone("America/New_York")
-        now_et = datetime.now(et)
-        return now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    except ImportError:
-        now = datetime.now(timezone.utc)
-        return now.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 ET = 14:30 UTC
+        import json as _json
+        import os
+        registry_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "config", "session_registry.json"
+        )
+        with open(registry_path) as f:
+            registry = _json.load(f)
+        session_name = registry.get("asset_session_map", {}).get(asset_id, "NY")
+        session_cfg = registry.get("sessions", {}).get(session_name, {})
+        or_start = session_cfg.get("or_start", "09:30")
+        hour, minute = int(or_start.split(":")[0]), int(or_start.split(":")[1])
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except Exception:
+        logger.warning("Failed to load session open time for %s, defaulting to 09:30 ET", asset_id)
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        return now.replace(hour=9, minute=30, second=0, microsecond=0)
 
 def _get_best_bid(asset_id: str) -> Optional[float]:
     """Best bid from TopstepX stream cache."""

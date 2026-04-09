@@ -1,0 +1,85 @@
+# Agent C — Executor Session 02: Learning Loops (A)
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+
+## Previous Session Passover
+Session 01 Passover
+Items completed: G-004, G-005, G-017, G-001, G-013, G-027 (all 6)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  ln-614 (fact-checker): PASS — zero residual old table names in Python code; all 3 corrected names verified in place
+  ln-624 (code-quality): PASS — no quality issues in modified b8_cb_params.py functions
+Notes:
+  - G-017: shared/constants.py is marked FROZEN in CLAUDE.md. Added NY_PRE (entry 4) to SESSION_IDS as the matrix explicitly required it. Nomaan should confirm this is acceptable.
+  - G-017: Changed ZN/ZB from NY_PRE to NY per DEC-07 resolution. ZT remains NY_PRE.
+  - G-017: LONDON→LON change applied across 8 code/config files (session_registry.json, replay_engine.py, replay_session.py, bootstrap_opening_volumes.py, b1_aim16_hmm.py, test_or_tracker.py, ReplayConfigPanel.jsx, replayStore.js). Doc files (.md) NOT updated — they reference LONDON but are not functional code.
+  - G-001: The bug was in rho_bar (same-day correlation), not beta_b. beta_b was already correct via _ols_regression. The np.corrcoef([scalar], [scalar]) always returned ±1/NaN. Fixed with paired-vector approach requiring min 3 pairs.
+  - G-027: Implemented real checks for _check_data_source_for_feature (checks quote_cache for market features) and _has_valid_timestamp (checks cache presence + staleness via timestamp field with 5-min threshold). Both previously returned True unconditionally.
+  - Matrix §6 Dashboard updated: UNRESOLVED 67→61, FIXED 0→6.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-009 | HIGH | AIM Lifecycle Stale Query
+**File:** captain-offline/captain_offline/blocks/b1_aim_lifecycle.py
+**Line:** 55
+**Fix:** Replace `ORDER BY timestamp DESC LIMIT 1` with QuestDB `LATEST ON timestamp PARTITION BY aim_id` for correct latest-state retrieval.
+**Spec:** §3 AIM Lifecycle, §9 QuestDB append-only semantics
+
+### 2. G-010 | HIGH | DMA Update Stale Query
+**File:** captain-offline/captain_offline/blocks/b1_dma_update.py
+**Lines:** 43-56
+**Fix:** Replace `ORDER BY` pattern with `LATEST ON timestamp PARTITION BY` for D02 meta-weight reads.
+**Spec:** §4 Offline B1, §9 QuestDB semantics
+**Deps:** G-009 pattern established first
+
+### 3. G-070 | MEDIUM | Systematic LATEST ON Migration
+**Files:** ~10 blocks across all processes
+**Fix:** Grep for `ORDER BY.*DESC LIMIT 1` and convert to `LATEST ON` where the intent is "most recent row per partition". Use `grep -rn "ORDER BY.*DESC LIMIT 1" captain-*/` to find all sites.
+**Spec:** §9 QuestDB append-only; LATEST ON for dedup
+**Deps:** G-009, G-010 patterns established
+
+### 4. G-008 | HIGH | Drift Detection Empty Dict
+**File:** captain-offline/captain_offline/orchestrator.py
+**Line:** 572
+**Fix:** Pass actual AIM feature dict (from D01 latest state) instead of `{}` to `run_drift_detection()`.
+**Spec:** §4 Offline B9 — ADWIN on AIM features
+
+### 5. G-047 | MEDIUM | river Library Missing
+**File:** captain-offline/requirements.txt
+**Fix:** Add `river` to requirements.txt for ADWIN drift detection.
+**Spec:** §4 Offline B9 — uses `river` library
+**Deps:** G-008
+
+### 6. G-048 | MEDIUM | ADWIN State Persistence
+**File:** captain-offline/captain_offline/blocks/b1_drift_detection.py (or wherever drift detection lives)
+**Lines:** 115-116
+**Fix:** Persist ADWIN/autoencoder state to SQLite journal or QuestDB instead of module-level dicts. State must survive container restarts.
+**Spec:** §4 Offline B9 — persistent ADWIN state
+**Deps:** G-047
+
+## Post-Fix
+1. Run `/ln-624-code-quality-auditor` targeting changed files
+2. Run `/ln-625-dependencies-auditor` to verify river is properly declared
+
+## Rules
+1. ONE ITEM AT A TIME. After each: show diff, run pytest, update matrix.
+2. New issues → G-NEW-XXX, flag, do NOT fix.
+3. After all items: update §6 Dashboard, git commit.
+
+## Passover
+Write to `plans/prompts/.passovers/session_02.txt`:
+```
+Session 02 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

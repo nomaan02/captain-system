@@ -29,6 +29,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta
 
+from shared.constants import now_et
 from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def _safe_days_since(ts) -> int:
     try:
         if isinstance(ts, str):
             ts = datetime.fromisoformat(ts)
-        delta = datetime.now() - ts
+        delta = now_et() - ts
         return max(getattr(delta, "days", 0), 0)
     except (ValueError, TypeError):
         return 999
@@ -82,13 +83,13 @@ def _queue_action(action_queue: list, priority: str, category: str,
     for item in action_queue:
         if (item["constraint_type"] == constraint_type
                 and item["status"] in ("OPEN", "ACKNOWLEDGED", "IN_PROGRESS")):
-            item["last_seen"] = datetime.now().isoformat()
+            item["last_seen"] = now_et().isoformat()
             item["detail"] = detail
             return
 
     action_queue.append({
-        "action_id": f"ACT-{datetime.now().strftime('%Y-%m-%d')}-{len(action_queue)+1:03d}",
-        "created": datetime.now().isoformat(),
+        "action_id": f"ACT-{now_et().strftime('%Y-%m-%d')}-{len(action_queue)+1:03d}",
+        "created": now_et().isoformat(),
         "priority": priority,
         "category": category,
         "dimension": dimension,
@@ -105,7 +106,7 @@ def _queue_action(action_queue: list, priority: str, category: str,
         "verification_result": None,
         "notes": "",
         "metric_snapshot_at_creation": metric_snapshot or {},
-        "last_seen": datetime.now().isoformat(),
+        "last_seen": now_et().isoformat(),
     })
 
 
@@ -422,7 +423,7 @@ def compute_d4(action_queue: list) -> float:
 
 def _compute_windowed_edge(window_days: int) -> float:
     """Compute system-wide expected edge from EWMA states within a time window."""
-    cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
+    cutoff = (now_et() - timedelta(days=window_days)).isoformat()
     with get_cursor() as cur:
         cur.execute(
             "SELECT win_rate, avg_win, avg_loss FROM p3_d05_ewma_states "
@@ -439,7 +440,7 @@ def _compute_windowed_edge(window_days: int) -> float:
 
 def _compute_regime_edge(regime: str, window_days: int) -> float:
     """Compute expected edge for a specific regime within a time window."""
-    cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
+    cutoff = (now_et() - timedelta(days=window_days)).isoformat()
     with get_cursor() as cur:
         cur.execute(
             "SELECT win_rate, avg_win, avg_loss FROM p3_d05_ewma_states "
@@ -561,7 +562,7 @@ def compute_d6(action_queue: list) -> float:
     # Data hold rate: count DATA_HOLD entries in P3-D17 system monitor (last 30 days)
     # Online Block 9 writes data_quality entries with category='data_quality'
     # when sessions are held due to data issues.
-    cutoff_30d = (datetime.now() - timedelta(days=30)).isoformat()
+    cutoff_30d = (now_et() - timedelta(days=30)).isoformat()
     with get_cursor() as cur:
         cur.execute(
             "SELECT asset_id, count() FROM p3_d00_asset_universe "
@@ -622,7 +623,7 @@ def compute_d7(action_queue: list) -> float:
     days_since_injection = _safe_days_since(row[0] if row else None)
 
     # Level 3 decay events in last 90 days
-    cutoff_90d = (datetime.now() - timedelta(days=90)).isoformat()
+    cutoff_90d = (now_et() - timedelta(days=90)).isoformat()
     level3_total = 0
     level3_unresolved_assets = []
 
@@ -699,7 +700,7 @@ def compute_d7(action_queue: list) -> float:
 
 def compute_d8(action_queue: list) -> float:
     """D8: Resolution Verification — verify resolved items, stale detection."""
-    now = datetime.now()
+    now = now_et()
 
     for item in action_queue:
         status = item.get("status", "")
@@ -855,7 +856,7 @@ def run_diagnostic(mode: str = "WEEKLY") -> dict:
         "overall_health": overall,
         "action_items_generated": len([
             i for i in action_queue
-            if i.get("created", "").startswith(datetime.now().strftime("%Y-%m-%d"))
+            if i.get("created", "").startswith(now_et().strftime("%Y-%m-%d"))
         ]),
         "critical_count": sum(
             1 for i in action_queue if i["priority"] == "CRITICAL" and i["status"] == "OPEN"

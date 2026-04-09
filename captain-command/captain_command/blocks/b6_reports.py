@@ -134,7 +134,7 @@ def _rpt01_pre_session(user_id: str, params: dict) -> dict:
             return {"signals": signals, "active_assets": assets}
     except Exception as exc:
         logger.error("RPT-01 failed: %s", exc, exc_info=True)
-        return {"error": str(exc)}
+        return {"error": "Report generation failed"}
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ def _rpt07_daily_prop(user_id: str, params: dict) -> dict:
             return {"accounts": accounts}
     except Exception as exc:
         logger.error("RPT-07 failed: %s", exc, exc_info=True)
-        return {"error": str(exc)}
+        return {"error": "Report generation failed"}
 
 
 # ---------------------------------------------------------------------------

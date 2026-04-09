@@ -26,6 +26,7 @@ import json
 import logging
 from datetime import datetime
 
+from shared.constants import now_et
 from shared.questdb_client import get_cursor
 
 from captain_offline.blocks.b3_pseudotrader import run_pseudotrader
@@ -92,7 +93,7 @@ def _store_injection(asset_id: str, candidate: dict, current: dict,
                 recommendation, status, injection_type, ts)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
             (
-                f"INJ-{asset_id}-{datetime.now().strftime('%Y%m%d')}",
+                f"INJ-{asset_id}-{now_et().strftime('%Y%m%d')}",
                 asset_id,
                 json.dumps(candidate, default=str),
                 json.dumps(current, default=str),

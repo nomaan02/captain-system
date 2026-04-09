@@ -30,6 +30,7 @@ from datetime import datetime
 
 import numpy as np
 
+from shared.constants import now_et
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS
 
@@ -186,7 +187,7 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
                 "priority": alert["priority"],
                 "message": alert["message"],
                 "pass_probability": pass_probability,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_et().isoformat(),
             }))
         except Exception as e:
             logger.error("Failed to publish TSM alert: %s", e)

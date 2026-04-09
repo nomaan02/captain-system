@@ -1,0 +1,89 @@
+# Agent C — Executor Session 03: Learning Loops (B)
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+
+## Previous Session Passover
+Session 02 Passover
+Items completed: G-009, G-010, G-070, G-008, G-047, G-048 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-001: b5_injection_flow.py:95 queries p3_d06_injection_history with column names (candidate_id, timestamp, sharpe_current, etc.) that don't match the D06 schema (injection_id, ts, candidate, etc.). Query will fail at runtime.
+  - G-NEW-002: b5_injection_flow.py:128 queries p3_d11_pseudotrader_results with mismatched column names (pnl_impact, drawdown_impact, etc. vs actual schema columns). Same runtime failure.
+  - G-NEW-003: b9_diagnostic.py:779 queries p3_d01_aim_model_states with WHERE aim_id=%s but no asset_id filter. Since aim_id is not unique across assets, this returns a non-deterministic row.
+  - G-NEW-004: orchestrator.py:568 _run_daily asset query lacks LATEST ON — could return duplicate asset_ids from D00 history.
+  - G-NEW-005: orchestrator.py:303 _handle_aim_activation uses SELECT DISTINCT on append-only D01 without LATEST ON.
+  - G-NEW-006: b1_drift_detection.py:260,305 uses magic number 0.02 for inclusion threshold instead of importing DEFAULT_INCLUSION_THRESHOLD from b1_dma_update.py.
+Test status: 95 passed / 0 failed
+Audit skill results:
+  ln-624 (code-quality): PASS — 1 MEDIUM (pre-existing magic number), 7 LOW (style)
+  ln-625 (dependencies): PASS — river>=0.21 properly declared
+Notes:
+  - G-009/G-010: Initially used PARTITION BY aim_id alone for D01/D02 queries. Corrected to PARTITION BY aim_id, asset_id since aim_id is not unique across assets (6 AIMs x 10 assets = 60 unique pairs).
+  - G-070: 33 queries converted across 22 files. Skipped 6 global singletons (D07, D22, D26) where PARTITION BY has no meaning. Skipped 2 broken queries in b5_injection_flow.py (G-NEW-001/002). Skipped 3 "last N" queries (LIMIT 10/100). Skipped journal.py (SQLite, not QuestDB). Skipped scripts/.
+  - G-008: Loads AIM modifier values from D01 current_modifier JSON field. If modifier is empty dict or missing, that aim_id is simply excluded from the features dict (and run_drift_detection skips unfitted AIMs).
+  - G-048: ADWIN/autoencoder state persisted to D04.adwin_states as JSON with pickle+base64 for river's ADWIN object. State loaded lazily per-asset on first access, saved after each run_drift_detection call. Module-level _loaded_assets set prevents redundant DB reads.
+  - G-047: river>=0.21 added. Not available on host (container-only dep). b1_drift_detection.py already has a fallback SimplifiedADWIN that works without river.
+  - Matrix §6 Dashboard updated: UNRESOLVED 61→55, FIXED 6→12.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-011 | HIGH | CB Level 2 No Cooldown
+**File:** captain-offline/captain_offline/blocks/b2_level_escalation.py
+**Line:** 186
+**Fix:** Add cooldown/debounce: Level 2 fires ONCE per changepoint event, not every trade while cp_prob > 0.8. Track last_cp_event timestamp.
+**Spec:** §6 CB Level 2 — once per changepoint event; debounced
+
+### 2. G-012 | HIGH | Level 2/3 Mutual Exclusivity
+**File:** captain-offline/captain_offline/blocks/b2_level_escalation.py
+**Lines:** 186-197
+**Fix:** Add `elif` or early `return` between Level 2 and Level 3 checks so they are mutually exclusive escalation tiers.
+**Spec:** §6 CB — Level 2 and Level 3 are mutually exclusive
+**Deps:** G-011
+
+### 3. G-028 | HIGH | Redis Publish No Retry
+**File:** captain-online/captain_online/blocks/b7_position_monitor.py
+**Lines:** 336-360
+**Fix:** Add retry logic (3 attempts, exponential backoff) for Redis publish of trade outcomes. Log on final failure.
+**Spec:** §11 Feedback Loop 1 — trade outcome must reliably reach Offline via Redis
+
+### 4. G-006 | HIGH | Position List Race Condition
+**File:** captain-online/captain_online/orchestrator.py
+**Lines:** 61-62, 762, 769
+**Fix:** Add threading.Lock for position list mutations. Both the main thread and WebSocket callback must acquire lock before read/write.
+**Spec:** §2 B7, §11 Loop 1 — correct trade outcome delivery
+
+### 5. G-044 | MEDIUM | Offline Shutdown Thread Join
+**File:** captain-offline/captain_offline/orchestrator.py
+**Line:** 69
+**Fix:** In `stop()`, join the Redis listener thread with timeout before exiting. Ensures in-flight outcomes are flushed.
+**Spec:** §12 Lifecycle — graceful shutdown joins all threads
+
+### 6. G-014 | HIGH | MC/GA Deterministic Seeds
+**Files:** captain-offline/captain_offline/blocks/b7_tsm_simulation.py:118, b6_auto_expansion.py:230
+**Fix:** Replace `SEED=42` with `np.random.default_rng()` (no fixed seed) or seed from current timestamp. MC and GA must produce different outputs each run.
+**Spec:** §4 B6 — stochastic GA exploration
+
+## Post-Fix
+1. Run `/ln-628-concurrency-auditor` targeting orchestrator.py and b7_position_monitor.py
+2. Run `/ln-629-lifecycle-auditor` targeting offline orchestrator shutdown
+
+## Rules
+1. ONE ITEM AT A TIME. After each: show diff, run pytest, update matrix.
+2. New issues → G-NEW-XXX, flag, do NOT fix.
+3. After all items: update §6 Dashboard, git commit.
+
+## Passover
+Write to `plans/prompts/.passovers/session_03.txt`:
+```
+Session 03 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

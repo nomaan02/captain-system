@@ -94,37 +94,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §6 CB — Level 2 triggers once per changepoint event; debounced
 - **Code:** captain-offline/captain_offline/blocks/b2_level_escalation.py:186 — fires every trade where `cp_prob > 0.8`
 - **Delta:** No cooldown; Level 2 fires repeatedly during elevated cp_prob
-- **Deps:** None | **Skill:** ln-624 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-624 | **Status:** VERIFIED
 
 #### G-012 | HIGH | Offline B2 | Level Escalation
 - **Spec:** §6 CB — Level 2 and Level 3 are mutually exclusive escalation tiers
 - **Code:** b2_level_escalation.py:186-197 — no `return`/`elif` between Level 2 and Level 3 checks
 - **Delta:** Both Level 2 and Level 3 fire when cp_prob > 0.9; conflicting actions
-- **Deps:** G-011 | **Skill:** ln-624 | **Status:** FIXED
+- **Deps:** G-011 | **Skill:** ln-624 | **Status:** VERIFIED
 
 #### G-028 | HIGH | Online B7 | Position Monitor
 - **Spec:** §11 Feedback Loop 1 — trade outcome must reliably reach Offline via Redis
 - **Code:** captain-online/captain_online/blocks/b7_position_monitor.py:336-360 — no retry on Redis publish failure
 - **Delta:** Trade outcomes silently dropped on Redis blip; biased learning sample
-- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-628 | **Status:** VERIFIED
 
 #### G-006 | HIGH | Online B7 | Orchestrator
 - **Spec:** §2 B7, §11 Loop 1 — correct trade outcome delivery
 - **Code:** captain-online/captain_online/orchestrator.py:61-62,762,769 — position lists mutated from 2 threads without lock
 - **Delta:** Race condition; trade outcomes silently dropped
-- **Deps:** None | **Skill:** ln-628 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-628 | **Status:** VERIFIED
 
 #### G-044 | MEDIUM | Offline Orch | Shutdown
 - **Spec:** §12 Lifecycle — graceful shutdown joins all threads
 - **Code:** captain-offline/captain_offline/orchestrator.py:69 — `stop()` doesn't join Redis listener thread
 - **Delta:** Mid-write outcome interrupted on SIGTERM; partial data in QuestDB
-- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-629 | **Status:** VERIFIED
 
 #### G-014 | HIGH | Offline B6/B7 | MC + GA
 - **Spec:** §4 B6 — stochastic GA exploration for new strategy candidates
 - **Code:** b7_tsm_simulation.py:118; b6_auto_expansion.py:230 — `SEED=42` globally
 - **Delta:** MC and GA fully deterministic; same output every run regardless of market state
-- **Deps:** None | **Skill:** ln-624 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-624 | **Status:** VERIFIED
 
 ---
 
@@ -134,43 +134,43 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §10 — authenticated REST and WebSocket endpoints; token-based access control
 - **Code:** captain-command/captain_command/api.py — no auth middleware registered
 - **Delta:** Zero authentication on any endpoint including financial commands
-- **Deps:** DEC-01 | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** DEC-01 | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-003 | CRITICAL | Command | API
 - **Spec:** §10 — secure remote update mechanism
 - **Code:** api.py `/system/git-pull` — unauthenticated shell execution
 - **Delta:** Arbitrary code execution; Docker socket enables host escape
-- **Deps:** G-002, DEC-02 | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** G-002, DEC-02 | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-021 | HIGH | Command B7 | Notifications
 - **Spec:** §10 — parameterized SQL queries throughout
 - **Code:** captain-command/captain_command/blocks/b7_notifications.py:433-436 — f-string SQL interpolation
 - **Delta:** SQL injection in `_get_users_by_roles()` via role list
-- **Deps:** None | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-055 | MEDIUM | Command B11 | WebSocket
 - **Spec:** §8 — user_id verified against session token
 - **Code:** api.py WebSocket endpoint — `user_id` from query param, no verification
 - **Delta:** Client can impersonate any user via self-declared user_id
-- **Deps:** G-002 | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** G-002 | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-020 | HIGH | Command Infra | Docker
 - **Spec:** §10 — minimal container attack surface; least privilege
 - **Code:** captain-command/Dockerfile:9-14 — Docker CLI installed; socket mounted
 - **Delta:** Full Docker daemon access from container; host escape vector
-- **Deps:** G-003, DEC-02 | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** G-003, DEC-02 | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-089 | MEDIUM | All | Docker
 - **Spec:** §10 — containers run as non-root
 - **Code:** All Dockerfiles — no `USER` directive; all run as root
 - **Delta:** Containers run as root; compromised process gets root access
-- **Deps:** None | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-621 | **Status:** FIXED
 
 #### G-056 | MEDIUM | Command B3 | API Errors
 - **Spec:** §10 — generic error responses; no internal details exposed
 - **Code:** api.py + b6_reports.py:137,396 — `str(exc)` in responses
 - **Delta:** Stack traces and internal paths leaked to API callers
-- **Deps:** None | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-621 | **Status:** FIXED
 
 ---
 
@@ -180,37 +180,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §1 REQ-4 — timezone is always America/New_York; ASSERT at session start
 - **Code:** captain-offline/captain_offline/orchestrator.py:529 — `datetime.now()` (system local)
 - **Delta:** Daily blocks fire at wrong time if container TZ != ET
-- **Deps:** None | **Skill:** ln-647 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-647 | **Status:** FIXED
 
 #### G-029 | MEDIUM | Online B1 | Data Ingestion
 - **Spec:** §1 REQ-4 — always ET timezone
 - **Code:** captain-online/captain_online/blocks/b1_data_ingestion.py:436,642; b1_features.py:546
 - **Delta:** `datetime.now()` without ET in 3 online locations
-- **Deps:** None | **Skill:** ln-647 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-647 | **Status:** FIXED
 
 #### G-051 | MEDIUM | Offline ALL | Timezone
 - **Spec:** §1 REQ-4 — always ET timezone
 - **Code:** ~20 sites across captain-offline orchestrator + B3-B9
 - **Delta:** `datetime.now()` without ET throughout offline blocks
-- **Deps:** G-024 | **Skill:** ln-647 | **Status:** UNRESOLVED
+- **Deps:** G-024 | **Skill:** ln-647 | **Status:** FIXED
 
 #### G-036 | MEDIUM | Online B1 | Features
 - **Spec:** §1 — per-session open times (LON=03:00, APAC=18:00)
 - **Code:** captain-online/captain_online/blocks/b1_features.py:1073-1082 — always returns 9:30 ET
 - **Delta:** `_get_session_open_time()` wrong for LON/APAC assets
-- **Deps:** G-017 | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** G-017 | **Skill:** ln-641 | **Status:** FIXED
 
 #### G-065 | MEDIUM | Config | Session Registry
 - **Spec:** §1 — ZN/ZB session mapping
 - **Code:** config/session_registry.json maps ZN/ZB to `NY_PRE`; CLAUDE.md says `NY`
 - **Delta:** Conflicting session assignment for ZN/ZB
-- **Deps:** G-017, DEC-07 | **Skill:** ln-647 | **Status:** UNRESOLVED
+- **Deps:** G-017, DEC-07 | **Skill:** ln-647 | **Status:** FIXED
 
 #### G-007 | HIGH | Online B1 | AIM-03 GEX
 - **Spec:** §3 AIM-03 — per-asset contract multiplier from D00
 - **Code:** captain-online/captain_online/blocks/b1_features.py:955-956 — hardcoded 50.0 (ES)
 - **Delta:** Wrong by 10-200x for 9 of 10 assets
-- **Deps:** None | **Skill:** ln-641 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED
 
 ---
 
@@ -667,11 +667,11 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 49 |
+| UNRESOLVED | 36 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 18 |
-| VERIFIED | 0 |
+| FIXED | 25 |
+| VERIFIED | 6 |
 | **TOTAL** | **100** |
 
 ---
@@ -700,3 +700,17 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 03 | FIXED | G-006 | threading.Lock guards open_positions + shadow_positions across main and listener threads |
 | 2026-04-09 | 03 | FIXED | G-044 | stop() joins _redis_thread with 5s timeout; thread ref stored in __init__ |
 | 2026-04-09 | 03 | FIXED | G-014 | Removed SEED=42 from b7_tsm_simulation.py and b6_auto_expansion.py — system entropy used |
+| 2026-04-09 | 03-V | VERIFIED | G-011, G-012, G-028, G-006, G-044, G-014 | Validation Cycle 03: all 6 ALIGNED. G-NEW-007/008 lock scope + G-NEW-010/011 shutdown concerns tracked as follow-ups |
+| 2026-04-09 | 04 | FIXED | G-002 | JWT auth middleware (DEC-01): PyJWT + BaseHTTPMiddleware, /auth/token login endpoint, Bearer validation on all non-exempt routes |
+| 2026-04-09 | 04 | FIXED | G-003 | Removed /system/git-pull endpoint entirely (DEC-02) — 108 lines of RCE-capable code deleted |
+| 2026-04-09 | 04 | FIXED | G-021 | SQL injection: f-string role interpolation replaced with $N parameterized placeholders |
+| 2026-04-09 | 04 | FIXED | G-055 | WebSocket auth: token query param validated against JWT, user_id must match sub claim |
+| 2026-04-09 | 04 | FIXED | G-020 | Docker CLI + Compose plugin removed from Dockerfile, Docker socket + repo bind mounts removed from docker-compose.yml |
+| 2026-04-09 | 04 | FIXED | G-089 | Non-root USER appuser (UID 1000) added to all 4 Dockerfiles with proper directory ownership |
+| 2026-04-09 | 04 | FIXED | G-056 | str(exc) in 12 HTTP responses replaced with generic messages; full exceptions logged server-side |
+| 2026-04-09 | 05 | FIXED | G-024 | Offline scheduler: datetime.now() → now_et() (ZoneInfo America/New_York). Added now_et() helper to shared/constants.py |
+| 2026-04-09 | 05 | FIXED | G-029 | Online B1: 3 datetime.now() → now_et() in b1_data_ingestion.py and b1_features.py |
+| 2026-04-09 | 05 | FIXED | G-051 | Offline-wide: 16 datetime.now() → now_et() across 5 files (b2, b4, b5, b7, b9) — zero naive timestamps in captain-offline |
+| 2026-04-09 | 05 | FIXED | G-036 | _get_session_open_time(): reads per-session or_start from session_registry.json instead of hardcoded 09:30 |
+| 2026-04-09 | 05 | FIXED | G-065 | ZN/ZB already mapped to NY in Session 01 (G-017); status updated from UNRESOLVED to FIXED |
+| 2026-04-09 | 05 | FIXED | G-007 | _get_contract_multiplier(): queries D00 point_value per asset instead of hardcoded 50.0 (ES) |

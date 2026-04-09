@@ -80,6 +80,12 @@ REGIME_VALUES = {
 # System timezone
 SYSTEM_TIMEZONE = "America/New_York"
 
+def now_et():
+    """Return current datetime in America/New_York (ET). Use everywhere instead of datetime.now()."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(SYSTEM_TIMEZONE))
+
 # Command types (CMD-B1 routing)
 COMMAND_TYPE_VALUES = {
     "TAKEN_SKIPPED",

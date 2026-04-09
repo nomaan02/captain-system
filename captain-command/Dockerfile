@@ -2,16 +2,8 @@ FROM python:3.12-slim
 
 # System deps for psycopg2-binary, timezone, and health check
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tzdata curl git \
+    tzdata curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Docker CLI + Compose plugin (for git-pull rebuild feature)
-RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
-    | tar xz -C /usr/local/bin --strip-components=1 docker/docker \
-    && mkdir -p /usr/local/lib/docker/cli-plugins \
-    && curl -fsSL "https://github.com/docker/compose/releases/download/v2.35.1/docker-compose-linux-x86_64" \
-       -o /usr/local/lib/docker/cli-plugins/docker-compose \
-    && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
 WORKDIR /app
 
@@ -27,6 +19,12 @@ COPY _config/ /captain/config/
 
 ENV PYTHONUNBUFFERED=1
 ENV TZ=America/New_York
+
+# Run as non-root user (G-089) — UID 1000 aligns with typical WSL2 host user
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser -d /app -s /sbin/nologin appuser \
+    && mkdir -p /captain/logs /captain/vault-backup \
+    && chown -R appuser:appuser /app /captain
+USER appuser
 
 # Health check: FastAPI /api/health verifies Redis+QuestDB connectivity internally.
 # Avoid Python subprocess — WSL2 memory corruption causes random segfaults in short-lived interpreters.

@@ -121,8 +121,6 @@ services:
       - ./vault:/captain/vault:ro
       - vault-backup:/captain/vault-backup
       - ./captain-command/journal.sqlite:/captain/journal.sqlite
-      - .:/captain/repo                         # Full repo for git-pull feature
-      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket for rebuild
     env_file:
       - .env
     environment:

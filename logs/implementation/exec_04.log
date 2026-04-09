@@ -1,0 +1,21 @@
+Session 04 complete. Here's the summary:
+
+**All 7 items FIXED:**
+
+| Gap | Severity | Fix |
+|-----|----------|-----|
+| G-002 | CRITICAL | JWT auth middleware — `BaseHTTPMiddleware` validates Bearer token on all non-exempt HTTP routes. Login via `POST /auth/token` with API key. |
+| G-003 | CRITICAL | `/system/git-pull` endpoint deleted entirely (108 lines of RCE). |
+| G-021 | HIGH | SQL injection fixed — f-string role interpolation → `$N` parameterized placeholders. |
+| G-055 | MEDIUM | WebSocket requires `?token=<jwt>` query param; `sub` claim must match path `user_id`. |
+| G-020 | HIGH | Docker CLI/Compose plugin removed from Dockerfile; Docker socket + repo bind mounts removed from compose. |
+| G-089 | MEDIUM | `USER appuser` (UID 1000) added to all 4 Dockerfiles. |
+| G-056 | MEDIUM | 12 `str(exc)` in api.py + 2 in b6_reports.py replaced with generic messages. |
+
+**Tests:** 95 passed / 0 failed
+
+**New findings:** G-NEW-012 (GUI volume ownership on existing deploys), G-NEW-013 (remaining `str(exc)` in other blocks — lower priority).
+
+**Action needed before next deploy:** Add `API_SECRET_KEY` and `JWT_SECRET_KEY` to `.env`. GUI frontend needs auth integration (token fetch + Bearer header + WS token param).
+
+**Dashboard:** UNRESOLVED 49→42, FIXED 12→19. Passover written to `plans/prompts/.passovers/session_04.txt`.
