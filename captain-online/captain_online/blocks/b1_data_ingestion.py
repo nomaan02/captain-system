@@ -332,8 +332,8 @@ def _load_system_param(key: str, default=None):
     with get_cursor() as cur:
         cur.execute(
             """SELECT param_value FROM p3_d17_system_monitor_state
-               WHERE param_key = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY param_key
+               WHERE param_key = %s""",
             (key,),
         )
         row = cur.fetchone()
@@ -571,12 +571,62 @@ def _get_required_features(asset_id: str, aim_states: dict | None = None) -> lis
 
 
 def _check_data_source_for_feature(asset_id: str, feature_name: str) -> bool:
-    """Check if data source for a feature is available. Stub for V1."""
+    """Check if data source for a feature is available.
+
+    Returns False if the underlying data feed for this feature is missing
+    or stale (no quote in cache).  Downstream uses last-known-value fallback
+    when this returns False; callers set DATA_HOLD only on timestamp failure.
+    """
+    # Market-data features require a live quote in the cache
+    market_features = {
+        "last_price", "bid", "ask", "spread", "volume",
+        "or_high", "or_low", "or_range", "vwap",
+    }
+    if feature_name in market_features:
+        contract_id = resolve_contract_id(asset_id)
+        if contract_id is None:
+            return False
+        quote = quote_cache.get(contract_id)
+        return quote is not None and quote.get("lastPrice") is not None
+
+    # Non-market features (VIX, COT, sentiment) — accept if any data present.
+    # Individual AIM blocks handle their own null checks.
     return True
 
 
 def _has_valid_timestamp(asset_id: str) -> bool:
-    """Check if latest data has valid timezone offset. Stub for V1."""
+    """Check if latest data for an asset has a valid, non-stale timestamp.
+
+    Returns False (triggering DATA_HOLD) when:
+      - No quote exists in the cache at all
+      - Quote has no price data (feed disconnected)
+      - Quote is older than STALE_THRESHOLD_SECONDS (stale feed)
+    """
+    contract_id = resolve_contract_id(asset_id)
+    if contract_id is None:
+        return False
+    quote = quote_cache.get(contract_id)
+    if quote is None or quote.get("lastPrice") is None:
+        return False
+    # If the cache carries a timestamp field, enforce staleness bound
+    ts = quote.get("timestamp") or quote.get("lastTradeTime")
+    if ts is not None:
+        try:
+            from datetime import timezone as tz
+            if isinstance(ts, str):
+                ts_dt = datetime.fromisoformat(ts)
+            elif isinstance(ts, (int, float)):
+                ts_dt = datetime.fromtimestamp(ts, tz=tz.utc)
+            else:
+                return True  # unknown format — pass through
+            age = (datetime.now(tz.utc) - ts_dt.astimezone(tz.utc)).total_seconds()
+            STALE_THRESHOLD_SECONDS = 300  # 5 minutes
+            if age > STALE_THRESHOLD_SECONDS:
+                logger.warning("Stale data for %s: quote age %.0fs > %ds",
+                               asset_id, age, STALE_THRESHOLD_SECONDS)
+                return False
+        except (ValueError, TypeError, OSError):
+            pass  # unparseable timestamp — pass through
     return True
 
 

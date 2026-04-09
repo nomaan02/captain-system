@@ -307,8 +307,8 @@ def _get_capital_silo(user_id: str) -> dict:
                 cur.execute(
                     """SELECT total_capital, status
                        FROM p3_d16_user_capital_silos
-                       WHERE user_id = %s
-                       ORDER BY last_updated DESC LIMIT 1""",
+                       LATEST ON last_updated PARTITION BY user_id
+                       WHERE user_id = %s""",
                     (user_id,),
                 )
                 row = cur.fetchone()
@@ -785,8 +785,8 @@ def _get_capacity_state() -> dict:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT details FROM p3_session_event_log
-                   WHERE event_type = 'CAPACITY_EVALUATION'
-                   ORDER BY ts DESC LIMIT 1"""
+                   LATEST ON ts PARTITION BY event_type
+                   WHERE event_type = 'CAPACITY_EVALUATION'"""
             )
             row = cur.fetchone()
             if row and row[0]:

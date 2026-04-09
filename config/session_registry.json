@@ -10,7 +10,7 @@
       "filter_end": "16:15",
       "overnight": false
     },
-    "LONDON": {
+    "LON": {
       "or_start": "03:00",
       "or_end": "03:05",
       "or_window_minutes": 5,
@@ -53,14 +53,14 @@
     "NKD": "APAC",
     "6J": "APAC",
     "MCL": "NY_PRE",
-    "ZN": "NY_PRE",
+    "ZN": "NY",
     "ZT": "NY_PRE",
-    "ZB": "NY_PRE",
-    "MGC": "LONDON",
-    "SIL": "LONDON",
-    "M6E": "LONDON",
-    "M6A": "LONDON",
-    "M6B": "LONDON"
+    "ZB": "NY",
+    "MGC": "LON",
+    "SIL": "LON",
+    "M6E": "LON",
+    "M6A": "LON",
+    "M6B": "LON"
   },
   "_source": "Mirror of most-production/config.py SESSION_REGISTRY + ASSET_SESSION_MAP (2026-03-27)"
 }

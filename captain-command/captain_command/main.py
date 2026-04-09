@@ -167,7 +167,7 @@ def _ensure_telegram_chat_id():
     """Write TELEGRAM_CHAT_ID from env into QuestDB D16 + notification preferences.
 
     QuestDB is append-only so we insert a new D16 row with the chat_id set
-    (queries use ORDER BY last_updated DESC LIMIT 1 to get the latest).
+    (queries use LATEST ON last_updated PARTITION BY user_id to get the latest).
     Also saves it as a notification preference so b7 route_notification finds it.
     """
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -185,8 +185,8 @@ def _ensure_telegram_chat_id():
         with get_cursor() as cur:
             cur.execute(
                 """SELECT telegram_chat_id FROM p3_d16_user_capital_silos
-                   WHERE user_id = %s
-                   ORDER BY last_updated DESC LIMIT 1""",
+                   LATEST ON last_updated PARTITION BY user_id
+                   WHERE user_id = %s""",
                 (user_id,),
             )
             row = cur.fetchone()
@@ -201,8 +201,8 @@ def _ensure_telegram_chat_id():
                           correlation_threshold, user_kelly_ceiling, capital_history,
                           created
                    FROM p3_d16_user_capital_silos
-                   WHERE user_id = %s
-                   ORDER BY last_updated DESC LIMIT 1""",
+                   LATEST ON last_updated PARTITION BY user_id
+                   WHERE user_id = %s""",
                 (user_id,),
             )
             src = cur.fetchone()

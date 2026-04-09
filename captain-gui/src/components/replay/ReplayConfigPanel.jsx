@@ -2,7 +2,7 @@ import { useState } from "react";
 import useReplayStore from "../../stores/replayStore";
 import api from "../../api/client";
 
-const SESSIONS = ["NY", "LONDON", "APAC", "NY_PRE"];
+const SESSIONS = ["NY", "LON", "APAC", "NY_PRE"];
 const RISK_GOALS = ["PASS_EVAL", "GROW_CAPITAL", "PRESERVE_CAPITAL"];
 const SPEED_OPTIONS = [1, 10, 50, 100];
 
@@ -86,7 +86,7 @@ const ReplayConfigPanel = () => {
       date: new Date().toISOString().slice(0, 10),
       dateFrom: "",
       dateTo: "",
-      sessions: ["NY", "LONDON", "APAC", "NY_PRE"],
+      sessions: ["NY", "LON", "APAC", "NY_PRE"],
       capital: 150000,
       budgetDivisor: 20,
       riskGoal: "PASS_EVAL",

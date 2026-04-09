@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 SESSION_CONFIG = {
     "NY":     {"or_start": "09:30", "or_end": "09:35", "eod": "15:55"},
     "NY_PRE": {"or_start": "06:00", "or_end": "06:05", "eod": "13:25"},
-    "LONDON": {"or_start": "03:00", "or_end": "03:05", "eod": "11:25"},
+    "LON": {"or_start": "03:00", "or_end": "03:05", "eod": "11:25"},
     "APAC":   {"or_start": "18:00", "or_end": "18:05", "eod": "02:55"},
 }
 
@@ -43,13 +43,13 @@ ASSET_SESSION_MAP = {
     "ES": "NY", "MES": "NY", "NQ": "NY", "MNQ": "NY",
     "M2K": "NY", "MYM": "NY",
     "NKD": "APAC",
-    "MGC": "LONDON",
+    "MGC": "LON",
     "ZB": "NY_PRE", "ZN": "NY_PRE",
 }
 
 ACTIVE_ASSETS = list(ASSET_SESSION_MAP.keys())
 
-SESSION_ID_MAP = {"NY": 1, "LONDON": 2, "APAC": 3, "NY_PRE": 1}
+SESSION_ID_MAP = {"NY": 1, "LON": 2, "APAC": 3, "NY_PRE": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +138,8 @@ def load_replay_config(overrides: dict | None = None) -> dict:
         cur.execute(
             "SELECT total_capital, accounts, max_simultaneous_positions "
             "FROM p3_d16_user_capital_silos "
-            "WHERE user_id = 'primary_user' "
-            "ORDER BY last_updated DESC LIMIT 1"
+            "LATEST ON last_updated PARTITION BY user_id "
+            "WHERE user_id = 'primary_user'"
         )
         row = cur.fetchone()
     user_capital = row[0] if row else 150000.0
@@ -173,8 +173,9 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             "current_balance, current_drawdown, daily_loss_used, "
             "max_drawdown_limit, max_daily_loss, max_contracts, "
             "topstep_optimisation, risk_goal "
-            "FROM p3_d08_tsm_state WHERE account_id = %s "
-            "ORDER BY last_updated DESC LIMIT 1",
+            "FROM p3_d08_tsm_state "
+            "LATEST ON last_updated PARTITION BY account_id "
+            "WHERE account_id = %s",
             (_dynamic_account_id,)
         )
         row = cur.fetchone()
@@ -286,7 +287,7 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             cur.execute(
                 "SELECT account_id, model_m, r_bar, beta_b, sigma, rho_bar, "
                 "n_observations, p_value "
-                "FROM p3_d25_circuit_breaker ORDER BY last_updated DESC"
+                "FROM p3_d25_circuit_breaker_params ORDER BY last_updated DESC"
             )
             seen_cb = set()
             for r in cur.fetchall():

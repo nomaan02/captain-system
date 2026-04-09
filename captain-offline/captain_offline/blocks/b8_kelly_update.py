@@ -44,8 +44,8 @@ def _get_cp_prob(asset_id: str) -> float:
     with get_cursor() as cur:
         cur.execute(
             """SELECT current_changepoint_probability FROM p3_d04_decay_detector_states
-               WHERE asset_id = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY asset_id
+               WHERE asset_id = %s""",
             (asset_id,),
         )
         row = cur.fetchone()
@@ -66,8 +66,8 @@ def _load_ewma(asset_id: str, regime: str, session: int) -> dict:
         cur.execute(
             """SELECT win_rate, avg_win, avg_loss, n_trades
                FROM p3_d05_ewma_states
-               WHERE asset_id = %s AND regime = %s AND session = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY asset_id, regime, session
+               WHERE asset_id = %s AND regime = %s AND session = %s""",
             (asset_id, regime, session),
         )
         row = cur.fetchone()

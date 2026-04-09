@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Session open times (ET) from config/session_registry.json
 SESSION_OPEN_TIMES = {
     "NY":     dtime(9, 30),
-    "LONDON": dtime(3, 0),
+    "LON": dtime(3, 0),
     "NY_PRE": dtime(6, 0),
     "APAC":   dtime(18, 0),
 }
@@ -43,7 +43,7 @@ ASSET_SESSION_MAP = {
     "M2K": "NY", "MYM": "NY",
     "NKD": "APAC",
     "ZN": "NY_PRE", "ZB": "NY_PRE",
-    "MGC": "LONDON",
+    "MGC": "LON",
 }
 
 LOOKBACK_DAYS = 35  # fetch extra to ensure 20+ trading days

@@ -43,9 +43,9 @@ def _load_trades_by_account_model(account_id: str, model_m: int) -> list[dict]:
         cur.execute(
             """SELECT trade_id, pnl, contracts, ts
                FROM p3_d03_trade_outcome_log
-               WHERE account_id = %s
+               WHERE account_id = %s AND model_m = %s
                ORDER BY ts""",
-            (account_id,),
+            (account_id, model_m),
         )
         rows = cur.fetchall()
     return [
@@ -113,19 +113,22 @@ def _compute_same_day_correlation(trades: list[dict]) -> float:
             if t["contracts"] and t["contracts"] > 0:
                 by_day[day].append(t["pnl"] / t["contracts"])
 
-    correlations = []
+    # Collect all same-day return pairs into two vectors for a single
+    # Pearson correlation estimate.  np.corrcoef on 1-element arrays
+    # (the previous code) always returns ±1/NaN — useless.
+    vec_a, vec_b = [], []
     for day, returns in by_day.items():
         if len(returns) >= 2:
-            arr = np.array(returns)
-            # Pairwise correlation for same-day trades
-            for i in range(len(arr)):
-                for j in range(i + 1, len(arr)):
-                    if arr[i] != 0 or arr[j] != 0:
-                        corr = np.corrcoef([arr[i]], [arr[j]])[0, 1]
-                        if not np.isnan(corr):
-                            correlations.append(corr)
+            for i in range(len(returns)):
+                for j in range(i + 1, len(returns)):
+                    vec_a.append(returns[i])
+                    vec_b.append(returns[j])
 
-    return float(np.mean(correlations)) if correlations else 0.0
+    if len(vec_a) < 3:
+        return 0.0
+
+    corr = np.corrcoef(vec_a, vec_b)[0, 1]
+    return float(corr) if not np.isnan(corr) else 0.0
 
 
 def estimate_cb_params(account_id: str, model_m: int):

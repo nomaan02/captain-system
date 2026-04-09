@@ -424,8 +424,8 @@ def get_last_known_value(asset_id: str, feature_name: str) -> Optional[float]:
     with get_cursor() as cur:
         cur.execute(
             """SELECT param_value FROM p3_d17_system_monitor_state
-               WHERE param_key = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY param_key
+               WHERE param_key = %s""",
             (f"feature_{asset_id}_{feature_name}",),
         )
         row = cur.fetchone()

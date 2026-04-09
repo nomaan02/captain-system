@@ -1,0 +1,22 @@
+Session 02 Passover
+Items completed: G-009, G-010, G-070, G-008, G-047, G-048 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-001: b5_injection_flow.py:95 queries p3_d06_injection_history with column names (candidate_id, timestamp, sharpe_current, etc.) that don't match the D06 schema (injection_id, ts, candidate, etc.). Query will fail at runtime.
+  - G-NEW-002: b5_injection_flow.py:128 queries p3_d11_pseudotrader_results with mismatched column names (pnl_impact, drawdown_impact, etc. vs actual schema columns). Same runtime failure.
+  - G-NEW-003: b9_diagnostic.py:779 queries p3_d01_aim_model_states with WHERE aim_id=%s but no asset_id filter. Since aim_id is not unique across assets, this returns a non-deterministic row.
+  - G-NEW-004: orchestrator.py:568 _run_daily asset query lacks LATEST ON — could return duplicate asset_ids from D00 history.
+  - G-NEW-005: orchestrator.py:303 _handle_aim_activation uses SELECT DISTINCT on append-only D01 without LATEST ON.
+  - G-NEW-006: b1_drift_detection.py:260,305 uses magic number 0.02 for inclusion threshold instead of importing DEFAULT_INCLUSION_THRESHOLD from b1_dma_update.py.
+Test status: 95 passed / 0 failed
+Audit skill results:
+  ln-624 (code-quality): PASS — 1 MEDIUM (pre-existing magic number), 7 LOW (style)
+  ln-625 (dependencies): PASS — river>=0.21 properly declared
+Notes:
+  - G-009/G-010: Initially used PARTITION BY aim_id alone for D01/D02 queries. Corrected to PARTITION BY aim_id, asset_id since aim_id is not unique across assets (6 AIMs x 10 assets = 60 unique pairs).
+  - G-070: 33 queries converted across 22 files. Skipped 6 global singletons (D07, D22, D26) where PARTITION BY has no meaning. Skipped 2 broken queries in b5_injection_flow.py (G-NEW-001/002). Skipped 3 "last N" queries (LIMIT 10/100). Skipped journal.py (SQLite, not QuestDB). Skipped scripts/.
+  - G-008: Loads AIM modifier values from D01 current_modifier JSON field. If modifier is empty dict or missing, that aim_id is simply excluded from the features dict (and run_drift_detection skips unfitted AIMs).
+  - G-048: ADWIN/autoencoder state persisted to D04.adwin_states as JSON with pickle+base64 for river's ADWIN object. State loaded lazily per-asset on first access, saved after each run_drift_detection call. Module-level _loaded_assets set prevents redundant DB reads.
+  - G-047: river>=0.21 added. Not available on host (container-only dep). b1_drift_detection.py already has a fallback SimplifiedADWIN that works without river.
+  - Matrix §6 Dashboard updated: UNRESOLVED 61→55, FIXED 6→12.
+  - Matrix §7 Changelog populated with all 6 fixes.

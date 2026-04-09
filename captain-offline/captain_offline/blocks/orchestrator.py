@@ -481,8 +481,8 @@ class OfflineOrchestrator:
                               max_daily_loss, profit_target, risk_goal,
                               evaluation_end_date
                        FROM p3_d08_tsm_state
-                       WHERE account_id = %s
-                       ORDER BY last_updated DESC LIMIT 1""",
+                       LATEST ON last_updated PARTITION BY account_id
+                       WHERE account_id = %s""",
                     (account_id,),
                 )
                 row = cur.fetchone()
@@ -568,8 +568,26 @@ class OfflineOrchestrator:
 
             for asset_id in assets:
                 run_aim_lifecycle(asset_id)
-                # Drift detection requires feature vectors — simplified here
-                run_drift_detection(asset_id, {})
+                # Load AIM modifier values from D01 as feature vectors
+                with get_cursor() as cur:
+                    cur.execute(
+                        """SELECT aim_id, current_modifier
+                           FROM p3_d01_aim_model_states
+                           LATEST ON last_updated PARTITION BY aim_id, asset_id
+                           WHERE asset_id = %s""",
+                        (asset_id,),
+                    )
+                    aim_rows = cur.fetchall()
+                aim_features = {}
+                for r in aim_rows:
+                    if r[1]:
+                        try:
+                            modifier = json.loads(r[1])
+                            if isinstance(modifier, dict) and modifier:
+                                aim_features[r[0]] = list(modifier.values())
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                run_drift_detection(asset_id, aim_features)
 
             asset_warmup_check()
 

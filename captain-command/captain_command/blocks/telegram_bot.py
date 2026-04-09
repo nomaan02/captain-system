@@ -99,7 +99,7 @@ def _query_system_status() -> dict:
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT captain_status, count() FROM p3_d00_asset_registry "
+                "SELECT captain_status, count() FROM p3_d00_asset_universe "
                 "WHERE captain_status IN ('ACTIVE', 'WARM_UP') GROUP BY captain_status"
             )
             for row in cur.fetchall():
@@ -109,7 +109,7 @@ def _query_system_status() -> dict:
                     result["warmup_assets"] = row[1]
 
             cur.execute(
-                "SELECT count() FROM p3_d03_trade_outcomes "
+                "SELECT count() FROM p3_d03_trade_outcome_log "
                 "WHERE exit_time IS NULL"
             )
             row = cur.fetchone()
@@ -159,7 +159,7 @@ def _query_open_positions(user_id: str) -> list[dict]:
             cur.execute(
                 """SELECT asset, direction, entry_price, tp_level, sl_level,
                           contracts, point_value, account_id
-                   FROM p3_d03_trade_outcomes
+                   FROM p3_d03_trade_outcome_log
                    WHERE user_id = %s AND exit_time IS NULL
                    ORDER BY entry_time DESC""",
                 (user_id,),

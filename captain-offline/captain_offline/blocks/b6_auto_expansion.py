@@ -306,8 +306,8 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
             with get_cursor() as cur:
                 cur.execute(
                     """SELECT locked_strategy FROM p3_d00_asset_universe
-                       WHERE asset_id = %s AND captain_status IN ('ACTIVE', 'DECAYED')
-                       ORDER BY last_updated DESC LIMIT 1""",
+                       LATEST ON last_updated PARTITION BY asset_id
+                       WHERE asset_id = %s AND captain_status IN ('ACTIVE', 'DECAYED')""",
                     (asset_id,),
                 )
                 row = cur.fetchone()

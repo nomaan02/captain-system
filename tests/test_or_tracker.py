@@ -46,8 +46,8 @@ class TestSessionRegistry:
     def test_asset_session_map(self):
         assert get_asset_session_type("ES") == "NY"
         assert get_asset_session_type("NKD") == "APAC"
-        assert get_asset_session_type("ZB") == "NY_PRE"
-        assert get_asset_session_type("MGC") == "LONDON"
+        assert get_asset_session_type("ZB") == "NY"
+        assert get_asset_session_type("MGC") == "LON"
 
     def test_or_times_ny(self):
         start, end = get_or_times("NY")

@@ -68,6 +68,7 @@ SESSION_IDS = {
     1: "NY",
     2: "LON",
     3: "APAC",
+    4: "NY_PRE",
 }
 
 # Regime labels

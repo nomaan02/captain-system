@@ -636,8 +636,8 @@ class OnlineOrchestrator:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT param_value FROM p3_d17_system_monitor_state
-                   WHERE param_key = 'manual_halt_all'
-                   ORDER BY last_updated DESC LIMIT 1"""
+                   LATEST ON last_updated PARTITION BY param_key
+                   WHERE param_key = 'manual_halt_all'"""
             )
             row = cur.fetchone()
         if row and row[0]:
@@ -672,8 +672,8 @@ class OnlineOrchestrator:
                           max_simultaneous_positions, max_portfolio_risk_pct,
                           correlation_threshold, user_kelly_ceiling
                    FROM p3_d16_user_capital_silos
-                   WHERE user_id = %s
-                   ORDER BY last_updated DESC LIMIT 1""",
+                   LATEST ON last_updated PARTITION BY user_id
+                   WHERE user_id = %s""",
                 (user_id,),
             )
             row = cur.fetchone()

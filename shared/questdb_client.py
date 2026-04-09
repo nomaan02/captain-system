@@ -64,7 +64,7 @@ def read_d00_row(asset_id: str, cur=None) -> dict | None:
     query = (
         "SELECT " + ", ".join(D00_COLUMNS)
         + " FROM p3_d00_asset_universe"
-        + " WHERE asset_id = %s ORDER BY last_updated DESC LIMIT 1"
+        + " LATEST ON last_updated PARTITION BY asset_id WHERE asset_id = %s"
     )
 
     if cur is not None:

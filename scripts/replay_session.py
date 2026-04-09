@@ -34,7 +34,7 @@ sys.path.insert(0, "/app")
 SESSION_CONFIG = {
     "NY":     {"or_start": "09:30", "or_end": "09:35", "eod": "15:55"},
     "NY_PRE": {"or_start": "06:00", "or_end": "06:05", "eod": "13:25"},
-    "LONDON": {"or_start": "03:00", "or_end": "03:05", "eod": "11:25"},
+    "LON": {"or_start": "03:00", "or_end": "03:05", "eod": "11:25"},
     "APAC":   {"or_start": "18:00", "or_end": "18:05", "eod": "02:55"},
 }
 
@@ -42,7 +42,7 @@ ASSET_SESSION_MAP = {
     "ES": "NY", "MES": "NY", "NQ": "NY", "MNQ": "NY",
     "M2K": "NY", "MYM": "NY",
     "NKD": "APAC",
-    "MGC": "LONDON",
+    "MGC": "LON",
     "ZB": "NY_PRE", "ZN": "NY_PRE",
 }
 
@@ -630,7 +630,7 @@ def main() -> int:
             continue
 
         # Compute contracts (full B4 Kelly)
-        session_id = {"NY": 1, "LONDON": 2, "APAC": 3, "NY_PRE": 1}.get(session_type, 1)
+        session_id = {"NY": 1, "LON": 2, "APAC": 3, "NY_PRE": 1}.get(session_type, 1)
         sizing = compute_contracts(
             asset_id, result["pnl_per_contract"], spec,
             kelly_params, ewma_states, user_capital, max_contracts,

@@ -35,8 +35,8 @@ def _get_aim_status(aim_id: int, asset_id: str) -> str | None:
     with get_cursor() as cur:
         cur.execute(
             """SELECT status FROM p3_d01_aim_model_states
-               WHERE aim_id = %s AND asset_id = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY aim_id, asset_id
+               WHERE aim_id = %s AND asset_id = %s""",
             (aim_id, asset_id),
         )
         row = cur.fetchone()
@@ -48,8 +48,8 @@ def _get_recent_effectiveness(aim_id: int, asset_id: str) -> float:
     with get_cursor() as cur:
         cur.execute(
             """SELECT recent_effectiveness FROM p3_d02_aim_meta_weights
-               WHERE aim_id = %s AND asset_id = %s
-               ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY aim_id, asset_id
+               WHERE aim_id = %s AND asset_id = %s""",
             (aim_id, asset_id),
         )
         row = cur.fetchone()

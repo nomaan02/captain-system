@@ -282,7 +282,8 @@ def _update_capital_silo(user_id: str, account_id: str, net_pnl: float):
         # Read current silo
         cur.execute(
             """SELECT total_capital, accounts FROM p3_d16_user_capital_silos
-               WHERE user_id = %s ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY user_id
+               WHERE user_id = %s""",
             (user_id,),
         )
         row = cur.fetchone()
@@ -307,7 +308,8 @@ def _update_intraday_cb_state(account_id: str, net_pnl: float, outcome: str, mod
         # Load current state
         cur.execute(
             """SELECT l_t, n_t, l_b, n_b FROM p3_d23_circuit_breaker_intraday
-               WHERE account_id = %s ORDER BY last_updated DESC LIMIT 1""",
+               LATEST ON last_updated PARTITION BY account_id
+               WHERE account_id = %s""",
             (account_id,),
         )
         row = cur.fetchone()

@@ -14,7 +14,7 @@ const useReplayStore = create((set, get) => ({
     date: new Date().toISOString().slice(0, 10),
     dateFrom: "",
     dateTo: "",
-    sessions: ["NY", "LONDON", "APAC", "NY_PRE"],
+    sessions: ["NY", "LON", "APAC", "NY_PRE"],
     capital: 150000,
     budgetDivisor: 20,
     riskGoal: "PASS_EVAL",

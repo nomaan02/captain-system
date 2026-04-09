@@ -15,8 +15,10 @@ On drift detected:
   3. Renormalise all DMA weights
 """
 
+import base64
 import json
 import logging
+import pickle
 from collections import deque
 
 from shared.questdb_client import get_cursor
@@ -80,6 +82,35 @@ class ADWINDetector:
             eps *= (4.0 / self.delta) ** 0.5
             return abs(mean_left - mean_right) > eps
 
+    def to_dict(self) -> dict:
+        """Serialize detector state for persistence."""
+        if self._use_river:
+            return {
+                "type": "river",
+                "delta": self.delta,
+                "state": base64.b64encode(pickle.dumps(self._detector)).decode(),
+            }
+        return {
+            "type": "fallback",
+            "delta": self.delta,
+            "window": list(self._window),
+            "count": self._count,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ADWINDetector":
+        """Restore detector from persisted state."""
+        obj = cls(delta=d.get("delta", ADWIN_DELTA))
+        if d.get("type") == "river" and obj._use_river:
+            try:
+                obj._detector = pickle.loads(base64.b64decode(d["state"]))
+            except Exception:
+                pass  # fresh detector on deserialization failure
+        elif d.get("type") == "fallback" and not obj._use_river:
+            obj._window = deque(d.get("window", []), maxlen=500)
+            obj._count = d.get("count", 0)
+        return obj
+
 
 class SimpleAutoEncoder:
     """Simplified AutoEncoder for feature drift detection.
@@ -109,15 +140,86 @@ class SimpleAutoEncoder:
         z = (np.array(features) - self.mean) / self.std
         return float(np.sum(z ** 2))
 
+    def to_dict(self) -> dict:
+        """Serialize autoencoder state for persistence."""
+        return {
+            "mean": self.mean.tolist() if self.mean is not None else None,
+            "std": self.std.tolist() if self.std is not None else None,
+            "fitted": self.fitted,
+        }
 
-# In-memory storage for detector states (per AIM per asset)
-# In production, these are persisted in P3-D04.adwin_states
+    @classmethod
+    def from_dict(cls, d: dict) -> "SimpleAutoEncoder":
+        """Restore autoencoder from persisted state."""
+        import numpy as np
+        obj = cls()
+        if d.get("fitted") and d.get("mean") is not None:
+            obj.mean = np.array(d["mean"])
+            obj.std = np.array(d["std"])
+            obj.fitted = True
+        return obj
+
+
+# In-memory cache for detector states (per AIM per asset).
+# Loaded from D04.adwin_states on first access; saved after each run.
 _adwin_states: dict[tuple[int, str], ADWINDetector] = {}
 _autoencoder_states: dict[tuple[int, str], SimpleAutoEncoder] = {}
+_loaded_assets: set[str] = set()
+
+
+def _load_drift_states(asset_id: str):
+    """Load persisted ADWIN/autoencoder states from D04.adwin_states."""
+    if asset_id in _loaded_assets:
+        return
+    _loaded_assets.add(asset_id)
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT adwin_states FROM p3_d04_decay_detector_states "
+                "LATEST ON last_updated PARTITION BY asset_id "
+                "WHERE asset_id = %s",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return
+        states = json.loads(row[0])
+        for aim_str, ad in states.get("adwin", {}).items():
+            _adwin_states[(int(aim_str), asset_id)] = ADWINDetector.from_dict(ad)
+        for aim_str, ae in states.get("autoencoder", {}).items():
+            _autoencoder_states[(int(aim_str), asset_id)] = SimpleAutoEncoder.from_dict(ae)
+        logger.debug("Loaded drift states for %s from D04", asset_id)
+    except Exception as exc:
+        logger.warning("Failed to load drift states for %s: %s", asset_id, exc)
+
+
+def _save_drift_states(asset_id: str):
+    """Persist ADWIN/autoencoder states to D04.adwin_states."""
+    adwin_d = {}
+    ae_d = {}
+    for (aid, a_id), det in _adwin_states.items():
+        if a_id == asset_id:
+            adwin_d[str(aid)] = det.to_dict()
+    for (aid, a_id), ae in _autoencoder_states.items():
+        if a_id == asset_id:
+            ae_d[str(aid)] = ae.to_dict()
+    states_json = json.dumps({"adwin": adwin_d, "autoencoder": ae_d})
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "INSERT INTO p3_d04_decay_detector_states "
+                "(asset_id, adwin_states, last_updated) "
+                "VALUES (%s, %s, now())",
+                (asset_id, states_json),
+            )
+    except Exception as exc:
+        logger.warning("Failed to save drift states for %s: %s", asset_id, exc)
 
 
 def _get_adwin(aim_id: int, asset_id: str) -> ADWINDetector:
     key = (aim_id, asset_id)
+    if key not in _adwin_states:
+        _load_drift_states(asset_id)
     if key not in _adwin_states:
         _adwin_states[key] = ADWINDetector()
     return _adwin_states[key]
@@ -125,6 +227,8 @@ def _get_adwin(aim_id: int, asset_id: str) -> ADWINDetector:
 
 def _get_autoencoder(aim_id: int, asset_id: str) -> SimpleAutoEncoder:
     key = (aim_id, asset_id)
+    if key not in _autoencoder_states:
+        _load_drift_states(asset_id)
     if key not in _autoencoder_states:
         _autoencoder_states[key] = SimpleAutoEncoder()
     return _autoencoder_states[key]
@@ -135,6 +239,7 @@ def _renormalise_weights(asset_id: str):
     with get_cursor() as cur:
         cur.execute(
             """SELECT aim_id, inclusion_probability FROM p3_d02_aim_meta_weights
+               LATEST ON last_updated PARTITION BY aim_id, asset_id
                WHERE asset_id = %s ORDER BY aim_id""",
             (asset_id,),
         )
@@ -143,12 +248,7 @@ def _renormalise_weights(asset_id: str):
     if not rows:
         return
 
-    # Deduplicate by aim_id (take first = latest due to QuestDB ordering)
-    by_aim = {}
-    for r in rows:
-        if r[0] not in by_aim:
-            by_aim[r[0]] = r[1]
-
+    by_aim = {r[0]: r[1] for r in rows}
     total = sum(by_aim.values())
     if total <= 0:
         return
@@ -196,8 +296,8 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
             with get_cursor() as cur:
                 cur.execute(
                     """SELECT inclusion_probability FROM p3_d02_aim_meta_weights
-                       WHERE aim_id = %s AND asset_id = %s
-                       ORDER BY last_updated DESC LIMIT 1""",
+                       LATEST ON last_updated PARTITION BY aim_id, asset_id
+                       WHERE aim_id = %s AND asset_id = %s""",
                     (aim_id, asset_id),
                 )
                 row = cur.fetchone()
@@ -216,3 +316,6 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
         _renormalise_weights(asset_id)
         logger.info("Drift detection for %s: %d AIMs flagged, weights renormalised",
                      asset_id, len(drifted_aims))
+
+    # Persist state to D04 so it survives container restarts
+    _save_drift_states(asset_id)
