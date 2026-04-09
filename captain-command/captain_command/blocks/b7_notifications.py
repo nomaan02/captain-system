@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from shared.questdb_client import get_cursor
+from shared.redis_client import get_redis_client, CH_ALERTS
 from shared.constants import NOTIFICATION_PRIORITY_VALUES, SYSTEM_TIMEZONE
 
 logger = logging.getLogger(__name__)
@@ -294,6 +295,21 @@ def route_notification(
                         )
 
                     delivery["telegram_delivered"] = sent
+
+    # Publish to Redis captain:alerts channel
+    try:
+        alert_payload = json.dumps({
+            "notif_id": notif_id,
+            "priority": priority,
+            "event_type": event_type,
+            "message": message,
+            "source": notif.get("source", "SYSTEM"),
+            "asset": asset or "",
+            "timestamp": ts,
+        })
+        get_redis_client().publish(CH_ALERTS, alert_payload)
+    except Exception as exc:
+        logger.warning("Failed to publish alert to Redis: %s", exc)
 
     # Log to P3-D10
     _log_notification_full(

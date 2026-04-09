@@ -254,7 +254,8 @@ def get_incident_detail(incident_id: str) -> dict:
             }
     except Exception as exc:
         logger.error("Incident detail query failed: %s", exc, exc_info=True)
-    return {"error": str(exc)}
+        return {"error": "Incident detail query failed"}
+    return {"error": "Unexpected state"}
 
 
 # ---------------------------------------------------------------------------

@@ -618,7 +618,8 @@ class CaptainTelegramBot:
                     )
                     return False
         except Exception as exc:
-            logger.error("Telegram send failed for chat %s: %s", chat_id, exc)
+            err_msg = str(exc).replace(self._token, "***") if self._token else str(exc)
+            logger.error("Telegram send failed for chat %s: %s", chat_id, err_msg)
             return False
 
     def send_signal_notification(self, chat_id: str, asset: str,

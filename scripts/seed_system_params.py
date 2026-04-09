@@ -38,6 +38,7 @@ SYSTEM_PARAMS = {
     "circuit_breaker_vix_threshold": {"value": 50, "category": "risk"},
     "circuit_breaker_data_hold_count": {"value": 3, "category": "risk"},
     "network_concentration_threshold": {"value": 0.80, "category": "risk"},
+    "f_target_max": {"value": 0.03, "category": "risk"},
 
     # --- Execution ---
     "execution_mode": {"value": "MANUAL", "category": "execution"},

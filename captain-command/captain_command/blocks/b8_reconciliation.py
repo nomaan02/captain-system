@@ -333,7 +333,7 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
     # Step 4: MDD% impact check
     A = ac.get("current_balance", 0)
     mdd_limit = ac.get("max_drawdown_limit", 4500)
-    f_target_max = 0.03  # maximum acceptable MDD fraction
+    f_target_max = _get_d17_param("f_target_max", 0.03)
 
     A_post = A - withdraw_amount
     if A_post > 0:
@@ -447,6 +447,25 @@ def _reset_daily_counters():
 # ---------------------------------------------------------------------------
 
 
+def _get_d17_param(key: str, default: float) -> float:
+    """Read a single parameter from P3-D17 system_monitor_state."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT param_value FROM p3_d17_system_monitor_state
+                   WHERE param_key = %s
+                   ORDER BY last_updated DESC LIMIT 1""",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return float(json.loads(row[0]))
+    except Exception as exc:
+        logger.warning("D17 param %s lookup failed, using default %.4f: %s",
+                       key, default, exc)
+    return default
+
+
 def _get_all_accounts() -> list[dict]:
     """Fetch all active accounts from P3-D08."""
     try:
@@ -481,9 +500,76 @@ def _get_all_accounts() -> list[dict]:
 
 
 def _update_account_balance(ac_id: str, new_balance: float):
-    """Update account balance in P3-D08 (via insert — QuestDB append-only)."""
+    """Update account balance in P3-D08 (via insert — QuestDB append-only).
+
+    Reads the latest D08 snapshot for the account, replaces current_balance
+    with *new_balance*, and appends a corrected row.  Also writes an audit
+    entry to the session event log.
+    """
     try:
         with get_cursor() as cur:
+            # 1. Read latest D08 snapshot to carry forward all fields
+            cur.execute(
+                """SELECT account_id, user_id, name, classification,
+                          starting_balance, current_balance, current_drawdown,
+                          daily_loss_used, profit_target,
+                          max_drawdown_limit, max_daily_loss, max_contracts,
+                          scaling_plan, commission_per_contract,
+                          instrument_permissions, overnight_allowed,
+                          trading_hours, margin_per_contract, margin_buffer_pct,
+                          pass_probability, simulation_date, risk_goal,
+                          evaluation_end_date, evaluation_stages,
+                          topstep_optimisation, topstep_params, topstep_state,
+                          fee_schedule, payout_rules, scaling_plan_active,
+                          scaling_tier_micros
+                   FROM p3_d08_tsm_state
+                   WHERE account_id = %s
+                   ORDER BY last_updated DESC
+                   LIMIT 1""",
+                (ac_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                logger.warning("No D08 row for account %s — cannot correct balance", ac_id)
+                return
+
+            # 2. Insert corrected D08 row with updated current_balance
+            params = list(row)
+            params[5] = new_balance  # current_balance is column index 5
+            params.append(datetime.now().isoformat())  # last_updated
+
+            cur.execute(
+                """INSERT INTO p3_d08_tsm_state(
+                       account_id, user_id, name, classification,
+                       starting_balance, current_balance, current_drawdown,
+                       daily_loss_used, profit_target,
+                       max_drawdown_limit, max_daily_loss, max_contracts,
+                       scaling_plan, commission_per_contract,
+                       instrument_permissions, overnight_allowed,
+                       trading_hours, margin_per_contract, margin_buffer_pct,
+                       pass_probability, simulation_date, risk_goal,
+                       evaluation_end_date, evaluation_stages,
+                       topstep_optimisation, topstep_params, topstep_state,
+                       fee_schedule, payout_rules, scaling_plan_active,
+                       scaling_tier_micros, last_updated
+                   ) VALUES(
+                       %s, %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s
+                   )""",
+                params,
+            )
+
+            # 3. Audit trail in session event log
             cur.execute(
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
@@ -494,6 +580,7 @@ def _update_account_balance(ac_id: str, new_balance: float):
                     json.dumps({"new_balance": new_balance}),
                 ),
             )
+            logger.info("D08 balance corrected for %s: %.2f", ac_id, new_balance)
     except Exception as exc:
         logger.error("Balance update failed for %s: %s", ac_id, exc, exc_info=True)
 

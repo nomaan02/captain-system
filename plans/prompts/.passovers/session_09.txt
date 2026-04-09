@@ -1,0 +1,27 @@
+Session 09 Passover
+Items completed: G-022, G-019, G-054, G-057, G-058, G-059 (all 6)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-643-api-contract-auditor: running post-session (background)
+  - ln-629-lifecycle-auditor: running post-session (background)
+  Reports at: .hex-skills/runtime-artifacts/runs/standalone-643-session09/ and standalone-629-session09/
+Notes:
+  - G-022: _update_account_balance now reads latest D08 row (ORDER BY last_updated DESC LIMIT 1), re-inserts
+    with corrected current_balance, and keeps event log audit trail. Uses positional index 5 for current_balance.
+  - G-019: Added _get_d17_param(key, default) helper using p3_d17_system_monitor_state. Added f_target_max=0.03
+    to seed_system_params.py risk category. Called at b8:336 instead of hardcoded literal.
+  - G-054: start_replay and start_batch_replay both clean up completed/error/stopped sessions for the user
+    before registering the new session. Existing completed session is deleted (not kept) — safe because
+    save_replay/run_whatif would have been called before starting a new replay anyway.
+  - G-057: route_notification in b7_notifications.py now imports CH_ALERTS from shared.redis_client and
+    publishes a JSON payload to captain:alerts after GUI/Telegram delivery loop. Try/except logs warning
+    on failure without crashing the notification flow.
+  - G-058: get_incident_detail in b9_incident_response.py: return {"error": str(exc)} was OUTSIDE the
+    except block at same indentation as try:, causing NameError on exc. Moved inside except block.
+    Error message uses generic string to avoid exception leakage.
+  - G-059: telegram_bot.py send_message except block: self._token replaced with *** in str(exc) before
+    logging. urllib errors often embed the request URL (which contains the bot token in the path).
+  - Matrix §6 Dashboard: UNRESOLVED 18→12, FIXED 39→45
+  - Matrix §7 Changelog populated with all 6 fixes.

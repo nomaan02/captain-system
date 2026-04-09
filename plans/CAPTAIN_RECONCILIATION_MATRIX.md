@@ -340,37 +340,37 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §7 Command B8 — reconciliation corrects D08 balance on divergence
 - **Code:** captain-command/captain_command/blocks/b8_reconciliation.py:483-515 — logs but never writes D08 correction
 - **Delta:** D08 permanently diverges from broker; SOD compounding wrong
-- **Deps:** None | **Skill:** ln-643 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-643 | **Status:** FIXED
 
 #### G-019 | HIGH | Command B8 | Reconciliation
 - **Spec:** §7 B8 — payout MDD threshold from D17 system_params
 - **Code:** b8_reconciliation.py:336 — hardcoded `f_target_max = 0.03`
 - **Delta:** Cannot change without code modification; wrong for non-150K accounts
-- **Deps:** None | **Skill:** ln-643 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-643 | **Status:** FIXED
 
 #### G-054 | MEDIUM | Command B11 | Replay Runner
 - **Spec:** §7 B11 — replay sessions cleaned up on completion
 - **Code:** captain-command/captain_command/blocks/b11_replay_runner.py:206-218 — completed sessions never removed from `_active_sessions`
 - **Delta:** Memory leak; completed sessions accumulate
-- **Deps:** None | **Skill:** ln-654 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-654 | **Status:** FIXED
 
 #### G-057 | MEDIUM | Command B7 | Notifications
 - **Spec:** §7 B7 — publishes to `captain:alerts` Redis channel
 - **Code:** b7_notifications.py:7 — CH_ALERTS unused in B7
 - **Delta:** Notifications never reach Redis alerts channel
-- **Deps:** None | **Skill:** ln-643 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-643 | **Status:** FIXED
 
 #### G-058 | MEDIUM | Command B9 | Incident Response
 - **Spec:** §7 B9 — incident response handler
 - **Code:** b9_incident_response.py:257 — `NameError` on `exc` outside try/except
 - **Delta:** Dead code; would crash if reached
-- **Deps:** None | **Skill:** ln-626 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-626 | **Status:** FIXED
 
 #### G-059 | MEDIUM | Command | Telegram
 - **Spec:** §10 — secrets not in logs or memory
 - **Code:** captain-command/captain_command/telegram_bot.py:600 — bot token in URL strings
 - **Delta:** Token in HTTP access logs and memory
-- **Deps:** None | **Skill:** ln-621 | **Status:** UNRESOLVED
+- **Deps:** None | **Skill:** ln-621 | **Status:** FIXED
 
 ---
 
@@ -667,10 +667,10 @@ Full audit skill run against completed codebase. No code changes.
 
 | Status | Count |
 |--------|-------|
-| UNRESOLVED | 18 |
+| UNRESOLVED | 12 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 33 |
-| FIXED | 39 |
+| FIXED | 45 |
 | VERIFIED | 10 |
 | **TOTAL** | **100** |
 
@@ -733,3 +733,9 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 08 | FIXED | G-050 | b9_diagnostic.py: MAX_ACTION_QUEUE_SIZE=1000; oldest entries dropped when exceeded before D22 store |
 | 2026-04-09 | 08 | FIXED | G-052 | b8_kelly_update.py: comprehensive docstring documenting D12 join strategy (per-cell kelly_full + shrinkage row at regime=ALL,session=0) |
 | 2026-04-09 | 08 | FIXED | G-034 | Removed dead b3_aim_aggregation.py shim; inlined imports to shared.aim_compute in orchestrator.py and replay_full_pipeline.py |
+| 2026-04-09 | 09 | FIXED | G-022 | _update_account_balance: reads latest D08 snapshot, inserts corrected row with updated current_balance (QuestDB append). Event log audit trail preserved. |
+| 2026-04-09 | 09 | FIXED | G-019 | f_target_max read from D17 via _get_d17_param() with 0.03 fallback; f_target_max added to seed_system_params.py risk category |
+| 2026-04-09 | 09 | FIXED | G-054 | start_replay + start_batch_replay: completed/error/stopped sessions removed from _active_sessions on new replay start. Prevents unbounded dict growth. |
+| 2026-04-09 | 09 | FIXED | G-057 | route_notification publishes JSON payload to CH_ALERTS (captain:alerts) Redis channel after GUI/Telegram delivery |
+| 2026-04-09 | 09 | FIXED | G-058 | get_incident_detail: moved return inside except block to fix NameError on exc; error message uses generic string (no exception leakage) |
+| 2026-04-09 | 09 | FIXED | G-059 | telegram_bot.py send_message: self._token masked with *** in exception strings before logging |

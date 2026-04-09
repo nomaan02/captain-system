@@ -211,11 +211,14 @@ def start_replay(user_id, date_str, sessions, config_overrides, speed, gui_push_
     """Start a new replay. Returns replay_id. Stops any existing replay for this user."""
     from shared.replay_engine import load_replay_config
 
-    # Stop existing replay for this user
+    # Stop existing replay for this user and clean up completed sessions
     with _lock:
         for rid, rs in list(_active_sessions.items()):
-            if rs.user_id == user_id and rs._status in ("running", "paused", "pending"):
-                rs.stop()
+            if rs.user_id == user_id:
+                if rs._status in ("running", "paused", "pending"):
+                    rs.stop()
+                if rs._status in ("complete", "error", "stopped"):
+                    del _active_sessions[rid]
 
     # Parse target date
     try:
@@ -618,11 +621,14 @@ def start_batch_replay(user_id, date_from, date_to, sessions, config_overrides, 
     from datetime import timedelta
     from shared.replay_engine import load_replay_config
 
-    # Stop existing replay for this user
+    # Stop existing replay for this user and clean up completed sessions
     with _lock:
         for rid, rs in list(_active_sessions.items()):
-            if rs.user_id == user_id and rs._status in ("running", "paused", "pending"):
-                rs.stop()
+            if rs.user_id == user_id:
+                if rs._status in ("running", "paused", "pending"):
+                    rs.stop()
+                if rs._status in ("complete", "error", "stopped"):
+                    del _active_sessions[rid]
 
     try:
         d_from = date.fromisoformat(date_from)
