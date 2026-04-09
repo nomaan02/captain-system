@@ -1,0 +1,75 @@
+# Agent B — Validation Cycle for Session 05
+
+You are **Agent B (Validator)**. This is validation cycle 05.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 05)
+
+Session 05 Passover
+Items completed: G-024, G-029, G-051, G-036, G-065, G-007 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-014: 15 remaining datetime.now() in captain-online (b7_shadow_monitor, b7_position_monitor, b8_concentration_monitor, b9_capacity_evaluation, b6_signal_output, b4_kelly_sizing, b1_data_ingestion) and 55 in captain-command (13 files). Same REQ-4 timezone violation as G-024/G-029/G-051 but outside session 05 scope. Should be addressed in a future session using the same now_et() helper.
+Decisions still needed: none
+Test status: 95 passed / 0 failed
+Audit skill results: pending (ln-647, ln-641 to be run post-session)
+Notes:
+  - Added now_et() helper to shared/constants.py — returns datetime.now(ZoneInfo("America/New_York")). All offline and the 3 targeted online sites now use it. Future sessions should migrate remaining online + command sites.
+  - G-024: orchestrator _run_scheduler now uses now_et() for daily/weekly/monthly/quarterly checks.
+  - G-029: b1_data_ingestion.py (roll calendar date, alert timestamp) and b1_features.py (compute_all_features today) fixed.
+  - G-051: All 17 datetime.now() across 6 offline files (orchestrator, b2_level_escalation, b4_injection, b5_sensitivity, b7_tsm_simulation, b9_diagnostic) replaced. Zero naive timestamps remain in captain-offline.
+  - G-036: _get_session_open_time() now reads or_start from config/session_registry.json via asset_session_map. NY=09:30, LON=03:00, APAC=18:00, NY_PRE=06:00. Falls back to 09:30 ET on error.
+  - G-065: Already fixed in Session 01 as part of G-017. ZN/ZB mapped to NY in session_registry.json. Status updated from UNRESOLVED to FIXED.
+  - G-007: _get_contract_multiplier() now queries D00 point_value via LATEST ON. Falls back to 50.0 (ES) if query fails. Point values range from 0.5 (MYM) to 1000.0 (ZB/ZN).
+  - Matrix §6 Dashboard updated: UNRESOLVED 42->36, FIXED 19->25.
+  - Matrix §7 Changelog populated with all 6 fixes.
+  - The b1_data_ingestion.py _assert_system_timezone() utility at ~line 712 still uses datetime.now().astimezone() — this is a timezone CHECK (not a timestamp), so left as-is.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 05:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 05 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

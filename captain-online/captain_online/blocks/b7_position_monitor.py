@@ -37,12 +37,13 @@ from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, 
 from shared.constants import TRADE_OUTCOME_VALUES
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
-from shared.vix_provider import get_latest_vix_close
+from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 10
-VIX_SPIKE_DEFAULT_THRESHOLD = 50.0
+VIX_SPIKE_Z_THRESHOLD = 2.0  # Spec §2 B7: z-score against 60-day trailing
 
 # Module-level cache for latest regime per asset, set by orchestrator via
 # update_regime_cache() before each monitoring pass.
@@ -228,7 +229,7 @@ def resolve_commission(account_id: str, contracts: int, asset_id: str, tsm_confi
     tsm = tsm_configs.get(account_id, {})
 
     # Source 2: fee_schedule.fees_by_instrument (V3 priority)
-    fee_schedule = _parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
@@ -253,7 +254,7 @@ def get_expected_fee(tsm: dict, asset_id: str) -> float:
 
     Same logic as in B4 — factored here for shared use.
     """
-    fee_schedule = _parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
@@ -332,8 +333,8 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
         # D23 circuit breaker
         l_t = (d23_row[0] or 0.0) + net_pnl if d23_row else net_pnl
         n_t = (d23_row[1] or 0) + 1 if d23_row else 1
-        l_b = _parse_json(d23_row[2], {}) if d23_row else {}
-        n_b = _parse_json(d23_row[3], {}) if d23_row else {}
+        l_b = parse_json(d23_row[2], {}) if d23_row else {}
+        n_b = parse_json(d23_row[3], {}) if d23_row else {}
         if model_m:
             l_b[model_m] = l_b.get(model_m, 0.0) + net_pnl
             n_b[model_m] = n_b.get(model_m, 0) + 1
@@ -459,9 +460,9 @@ def _get_api_commission(account_id: str, asset_id: str = "", tsm: dict | None = 
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT value FROM system_params "
-                "LATEST ON ts PARTITION BY key "
-                "WHERE key = 'default_commission_per_contract'"
+                "SELECT param_value FROM p3_d17_system_monitor_state "
+                "LATEST ON last_updated PARTITION BY param_key "
+                "WHERE param_key = 'default_commission_per_contract'"
             )
             row = cur.fetchone()
             if row:
@@ -474,28 +475,20 @@ def _resolve_actual_entry_price(pos: dict) -> float | None:
     return pos.get("actual_entry_price")
 
 def _check_vix_spike(pos: dict):
-    """Check if VIX exceeds spike threshold and alert user."""
+    """Check if VIX z-score > 2.0 against 60-day trailing mean/stdev (spec §2 B7)."""
     try:
-        vix = get_latest_vix_close()
-        if vix is None:
+        closes = get_trailing_vix_closes(lookback=60)
+        if not closes or len(closes) < 10:
+            return  # Insufficient history
+        current = closes[-1]
+        mean_60d = sum(closes) / len(closes)
+        stdev_60d = (sum((v - mean_60d) ** 2 for v in closes) / len(closes)) ** 0.5
+        if stdev_60d == 0:
             return
-        # Load threshold from D17, fall back to default
-        threshold = VIX_SPIKE_DEFAULT_THRESHOLD
-        try:
-            with get_cursor() as cur:
-                cur.execute(
-                    "SELECT value FROM system_params "
-                    "LATEST ON ts PARTITION BY key "
-                    "WHERE key = 'circuit_breaker_vix_threshold'"
-                )
-                row = cur.fetchone()
-                if row:
-                    threshold = float(row[0])
-        except Exception:
-            pass  # use default threshold
-        if vix >= threshold:
+        z_score = (current - mean_60d) / stdev_60d
+        if z_score > 2.0:
             _notify(pos["user_id"], "HIGH",
-                    f"VIX spike: {vix:.1f} >= {threshold:.0f} while {pos['asset']} position open")
+                    f"VIX spike: {current:.1f} (z={z_score:.2f}) while {pos['asset']} position open")
     except Exception:
         logger.debug("_check_vix_spike: failed for %s", pos.get("asset"))
 
@@ -521,12 +514,3 @@ def _parse_close_time(trading_hours: str) -> datetime | None:
         return None
 
 
-def _parse_json(raw, default):
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default

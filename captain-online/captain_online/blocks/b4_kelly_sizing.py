@@ -35,6 +35,7 @@ from datetime import datetime
 from typing import Optional
 
 from shared.statistics import get_ewma_for_regime
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def run_kelly_sizing(
         or None if user is blocked (silo drawdown).
     """
     user_id = user_silo.get("user_id", "unknown")
-    accounts = _parse_json(user_silo.get("accounts", "[]"), [])
+    accounts = parse_json(user_silo.get("accounts", "[]"), [])
 
     logger.info("ON-B4: Kelly sizing for user %s (%d accounts, %d assets)",
                 user_id, len(accounts), len(active_assets))
@@ -380,12 +381,12 @@ def _compute_topstep_daily_cap(tsm: dict, strategy_sl: float = 4.0, point_value:
     """
     if not tsm.get("topstep_optimisation", False):
         return 999
-    topstep_state = _parse_json(tsm.get("topstep_state"), {})
+    topstep_state = parse_json(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
     E = computed_sod.get("E_daily_exposure", 0)
     if E <= 0:
         # Fallback to static cap
-        topstep_params = _parse_json(tsm.get("topstep_params"), {})
+        topstep_params = parse_json(tsm.get("topstep_params"), {})
         return topstep_params.get("daily_contract_cap", 999)
     risk_per_trade = strategy_sl * point_value
     if risk_per_trade <= 0:
@@ -415,7 +416,7 @@ def _get_expected_fee(tsm: dict, asset_id: str) -> float:
     Per Nomaan_Edits_Fees.md Change 2:
     Read from fee_schedule.fees_by_instrument first, fall back to commission_per_contract.
     """
-    fee_schedule = _parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
@@ -448,12 +449,3 @@ def _load_system_param(key: str, default):
     return default
 
 
-def _parse_json(raw, default):
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default

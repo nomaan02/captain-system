@@ -1,0 +1,91 @@
+# Agent B — Validation Cycle for Session 10
+
+You are **Agent B (Validator)**. This is validation cycle 10.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 10)
+
+Session 10 Passover
+Items completed: G-015, G-016, G-078, G-079, G-080, G-081 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-001: Duplicate key 7 in _AIM_NAMES dict (aim_compute.py:103-104). 7:"DISABLED" then 7:"COT", first is dead.
+  - G-NEW-002: CB trips never publish to captain:alerts (b5c_circuit_breaker.py). Only logger.info, no Redis alert.
+  - G-NEW-003: L6 _check_manual_halt is a permanent stub returning False. No D17 parameter lookup wired.
+  - G-NEW-004 (HIGH): api.py _process_health, _api_connections, _last_signal_time written by bg threads, read by health()/status() with no lock.
+  - G-NEW-005 (MEDIUM): api.py status() and health() read _ws_sessions without _ws_lock.
+  - G-NEW-006 (MEDIUM): api.py route_command() called synchronously inside async websocket_endpoint, blocks event loop during DB writes.
+  - G-NEW-007 (LOW): api.py set_event_loop() and set_telegram_bot() write globals without lock (write-once-at-startup, comment-only fix).
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-628-concurrency-auditor: completed. Score 7.8/10 (up from 5.3). 4 remaining gaps flagged.
+  - ln-641-pattern-analyzer: completed. AIM dispatch correct, CB V3 documented. 3 new findings flagged.
+Notes:
+  - G-015: threading.Lock (_state_lock) added to b2_gui_data_server.py. Protects _user_stream,
+    _account_data, _pipeline_stage. build_dashboard_snapshot() snapshots all three atomically
+    under lock, then passes snapshots to _get_capital_silo(user_stream=) and
+    _get_api_connection_status(user_stream=, account_data=). Lock NOT held during DB queries.
+  - G-016: threading.Lock (_ws_lock) added to api.py. Protects _ws_sessions dict across async
+    event loop (websocket_endpoint connect/disconnect) and background threads (gui_push).
+    gui_push snapshots session list under lock. All mutation sites (add, discard, pop) guarded.
+  - G-078: _aim16_hmm re-added to dispatch table in shared/aim_compute.py per DEC-06 resolution A.
+    Online B3 now invokes HMM inference for session budget allocation.
+  - G-079: 7 features without replay data sources stubbed as None in aim_feature_loader.py:
+    pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis.
+    Stubs set BEFORE real feature loading so real values override if available.
+  - G-080: b5c_circuit_breaker.py docstring updated: L5/L6 marked [V3 amendment] with explanatory
+    paragraph citing DEC-03 resolution B.
+  - G-081: _get_ewma_for_regime() extracted to shared/statistics.py as get_ewma_for_regime().
+    Local copies deleted from b4_kelly_sizing.py, b5_trade_selection.py, b6_signal_output.py.
+    All three files now import from shared.statistics.
+  - Matrix §6 Dashboard: UNRESOLVED 12→6, FIXED 45→51
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 10:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 10 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

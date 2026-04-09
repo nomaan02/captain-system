@@ -1,0 +1,41 @@
+Write permissions aren't being granted. Here's my complete validation report:
+
+---
+
+```
+=== VALIDATION CYCLE 12 REPORT ===
+Findings validated: 3
+  ALIGNED:   3 (G-066, G-067, G-068)
+  PARTIAL:   0
+  DIVERGENT: 0
+Cumulative: 25 / 67 total (3 new VERIFIED)
+Open concerns: G-NEW-027 (block slot collision — b8/b9 each have two files)
+```
+
+---
+
+### G-066 | Session Controller | ALIGNED
+
+**Code verified:** `b9_session_controller.py` (150 lines). Loads `session_registry.json` with fallback defaults. Exports `get_session_open_times()`, `is_session_opening()`, `get_assets_for_session()`, `get_session_config()`.
+
+**Orchestrator integration:** Lines 41-43 import from b9_session_controller. Line 51: `SESSION_OPEN_TIMES = get_session_open_times()`. Line 139: `_is_session_opening()` delegates to `_sc_is_session_opening()` while keeping the evaluated-today guard.
+
+**APAC fix confirmed:** Default (18, 0) matches session_registry.json `APAC.or_start = "18:00"` (was incorrectly (20, 0) in old orchestrator).
+
+**Fact-check:** 8/8 PASS. SESSION_IDS, SYSTEM_TIMEZONE exist. Registry has 4 sessions + 19 asset mappings.
+
+### G-067 | OR Tracker Rename | ALIGNED
+
+**Rename verified:** `or_tracker.py` no longer exists (Glob: no files found). `b8_or_tracker.py` exists with original content preserved. All 4 Python files updated (main.py:28, orchestrator.py:284/386, test_or_tracker.py:15-16, replay_full_pipeline.py:337/510). Zero stale imports to old path (Grep: no matches).
+
+### G-068 | Compliance Gate | ALIGNED
+
+**Code verified:** `b12_compliance_gate.py` (104 lines). Reads flat `rts6_*` keys via prefix filter — fixes b3 bug that read nonexistent `gate.get("requirements", {})`. `_EXPECTED_REQUIREMENTS = 11` matches compliance_gate.json (11 rts6_* keys). `AUTO_EXECUTE` env var wired in at line 86.
+
+**Consumer migration:** b3_api_adapter line 31 imports from b12, line 209 uses it. b3 inline function removed (0 definitions, comment at line 469-471). b2_gui_data_server line 922 imports `get_gate_status`. verify_topstep_integration.py imports via b3 re-export (works because b3 imports from b12 at module level).
+
+### Matrix updates needed (write permissions blocked):
+
+1. **G-066, G-067, G-068:** FIXED -> VERIFIED (Cycle 12)
+2. **Dashboard:** FIXED 60->57, VERIFIED 10->13
+3. **Changelog entry:** `| 2026-04-09 | 12-V | VERIFIED | G-066, G-067, G-068 | Validation Cycle 12: all 3 ALIGNED. G-NEW-027 slot collision tracked. |`

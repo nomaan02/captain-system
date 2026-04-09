@@ -1,335 +1,415 @@
-# Concurrency Audit Report — Captain System
+# Concurrency Audit Report
 
-**Auditor:** ln-628-concurrency-auditor  
-**Date:** 2026-04-09  
-**Category:** Concurrency  
-**Score:** 5.3 / 10  
-**Issues:** 14 confirmed (C:1 H:1 M:5 L:7)
+<!--AUDIT-META
+worker: ln-628-concurrency-auditor
+category: Concurrency
+domain: global
+scan_path: /home/nomaan/captain-system
+score: 4.4
+total_issues: 8
+critical: 1
+high: 2
+medium: 2
+low: 3
+status: completed
+run_id: standalone-628-20260409134040
+produced_at: 2026-04-09T14:40:40Z
+-->
+
+**Auditor:** ln-628-concurrency-auditor
+**Date:** 2026-04-09
+**Category:** Concurrency
+**Scope:** Full codebase — all 3 processes + shared + scripts
+**Score:** 4.4 / 10
+**Issues:** 8 confirmed (C:1 H:2 M:2 L:3)
 
 ---
 
 ## Scope
 
-Full codebase audit across 3 Docker processes (captain-online, captain-offline, captain-command) plus shared libraries. 7 concurrency checks with two-layer detection (grep candidates -> contextual code review).
+Full-codebase concurrency audit across all Captain System source files:
 
-**Tech stack:** Python 3, threading, asyncio (FastAPI/uvicorn), psycopg2 (QuestDB), redis-py, pysignalr.
+- `shared/` (9 modules — redis_client, topstep_stream, topstep_client, questdb_client, vault, contract_resolver, vix_provider, journal, trade_source)
+- `captain-command/` (api.py, main.py, orchestrator, b2_gui_data_server, b4_tsm_manager, b8_reconciliation, b11_replay_runner, telegram_bot)
+- `captain-online/` (main.py, orchestrator, b1_data_ingestion, b7_position_monitor, b7_shadow_monitor, or_tracker)
+- `captain-offline/` (main.py, orchestrator, b2_level_escalation, b7_tsm_simulation, b8_cb_params, b8_kelly_update)
 
-**Exclusions:** test files, scripts in `scripts/` (except where they share runtime modules).
+7 concurrency checks with two-layer detection (grep candidates -> contextual code review).
+
+**Tech stack:** Python 3.11, threading.Lock, asyncio (FastAPI/uvicorn), psycopg2 (QuestDB PG wire), redis-py, pysignalr (SignalR WebSocket), concurrent.futures.ThreadPoolExecutor.
+
+**Concurrency model:** 3 Docker processes (Offline, Online, Command) sharing QuestDB + Redis. Each process uses background threads for Redis stream reading, WebSocket streaming, and command listening. Command process additionally runs FastAPI/uvicorn async event loop.
 
 ---
 
 ## Executive Summary
 
-The codebase has **solid locking patterns** in its core shared libraries (`topstep_client.py`, `redis_client.py`, `or_tracker.py`, `topstep_stream.py` UserStream). However, it has **one critical race** in the Offline orchestrator that can silently corrupt AIM meta-weights (D02) used for live position sizing, plus several medium-severity thread-safety gaps in the Command API layer where background threads share globals with the FastAPI async event loop without synchronization.
+The codebase has **strong locking discipline in recently-added patterns** — `_ws_lock` (WebSocket sessions), `_state_lock` (GUI data server), `QuoteCache._lock`, `TopstepClient._lock`, and all singleton double-checked locks are correctly implemented.
 
-No TOCTOU vulnerabilities were found. No deadlocks in the classical two-lock sense exist, but one lock is held during blocking network I/O creating a starvation risk.
+However, **8 confirmed gaps remain** across three categories:
+
+1. **One CRITICAL race** on the API key vault (`store_api_key` does read-modify-write with no lock across Docker-mounted shared volume)
+2. **Two HIGH thread-safety gaps** — unguarded module-level globals in api.py, and a read-modify-write on D00 asset universe without cross-process synchronization
+3. **Five lower-severity issues** — sync blocking in async handler, unguarded dict iteration, and GIL-dependent truthiness checks
+
+---
+
+## Checks Summary
+
+| # | Check | Status | Findings |
+|---|-------|--------|----------|
+| 1 | Async/Event-Loop Races | PASS | 0 confirmed |
+| 2 | Thread Safety | FAIL | 3 confirmed (H, H→ carried to TOCTOU, L, L) |
+| 3 | TOCTOU | FAIL | 3 confirmed (C, H, L) |
+| 4 | Deadlock Potential | PASS | 0 confirmed |
+| 5 | Blocking I/O in Async | WARN | 1 confirmed (M) |
+| 6 | Resource Contention | WARN | 1 confirmed (M) |
+| 7 | Cross-Process Races | PASS | 0 confirmed (vault race covered by Check 3) |
 
 ---
 
 ## Check 1: Async/Event-Loop Races (CWE-362)
 
-### AR-01 — Telegram Bot Mute/Rate State Race | MEDIUM | Effort: S
+**Layer 1 candidates:** 0
+**Confirmed:** 0
 
-**File:** `captain-command/captain_command/blocks/telegram_bot.py:39,246`  
-**Status:** CONFIRMED
-
-`_rate_window` (defaultdict) and `_mute_until` (dict) are module-level mutable state accessed from two different threads without synchronization:
-- **Thread A:** `cmd-orchestrator` / `cmd-signals` threads call `send_message()` -> `_check_rate_limit()` reads/writes `_rate_window`
-- **Thread B:** `telegram-bot` async loop calls `cmd_mute` handler -> `_set_mute()` / `_is_muted()` reads/writes/deletes from `_mute_until`
-
-The list reassignment + append in `_check_rate_limit` is not atomic. A concurrent `del _mute_until[key]` from two threads on the same key raises `KeyError`.
-
-**Recommendation:** Add a `threading.Lock()` guarding `_rate_window` and `_mute_until`. 3 call sites to wrap.
-
----
-
-### AR-02 — TopstepStream State/Failure Counter Race | LOW | Effort: M
-
-**File:** `shared/topstep_stream.py` — `_state`, `_rapid_failures`, `_last_open_time`
-
-`_state` is written by `stop()` (main thread) and `_async_on_close()` (stream event loop thread) with no lock. `_rapid_failures += 1` in `_async_on_close` is a non-atomic LOAD+ADD+STORE under CPython. If `update_token()` resets `_rapid_failures = 0` concurrently with an increment, the counter may hold a stale value.
-
-Consequence is benign (at most one extra reconnect attempt), not a financial correctness issue.
-
-**Recommendation:** Use `threading.Lock` for `_state` and `_rapid_failures` writes, or funnel all mutations through `loop.call_soon_threadsafe`.
+No read-modify-write patterns across `await` boundaries. The async FastAPI handlers in `api.py` read module-level Python dicts (GIL-atomic per access) and do not modify shared state across await points. WebSocket handler mutates `_ws_sessions` under `_ws_lock`.
 
 ---
 
 ## Check 2: Thread Safety (CWE-366)
 
-### TS-01 — `_api_connections` Unguarded Cross-Thread Access | MEDIUM | Effort: S
+**Layer 1 candidates:** 14
+**Confirmed:** 3 (after false-positive filtering)
+**False positives filtered:** 11 (properly locked singletons, GIL-atomic simple assignments, write-once-at-startup patterns in locked modules)
 
-**File:** `captain-command/captain_command/api.py:476`
+### F-002 — Unguarded Module-Level Globals in api.py | HIGH | Effort: S
 
-Module-level dict `_api_connections` is written by `update_api_connections()` from the `cmd-orchestrator` background thread and read by `health()` / `status()` on the FastAPI async event loop. No lock guards access. While CPython's GIL makes the reference swap practically safe, the pattern is fragile and non-portable.
+**File:** `captain-command/captain_command/api.py:135-148, 607-621`
+**Status:** CONFIRMED — open since prior focused audit
 
-**Recommendation:** Add a `threading.Lock()` covering `_api_connections` and `_last_signal_time` (see TS-02). One lock, 4 call sites.
+Three module-level globals written by background threads, read by async endpoints, **no lock:**
 
----
+| Global | Writer Thread | Reader (async) | Write Line | Read Lines |
+|--------|--------------|----------------|-----------|------------|
+| `_process_health` | `cmd-orchestrator` via `update_process_health()` | `health()`, `status()`, `processes_status()` | 609 | 176-184, 244, 574 |
+| `_api_connections` | `cmd-orchestrator` via `update_api_connections()` | `health()`, `status()`, `processes_status()` | 614-615 | 175-179, 249, 574 |
+| `_last_signal_time` | `cmd-signals` via `update_last_signal_time()` | `health()` | 620-621 | 203 |
 
-### TS-02 — `_last_signal_time` Unguarded Cross-Thread Access | LOW | Effort: S
+**Layer 2 reasoning:** `_process_health[role] = info` (line 609) mutates a dict while `health()` may iterate `.items()` / `.values()` — can raise `RuntimeError: dictionary changed size during iteration`. The `_api_connections` swap (line 614) is a reference replacement (GIL-atomic), but `health()` reads 3 separate globals across multiple statements without atomicity. The composite snapshot can be internally inconsistent.
 
-**File:** `captain-command/captain_command/api.py:482`
+**Escalation check:** Drives health endpoint HALTED detection and circuit breaker status reporting. Classified HIGH (not CRITICAL) because CB logic itself lives in Offline, not here.
 
-Module-level `str | None` written from `cmd-signals` thread, read from async `health()`. Scalar reassignment is GIL-atomic in CPython but unsynchronized.
-
-**Recommendation:** Same lock as TS-01.
-
----
-
-### TS-03 — `_pipeline_stage` Unguarded Cross-Thread Access | LOW | Effort: S
-
-**File:** `captain-command/captain_command/blocks/b2_gui_data_server.py:65`
-
-Written by `cmd-redis` thread via `set_pipeline_stage()`, read by `build_dashboard_snapshot()` on the event loop. Worst case: dashboard shows a one-iteration-stale pipeline stage.
-
-**Recommendation:** Add a lock in `b2_gui_data_server.py` or push via `asyncio.run_coroutine_threadsafe`.
+**Recommendation:** Add `_api_state_lock = threading.Lock()` covering all three globals. Snapshot atomically in readers.
 
 ---
 
-### TS-04 — Telegram Bot Rate/Mute Dict Race | MEDIUM | Effort: S
+### F-006 — Position List Truthiness Check Without Lock | LOW | Effort: S
 
-*Same finding as AR-01 — cross-referenced. See Check 1.*
+**File:** `captain-online/captain_online/blocks/orchestrator.py:120, 127`
+**Status:** CONFIRMED — low practical risk under CPython
+
+Main loop reads `self.open_positions` and `self.shadow_positions` without `_position_lock`:
+
+```python
+# Line 120 — no lock
+if self.open_positions:
+    self._run_position_monitor()  # acquires lock internally at line 601
+
+# Line 127 — no lock
+if self.shadow_positions:
+    self._run_shadow_monitor()   # acquires lock internally at line 612
+```
+
+Background command listener thread mutates both lists under `_position_lock` at lines 770-777.
+
+**Layer 2 reasoning:** CPython's GIL makes `bool(list)` atomic. The monitor methods acquire the lock internally, so the worst case is: (a) check sees non-empty, monitor acquires lock and finds empty → no-op, or (b) check sees empty, new position added by background thread → caught next iteration (~1s delay). Neither case causes data corruption.
+
+**Severity:** LOW (GIL-safe in CPython, no data corruption possible, max 1-iteration delay on financial data path).
+
+**Recommendation:** Wrap truthiness check in lock for spec-correctness and non-CPython portability.
 
 ---
 
-### TS-05 — VIX Provider Mtime Check Outside Lock | LOW | Effort: S
+### F-007 — Write-Once Globals Without Lock | LOW | Effort: S
 
-**File:** `shared/vix_provider.py:41-55`
+**File:** `captain-command/captain_command/api.py:419-425`
+**Status:** CONFIRMED — negligible risk
 
-`_ensure_loaded()` checks file mtime outside the lock, then enters `with _lock: _load_all()` without rechecking. At worst, VIX data is reloaded twice concurrently (wasteful but not corrupting, since `_load_all()` runs under lock).
+`set_event_loop()` and `set_telegram_bot()` assign module-level globals via `global` keyword with no lock. Both are called exactly once at startup before any reader thread runs.
 
-**Recommendation:** Move the mtime check inside the lock.
-
----
-
-### TS-06 — Contract Resolver Benign Cache Race | LOW | Effort: S
-
-**File:** `shared/contract_resolver.py:24-60`
-
-`resolve_contract_id` reads cache outside lock as optimization. Two threads missing simultaneously produce redundant API lookups but identical results. Idempotent write under lock.
-
-**Recommendation:** Document the intentional benign race via code comment. No code change needed.
+**Recommendation:** No fix needed. Add comment documenting write-once-at-startup invariant.
 
 ---
 
-## Check 3: TOCTOU (CWE-367)
+## Check 3: TOCTOU — Time-of-Check Time-of-Use (CWE-367)
 
-**All 8 candidates classified as FALSE POSITIVE.**
+**Layer 1 candidates:** 4
+**Confirmed:** 3
 
-All `os.path.exists()` sites are either:
-- Read-only config files at startup (vault.py, compliance_gate.json, TSM configs)
-- Diagnostic/validation paths with safe defaults on failure
-- Script-only paths not reachable from running services
+### F-001 — Vault store_api_key Read-Modify-Write Race | CRITICAL | Effort: M
 
-No TOCTOU vulnerabilities found.
+**File:** `shared/vault.py:78-82`
+**Status:** CONFIRMED
 
-| File | Reason for FP |
-|------|---------------|
-| `shared/vault.py:48` | Bootstrap-only, exception caught on open |
-| `b2_gui_data_server.py:911` | Static config, safe fallback to MANUAL mode |
-| `b3_api_adapter.py:488` | Static config, safe fallback to allowed=False |
-| `b4_tsm_manager.py:195` | Error log guard, exception caught |
-| `b10_data_validation.py:163-183` | Diagnostic only, not control flow |
-| `shared/bar_cache.py:122` | `__main__` block, not reachable at runtime |
-| `shared/replay_engine.py:245` | Startup config lookup, immediate open |
-| `scripts/init_all.py:87` | Script-only, not a running service |
+```python
+def store_api_key(account_id: str, api_key: str):
+    vault = load_vault()        # t=0: READ file → decrypt → dict
+    vault[account_id] = api_key # t=1: MODIFY in memory
+    save_vault(vault)           # t=2: WRITE encrypt → file
+```
+
+No file lock, no threading lock, no atomic operation. The vault file lives at a Docker-mounted path (`/captain/vault/keys.vault`) accessible by all 3 containers.
+
+**Layer 2 reasoning:** If process A calls `store_api_key("acct_1", key_1)` and process B calls `store_api_key("acct_2", key_2)` concurrently:
+1. A reads vault: `{}`
+2. B reads vault: `{}`
+3. A writes: `{"acct_1": key_1}`
+4. B writes: `{"acct_2": key_2}` — **acct_1 key is lost**
+
+**Escalation:** This is authentication/security code (API key storage) → CRITICAL per unified escalation rule.
+
+**Recommendation:** Add `fcntl.flock()` (or `filelock` library) around the read-modify-write cycle:
+
+```python
+import fcntl
+
+def store_api_key(account_id: str, api_key: str):
+    lock_path = VAULT_PATH + ".lock"
+    with open(lock_path, "w") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        vault = load_vault()
+        vault[account_id] = api_key
+        save_vault(vault)
+```
+
+---
+
+### F-003 — D00 update_d00_fields Read-Modify-Write | HIGH | Effort: M
+
+**File:** `shared/questdb_client.py:81-99`
+**Status:** CONFIRMED
+
+```python
+def update_d00_fields(asset_id: str, updates: dict, cur=None) -> None:
+    current = read_d00_row(asset_id, cur=c)   # READ latest D00 row
+    current.update(updates)                     # MODIFY in memory
+    # ... INSERT INTO p3_d00_asset_universe ... # WRITE new row
+```
+
+QuestDB has no row-level locking. Multiple processes (Offline updating AIM state, bootstrap scripts) could call this on the same asset_id. Since QuestDB is append-only with "latest row wins" semantics (`ORDER BY last_updated DESC LIMIT 1`), concurrent writes cause last-writer-wins with potential data loss of the first writer's changes.
+
+**Layer 2 reasoning:** In practice, concurrent calls on the same asset are rare — Offline updates AIM fields during scheduled runs, and bootstrap runs once. But the function has no structural protection, and the risk increases if usage expands.
+
+**Recommendation:** Add Redis advisory lock keyed on `d00:{asset_id}`:
+
+```python
+def update_d00_fields(asset_id: str, updates: dict) -> None:
+    lock_key = f"lock:d00:{asset_id}"
+    r = get_redis_client()
+    if r.set(lock_key, "1", nx=True, ex=5):
+        try:
+            # ... existing read-modify-write ...
+        finally:
+            r.delete(lock_key)
+```
+
+---
+
+### F-008 — Vault TOCTOU on File Existence Check | LOW | Effort: S
+
+**File:** `shared/vault.py:48-50`
+**Status:** CONFIRMED — minimal practical risk
+
+```python
+def load_vault() -> dict:
+    if not os.path.exists(VAULT_PATH):  # CHECK
+        return {}
+    with open(VAULT_PATH, "rb") as f:   # USE — file could vanish between check and open
+        raw = f.read()
+```
+
+**Layer 2 reasoning:** The vault file is in a Docker volume, not a world-writable temp directory. No attacker symlink risk. The race window is negligible. However, the pattern is non-idiomatic.
+
+**Recommendation:** Replace with try/except:
+```python
+def load_vault() -> dict:
+    try:
+        with open(VAULT_PATH, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return {}
+```
 
 ---
 
 ## Check 4: Deadlock Potential (CWE-833)
 
-### DL-01 — Position Lock Held During Blocking Network I/O | MEDIUM | Effort: S
+**Layer 1 candidates:** 6 (files with multiple lock acquisitions)
+**Confirmed:** 0
 
-**File:** `captain-online/captain_online/blocks/orchestrator.py:608,766`
+All lock patterns across the codebase use single locks with `with` context managers — **no nested locking observed**:
 
-`_position_lock` is held while `monitor_positions()` and `monitor_shadow_positions()` call `resolve_position()`, which executes up to 3 synchronous network round-trips:
-1. QuestDB INSERT (`_write_trade_outcome`)
-2. Redis XADD (`_publish_trade_outcome`)
-3. QuestDB INSERT (`_update_capital_silo`)
+| Lock | File | Protects | Nesting? |
+|------|------|----------|----------|
+| `_ws_lock` | api.py | `_ws_sessions` | No |
+| `_state_lock` | b2_gui_data_server.py | 3 GUI globals | No |
+| `_position_lock` | online/orchestrator.py | open/shadow positions | No |
+| `QuoteCache._lock` | topstep_stream.py | quote cache dict | No |
+| `UserStream._lock` | topstep_stream.py | account/position caches | No |
+| `TopstepClient._lock` | topstep_client.py | auth token | No |
+| `_client_lock` | redis_client.py | Redis singleton | No |
+| `_cache_lock` | contract_resolver.py | contract ID cache | No |
+| `ORTracker._lock` | or_tracker.py | OR session dict | No |
 
-While the lock is held, the `_command_listener` thread is blocked from acquiring the same lock to register TAKEN/SKIPPED signals. Under QuestDB or Redis latency spikes, the TAKEN confirmation can be delayed by several seconds.
-
-Not a classical deadlock (single lock, no nesting), but a **lock starvation** / **priority inversion** issue on the critical TAKEN signal path.
-
-**Recommendation:** Snapshot-then-release pattern:
-```python
-with self._position_lock:
-    snapshot = list(self.open_positions)
-resolved = monitor_positions(snapshot, ...)  # I/O outside lock
-with self._position_lock:
-    for pos in resolved:
-        self.open_positions.remove(pos)
-```
-
----
-
-### False Positives (4)
-
-| File | Lock(s) | Reason |
-|------|---------|--------|
-| `b11_replay_runner.py:207` | Single `_lock` | No nesting, no I/O under lock |
-| `or_tracker.py:220` | Single `_lock` | All acquisitions are brief dict ops |
-| `topstep_stream.py:79,171,495` | 3 independent instance locks | Never simultaneously held |
-| `topstep_client.py:98,405` | Instance + module lock | Different concerns, never nested |
+No lock holds I/O or external calls. All lock scopes are brief (dict read/write, set add/discard).
 
 ---
 
 ## Check 5: Blocking I/O in Async Context (CWE-400)
 
-### BIO-01 — Sync QuestDB Write Blocks Event Loop | MEDIUM | Effort: S
+**Layer 1 candidates:** 8 (`time.sleep` calls across codebase)
+**Confirmed:** 1
+**False positives filtered:** 7 (all in synchronous background threads, not async context)
 
-**File:** `captain-command/captain_command/api.py:252`
+### F-004 — route_command() Sync in Async WebSocket Handler | MEDIUM | Effort: S
 
-`route_command(data, gui_push_fn=gui_push)` is called synchronously inside `async def websocket_endpoint`. For `TAKEN_SKIPPED` commands, this calls `_log_trade_confirmation` which executes a psycopg2 INSERT (~5-50ms). This blocks the uvicorn event loop for every command-type WebSocket message.
+**File:** `captain-command/captain_command/api.py:385`
+**Status:** CONFIRMED — open since prior focused audit
+
+`route_command(data, gui_push_fn=gui_push)` is called synchronously inside `async def websocket_endpoint()`. For trade confirmation commands, `route_command` performs a blocking psycopg2 INSERT into QuestDB. This blocks the uvicorn event loop for ~5-50ms per command, stalling all concurrent WebSocket sends and HTTP responses.
+
+**Layer 2 reasoning:** Trade confirmations are the hot path — when a signal fires and the user clicks TAKEN, this blocks. Under normal load (1-2 concurrent users), impact is minor. Under batch signal processing (10 assets × 3 sessions), blocking could stack.
 
 **Recommendation:**
 ```python
 await asyncio.to_thread(route_command, data, gui_push_fn=gui_push)
 ```
 
----
-
-### BIO-02 — Telegram urllib Blocking (Future Risk) | LOW | Effort: S
-
-**File:** `captain-command/captain_command/blocks/telegram_bot.py:608`
-
-`urllib.request.urlopen(req, timeout=10)` is synchronous with a 10-second timeout. Currently called only from the `cmd-orchestrator` daemon thread (safe). Flagged as LOW because any future call from async context would block the event loop for up to 10 seconds.
-
-**Recommendation:** Replace with `httpx.AsyncClient` if Telegram sends ever move to async context.
-
----
-
-### False Positives (9)
-
-All `time.sleep()` calls in orchestrators and stream modules run in dedicated daemon threads, not the asyncio event loop. The subprocess calls in `api_git_pull` run in FastAPI's sync threadpool (endpoint is `def`, not `async def`).
+**False positives filtered (not in async context):**
+- `topstep_stream.py:300,568` — `time.sleep(1)` in sync `update_token()` method
+- `b4_tsm_manager.py:447` — `time.sleep(attempt+1)` in sync retry loop
+- `captain-command/orchestrator.py:181,225` — `time.sleep(backoff)` in daemon threads
+- `captain-online/orchestrator.py:727` — `time.sleep(backoff)` in daemon thread
+- `b11_replay_runner.py:510` — `time.sleep()` in replay tick simulation thread
 
 ---
 
 ## Check 6: Resource Contention (CWE-362)
 
-### RC-01 — QuestDB No Connection Pool | MEDIUM | Effort: S
+**Layer 1 candidates:** 5
+**Confirmed:** 1
+**False positives filtered:** 4 (QuestDB WAL handles concurrent appends; Redis Streams use consumer groups correctly)
 
-**File:** `shared/questdb_client.py`
+### F-005 — _ws_sessions Iteration Without Lock in status() | MEDIUM | Effort: S
 
-`get_cursor()` creates a new psycopg2 TCP connection per call with no pooling. During busy sessions (10 assets, session open), this creates connection storms on port 8812 and adds 5-20ms per write from TCP handshake overhead. Connection count is unbounded.
+**File:** `captain-command/captain_command/api.py:246-248`
+**Status:** CONFIRMED — open since prior focused audit
 
-**Recommendation:** Use `psycopg2.pool.ThreadedConnectionPool(minconn=2, maxconn=10)`. Transparent to callers — `get_cursor()` API unchanged.
+```python
+async def status():
+    return JSONResponse({
+        ...
+        "active_ws_sessions": {
+            uid: len(sockets) for uid, sockets in _ws_sessions.items()  # NO LOCK
+        },
+```
 
----
+`gui_push()` (line 455), `websocket_endpoint()` (lines 331, 362, 403), and `_safe_ws_send()` (line 479) all mutate `_ws_sessions` under `_ws_lock`. The `status()` endpoint skips the lock → potential `RuntimeError: dictionary changed size during iteration`.
 
-### RC-02 — Vault Non-Atomic Read-Modify-Write | LOW | Effort: S
+**Recommendation:** Snapshot under lock:
+```python
+with _ws_lock:
+    ws_snapshot = {uid: len(s) for uid, s in _ws_sessions.items()}
+```
 
-**File:** `shared/vault.py:61-78`
-
-`store_api_key()` does load -> mutate -> save without a lock. Two concurrent callers would race, last-writer-wins. In practice this is a bootstrap-only operation with sequential callers.
-
-**Recommendation:** Add a module-level `threading.Lock()` around the load/save pair.
-
----
-
-### False Positives (2)
-
-| File | Reason |
-|------|--------|
-| `b7_notifications.py:115` | `_quiet_queue_lock` correctly guards all access; flushes outside lock |
-| `shared/redis_client.py` | redis-py's internal `ConnectionPool` is thread-safe by design |
+**False positives filtered (not contention bugs):**
+- D03 `p3_d03_trade_outcome_log` concurrent inserts from Online B7 + Command — QuestDB WAL handles append-only writes; no "table busy" errors observed on D03
+- D08 `p3_d08_tsm_state` concurrent inserts — retry mechanism at `b4_tsm_manager.py:444` correctly handles QuestDB WAL commit contention
+- Redis Stream consumer groups — `xreadgroup` + `ack_message` pattern correctly ensures each message processed by exactly one consumer per group
+- ThreadPoolExecutor in `b1_data_ingestion.py:365` — pool-scoped, not shared; each task fetches independent asset data
 
 ---
 
 ## Check 7: Cross-Process & Invisible Side Effects (CWE-362, CWE-421)
 
-### CP-01 — D02 AIM Meta-Weights Write Race (Offline) | CRITICAL | Effort: S
+**Layer 1 candidates:** 3
+**Confirmed:** 0 (vault cross-process race already covered by F-001 in Check 3)
 
-**File:** `captain-offline/captain_offline/blocks/orchestrator.py:63,526`
+**Resource Inventory:**
 
-**THIS IS THE MOST IMPORTANT FINDING IN THIS AUDIT.**
+| Resource | Exclusive? | Process A | Process B | Process C | Sync? |
+|----------|-----------|-----------|-----------|-----------|-------|
+| QuestDB tables | No (WAL) | Offline writes D02,D04,D05,D12,D25 | Online writes D03 | Command writes D08,D16 | WAL handles |
+| Redis Streams | No (consumer groups) | Offline reads outcomes/commands | Online reads commands | Command reads signals | Consumer groups |
+| Redis Pub/Sub | No (broadcast) | Offline publishes status | Online publishes signals/status | Command publishes commands | By design |
+| Vault file | YES | Reads keys | Reads keys | Reads/writes keys | **NO SYNC** (F-001) |
+| SQLite journals | No (1 per process) | Own journal | Own journal | Own journal | Process-isolated |
 
-The Offline orchestrator runs two threads that both write to `p3_d02_aim_meta_weights` with **zero coordination**:
+The vault file is the only exclusive cross-process resource without synchronization. This is fully covered by F-001 above.
 
-| Thread | Trigger | Write Path |
-|--------|---------|------------|
-| `_redis_thread` | Every trade/signal outcome | `_handle_trade_outcome` -> `run_dma_update()` -> INSERT D02 |
-| Main/scheduler | Daily 16:00 ET | `_run_daily` -> `run_aim_lifecycle()` -> `run_drift_detection()` -> INSERT D02 |
-
-Both use independent `get_cursor()` calls (separate connections). QuestDB is append-only — both rows land. The "latest" row is determined by `LATEST ON last_updated PARTITION BY aim_id, asset_id`. If the scheduler writes a stale `inclusion_probability` **after** the DMA update wrote the fresh value, the stale value wins. The next session reads wrong AIM weights for Kelly sizing and trade direction.
-
-The race window is narrow (daily close at 16:00 ET when late trade outcomes may still be arriving) but the consequence is **silent financial data corruption**.
-
-**Recommendation:** Add `self._d02_write_lock = threading.RLock()` in `__init__`. Acquire around `run_dma_update()` in both `_handle_trade_outcome` and `_handle_signal_outcome`, and around `run_aim_lifecycle()` + `run_drift_detection()` in `_run_daily`.
+Redis Streams use consumer groups with message acknowledgment — properly designed for multi-process consumption. QuestDB WAL mode handles concurrent writers at the storage layer. SQLite journals are process-isolated (one per container).
 
 ---
 
-### CP-02 — Git Pull/Rebuild No Concurrency Guard | HIGH | Effort: S
+## Correctly Implemented Patterns
 
-**File:** `captain-command/captain_command/api.py:825`
-
-`/api/system/git-pull` has no guard against concurrent calls. Two simultaneous requests can:
-1. Both run `git pull` (git's `.git/index.lock` causes one to fail)
-2. Both decide `needs_rebuild = True` and launch two `_rebuild` threads
-3. Two simultaneous `docker compose up -d --build` calls corrupt the build cache and leave containers in an inconsistent state mid-trade
-
-**Recommendation:** Add `_rebuild_lock = threading.Lock()` with non-blocking `acquire(blocking=False)`. Return error if already held.
-
----
-
-### False Positives / NEEDS-CONTEXT (2)
-
-| ID | File | Status | Reason |
-|----|------|--------|--------|
-| CP-03 | `b7_position_monitor.py:284` D16 read-modify-write | NEEDS-CONTEXT (LOW) | Currently serial in main thread; becomes a race only if position concurrency increases |
-| CP-04 | Redis Stream ordering | FP | Consumer groups provide strict FIFO; single writer per stream |
+| Pattern | Location | Assessment |
+|---------|----------|------------|
+| `_state_lock` atomic snapshot | b2_gui_data_server.py:112-115 | Correct — reads 3 globals under one lock |
+| `_ws_lock` full lifecycle | api.py:331,362,403,455,479 | Correct — all mutations guarded |
+| `QuoteCache._lock` | topstep_stream.py:82,92,98,105 | Correct — defensive copies returned |
+| `UserStream._lock` | topstep_stream.py:508,513,673,687 | Correct — account/position caches protected |
+| `TopstepClient._lock` | topstep_client.py:118,132,147 | Correct — token lifecycle protected |
+| Double-checked locking | redis_client.py:39-43, topstep_client.py:427-430 | Correct — singleton with lock |
+| `_position_lock` write path | online/orchestrator.py:578,601,612,770 | Correct — all mutations locked |
+| `ORTracker._lock` | or_tracker.py:232,247,252,282,302,320 | Correct — all session mutations locked |
+| `_cache_lock` | contract_resolver.py:46,53,60,92 | Correct — cache updates locked |
+| Redis consumer groups | redis_client.py:94-127 | Correct — `xreadgroup` + `ack_message` |
+| ThreadPoolExecutor scoping | b1_data_ingestion.py:365-379 | Correct — pool-scoped, independent tasks |
+| Daemon thread lifecycle | all orchestrators | Correct — `self.running` flag + `join(timeout)` |
 
 ---
 
 ## Scoring Breakdown
 
-| Check | Score | Findings |
-|-------|-------|----------|
-| 1. Async Races | 7/10 | 2 confirmed (M, L) |
-| 2. Thread Safety | 6/10 | 5 confirmed (2M, 3L) + 1 cross-ref |
-| 3. TOCTOU | 10/10 | 0 confirmed |
-| 4. Deadlock Potential | 7/10 | 1 confirmed (M) |
-| 5. Blocking I/O | 7/10 | 2 confirmed (M, L) |
-| 6. Resource Contention | 7/10 | 2 confirmed (M, L) |
-| 7. Cross-Process Races | 3/10 | 2 confirmed (C, H) |
-| **Weighted Average** | **5.3/10** | **14 total (C:1 H:1 M:5 L:7)** |
+| Severity | Count | Weight | Subtotal |
+|----------|-------|--------|----------|
+| CRITICAL | 1 | 2.0 | 2.0 |
+| HIGH | 2 | 1.0 | 2.0 |
+| MEDIUM | 2 | 0.5 | 1.0 |
+| LOW | 3 | 0.2 | 0.6 |
+| **Penalty** | | | **5.6** |
+| **Score** | | | **4.4 / 10** |
+
+---
+
+## Findings Summary
+
+| Sev | ID | Check | Location | Issue | Effort |
+|-----|-----|-------|----------|-------|--------|
+| CRITICAL | F-001 | TOCTOU | shared/vault.py:78-82 | store_api_key read-modify-write race — API key loss possible across Docker containers | M |
+| HIGH | F-002 | Thread Safety | captain-command/.../api.py:607-621 | _process_health/_api_connections/_last_signal_time written by bg threads without lock | S |
+| HIGH | F-003 | TOCTOU | shared/questdb_client.py:81-99 | update_d00_fields read-modify-write on D00 without cross-process sync | M |
+| MEDIUM | F-004 | Blocking I/O | captain-command/.../api.py:385 | route_command() sync psycopg2 call inside async WebSocket handler | S |
+| MEDIUM | F-005 | Contention | captain-command/.../api.py:246-248 | _ws_sessions.items() iteration without _ws_lock in status() | S |
+| LOW | F-006 | Thread Safety | captain-online/.../orchestrator.py:120,127 | Position list truthiness check without lock (GIL-safe in CPython) | S |
+| LOW | F-007 | Thread Safety | captain-command/.../api.py:419-425 | Write-once globals without lock (startup only) | S |
+| LOW | F-008 | TOCTOU | shared/vault.py:48-50 | os.path.exists check before open (non-idiomatic) | S |
 
 ---
 
 ## Prioritized Fix Plan
 
-| Priority | ID | Severity | File | Fix | Effort |
-|----------|----|----------|------|-----|--------|
-| 1 | CP-01 | CRITICAL | offline/orchestrator.py | Add `_d02_write_lock` around D02 write paths | S |
-| 2 | CP-02 | HIGH | api.py | Add `_rebuild_lock` with non-blocking acquire | S |
-| 3 | DL-01 | MEDIUM | online/orchestrator.py | Snapshot positions outside lock, do I/O, re-acquire | S |
-| 4 | BIO-01 | MEDIUM | api.py:252 | `await asyncio.to_thread(route_command, ...)` | S |
-| 5 | TS-01+02 | MEDIUM+LOW | api.py | Add one lock for `_api_connections` + `_last_signal_time` | S |
-| 6 | AR-01/TS-04 | MEDIUM | telegram_bot.py | Add one lock for `_rate_window` + `_mute_until` | S |
-| 7 | RC-01 | MEDIUM | questdb_client.py | `psycopg2.pool.ThreadedConnectionPool` | S |
-| 8 | TS-03 | LOW | b2_gui_data_server.py | Lock or `run_coroutine_threadsafe` for `_pipeline_stage` | S |
-| 9 | AR-02 | LOW | topstep_stream.py | Lock `_state` + `_rapid_failures` mutations | M |
-| 10 | TS-05 | LOW | vix_provider.py | Move mtime check inside lock | S |
-| 11 | RC-02 | LOW | vault.py | Lock around load/save pair | S |
-| 12 | TS-06 | LOW | contract_resolver.py | Document intentional benign race | S |
-| 13 | BIO-02 | LOW | telegram_bot.py | Replace urllib with httpx if moved to async | S |
+| Priority | ID | Severity | Fix | Effort |
+|----------|----|----------|-----|--------|
+| 1 | F-001 | CRITICAL | Add `fcntl.flock()` around vault read-modify-write cycle | M |
+| 2 | F-002 | HIGH | Add `_api_state_lock` for 3 unguarded globals; snapshot atomically in readers | S |
+| 3 | F-003 | HIGH | Add Redis advisory lock `lock:d00:{asset_id}` around read-modify-write | M |
+| 4 | F-004 | MEDIUM | `await asyncio.to_thread(route_command, ...)` | S |
+| 5 | F-005 | MEDIUM | Snapshot `_ws_sessions` under `_ws_lock` in `status()` | S |
+| 6 | F-006 | LOW | Wrap truthiness check in `_position_lock` | S |
+| 7 | F-008 | LOW | Replace `os.path.exists` → try/except `FileNotFoundError` | S |
+| 8 | F-007 | LOW | Add comment documenting write-once invariant | S |
 
-**Total estimated effort:** ~6-8 hours for all 13 fixes. Priorities 1-2 should be fixed before next NY session open.
-
----
-
-## Correctly Implemented Patterns (Positive Observations)
-
-These areas were audited and found to be **correctly synchronized**:
-
-| Component | Pattern | Assessment |
-|-----------|---------|------------|
-| `shared/topstep_client.py` | Token refresh double-checked locking | Correct |
-| `shared/redis_client.py` | Singleton with `_client_lock` | Correct |
-| `shared/topstep_stream.py` UserStream | `_lock` on account/position cache | Correct |
-| `captain-online/blocks/or_tracker.py` | `_lock` on all dict ops, no I/O under lock | Correct |
-| `captain-command/blocks/b11_replay_runner.py` | `_lock` on session registry, DB outside lock | Correct |
-| `captain-command/blocks/b7_notifications.py` | `_quiet_queue_lock` with flush-outside-lock | Correct |
-| Redis Streams cross-process | Consumer groups with explicit ack | Correct |
-| `api.py gui_push()` | `asyncio.run_coroutine_threadsafe` | Correct |
+**Total estimated effort:** ~4-6 hours for all 8 fixes (priorities 1-3 require careful testing).

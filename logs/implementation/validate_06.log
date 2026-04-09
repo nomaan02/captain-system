@@ -1,0 +1,22 @@
+---
+
+```
+=== VALIDATION CYCLE 06 REPORT ===
+Findings validated: 6
+  ALIGNED:   4 (G-023, G-018, G-032, G-033)
+  PARTIAL:   2 (G-030, G-031)
+  DIVERGENT: 0
+Cumulative: 22 / 67 total (VERIFIED: 10, FIXED: 27, UNRESOLVED: 30, DEFERRED: 33)
+Open concerns:
+  - G-030: VIX spike uses flat threshold (vix >= 50) instead of spec's z-score > 2.0 vs 60d trailing.
+           Two queries use wrong table `system_params` (should be `p3_d17_system_monitor_state`)
+           with wrong column names `value`/`key` (should be `param_value`/`param_key`). Runtime-breaking.
+           Commission call site passes no asset_id/tsm, making get_expected_fee path dead code.
+  - G-031: Query uses `asset_universe` instead of `p3_d00_asset_universe`. Runtime-breaking.
+  - G-NEW-015 through G-NEW-021: All tracked from session 06 passover (lock scope, TOCTOU,
+           regime cache priming, thread join, shadow datetime.now, shadow no retry, TSM cache).
+```
+
+**Runtime-critical bugs requiring immediate fix in next session:**
+1. `b7_position_monitor.py:462,487` — `system_params` -> `p3_d17_system_monitor_state`, `value`/`key` -> `param_value`/`param_key`
+2. `b7_shadow_monitor.py:222` — `asset_universe` -> `p3_d00_asset_universe`

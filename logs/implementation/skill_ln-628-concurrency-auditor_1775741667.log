@@ -1,0 +1,28 @@
+Report written: `docs/audit/ln-628--global.md`
+Score: **4.4/10** | Issues: **8** (C:1 H:2 M:2 L:3)
+
+---
+
+### Key Findings
+
+| Sev | ID | Location | Issue |
+|-----|-----|----------|-------|
+| **CRITICAL** | F-001 | `shared/vault.py:78-82` | `store_api_key()` read-modify-write race — no file lock, shared Docker volume. Concurrent calls lose API keys. |
+| **HIGH** | F-002 | `api.py:607-621` | `_process_health`, `_api_connections`, `_last_signal_time` written by background threads without any lock. Dict iteration in `health()` can raise `RuntimeError`. |
+| **HIGH** | F-003 | `questdb_client.py:81-99` | `update_d00_fields()` reads D00 row, modifies in-memory, inserts new row — no cross-process lock. Last-writer-wins on financial config. |
+| **MEDIUM** | F-004 | `api.py:385` | `route_command()` sync psycopg2 call inside `async def websocket_endpoint()` blocks uvicorn event loop. |
+| **MEDIUM** | F-005 | `api.py:246-248` | `_ws_sessions.items()` iterated without `_ws_lock` in `status()` endpoint. |
+| LOW | F-006 | `online/orchestrator.py:120,127` | Position list truthiness check without lock (GIL-safe but non-portable). |
+| LOW | F-007 | `api.py:419-425` | Write-once globals without lock (startup only, negligible risk). |
+| LOW | F-008 | `vault.py:48-50` | `os.path.exists` → `open` TOCTOU (non-idiomatic, minimal practical risk). |
+
+### What's Working Well
+
+12 correctly-implemented lock patterns identified — `_ws_lock`, `_state_lock`, `QuoteCache._lock`, `_position_lock`, `ORTracker._lock`, all singleton double-checked locks, Redis consumer groups, and ThreadPoolExecutor scoping are all sound.
+
+### Priority Fix Order
+
+1. **F-001** — `fcntl.flock()` around vault read-modify-write (CRITICAL, ~2h)
+2. **F-002** — Add `_api_state_lock` for 3 unguarded api.py globals (~30m)
+3. **F-003** — Redis advisory lock for D00 updates (~2h)
+4. **F-004/F-005** — `asyncio.to_thread` + `_ws_lock` snapshot (~30m each)

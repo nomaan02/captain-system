@@ -36,6 +36,7 @@ from shared.constants import SYSTEM_TIMEZONE, SESSION_IDS, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def _load_active_assets(session_id: int) -> list[dict]:
         if captain_status not in ("ACTIVE", "WARM_UP", "TRAINING_ONLY"):
             continue
 
-        session_hours = _parse_json(r[2], {})
+        session_hours = parse_json(r[2], {})
         if not session_match(asset_id, session_id, session_hours):
             continue
 
@@ -80,14 +81,14 @@ def _load_active_assets(session_id: int) -> list[dict]:
             "asset_id": asset_id,
             "captain_status": captain_status,
             "session_hours": session_hours,
-            "session_schedule": _parse_json(r[3], {}),
+            "session_schedule": parse_json(r[3], {}),
             "point_value": r[4] or 50.0,
             "tick_size": r[5] or 0.25,
             "margin_per_contract": r[6] or 0.0,
-            "data_sources": _parse_json(r[7], {}),
+            "data_sources": parse_json(r[7], {}),
             "data_quality_flag": r[8] or "CLEAN",
-            "roll_calendar": _parse_json(r[9], None),
-            "locked_strategy": _parse_json(r[10], {}),
+            "roll_calendar": parse_json(r[9], None),
+            "locked_strategy": parse_json(r[10], {}),
             "p1_data_path": r[11],
             "p2_data_path": r[12],
         })
@@ -118,9 +119,9 @@ def _load_aim_states() -> dict:
             "aim_id": r[0],
             "asset_id": r[1],
             "status": r[2],
-            "model_object": _parse_json(r[3], None),
+            "model_object": parse_json(r[3], None),
             "warmup_progress": r[4] or 0.0,
-            "current_modifier": _parse_json(r[5], None),
+            "current_modifier": parse_json(r[5], None),
             "missing_data_rate_30d": r[6] or 0.0,
         }
 
@@ -215,7 +216,7 @@ def _load_kelly_params() -> dict:
             "shrinkage_factor": r[4] or 1.0,
         }
         # Collect sizing overrides (Level 2 reductions)
-        override = _parse_json(r[5], None)
+        override = parse_json(r[5], None)
         if override is not None and r[0] not in sizing_overrides:
             sizing_overrides[r[0]] = override
 
@@ -252,7 +253,7 @@ def _load_tsm_configs() -> dict:
             "account_id": account_id,
             "user_id": r[1],
             "name": r[2],
-            "classification": _parse_json(r[3], {}),
+            "classification": parse_json(r[3], {}),
             "starting_balance": r[4] or 0.0,
             "current_balance": r[5] or 0.0,
             "current_drawdown": r[6] or 0.0,
@@ -261,9 +262,9 @@ def _load_tsm_configs() -> dict:
             "max_drawdown_limit": r[9],
             "max_daily_loss": r[10],
             "max_contracts": r[11],
-            "scaling_plan": _parse_json(r[12], None),
+            "scaling_plan": parse_json(r[12], None),
             "commission_per_contract": r[13] or 0.0,
-            "instrument_permissions": _parse_json(r[14], []),
+            "instrument_permissions": parse_json(r[14], []),
             "overnight_allowed": r[15] if r[15] is not None else True,
             "trading_hours": r[16],
             "margin_per_contract": r[17] or 0.0,
@@ -272,8 +273,8 @@ def _load_tsm_configs() -> dict:
             "risk_goal": r[20] or "GROW_CAPITAL",
             "evaluation_end_date": r[21],
             "topstep_optimisation": r[22] if r[22] is not None else False,
-            "fee_schedule": _parse_json(r[23], None),
-            "payout_rules": _parse_json(r[24], None),
+            "fee_schedule": parse_json(r[23], None),
+            "payout_rules": parse_json(r[24], None),
             "scaling_plan_active": r[25] if r[25] is not None else False,
             "scaling_tier_micros": r[26] or 0,
         }
@@ -300,7 +301,7 @@ def _load_locked_strategies() -> dict:
         if asset_id in seen:
             continue
         seen.add(asset_id)
-        strategy = _parse_json(r[1], {})
+        strategy = parse_json(r[1], {})
         if strategy:
             result[asset_id] = strategy
     return result
@@ -763,16 +764,6 @@ def session_match(asset_id: str, session_id: int, session_hours: dict = None) ->
     return session_hours.get(session_key) is not None
 
 
-def _parse_json(raw, default):
-    """Safely parse a JSON string, returning default on failure."""
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default
 
 
 # ---------------------------------------------------------------------------

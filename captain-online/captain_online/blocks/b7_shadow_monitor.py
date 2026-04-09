@@ -219,10 +219,10 @@ def _get_point_value(asset_id: str) -> float:
     try:
         with get_cursor() as cur:
             cur.execute(
-                "SELECT point_value FROM asset_universe "
-                "LATEST ON ts PARTITION BY asset_id "
-                "WHERE asset_id = $1",
-                [asset_id],
+                "SELECT point_value FROM p3_d00_asset_universe "
+                "LATEST ON last_updated PARTITION BY asset_id "
+                "WHERE asset_id = %s",
+                (asset_id,),
             )
             row = cur.fetchone()
             if row and row[0] is not None:

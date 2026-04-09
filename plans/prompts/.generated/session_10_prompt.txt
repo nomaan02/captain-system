@@ -1,0 +1,98 @@
+# Agent C — Executor Session 10: Concurrency + CB + Feedback
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+
+## Previous Session Passover
+Session 09 Passover
+Items completed: G-022, G-019, G-054, G-057, G-058, G-059 (all 6)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-643-api-contract-auditor: running post-session (background)
+  - ln-629-lifecycle-auditor: running post-session (background)
+  Reports at: .hex-skills/runtime-artifacts/runs/standalone-643-session09/ and standalone-629-session09/
+Notes:
+  - G-022: _update_account_balance now reads latest D08 row (ORDER BY last_updated DESC LIMIT 1), re-inserts
+    with corrected current_balance, and keeps event log audit trail. Uses positional index 5 for current_balance.
+  - G-019: Added _get_d17_param(key, default) helper using p3_d17_system_monitor_state. Added f_target_max=0.03
+    to seed_system_params.py risk category. Called at b8:336 instead of hardcoded literal.
+  - G-054: start_replay and start_batch_replay both clean up completed/error/stopped sessions for the user
+    before registering the new session. Existing completed session is deleted (not kept) — safe because
+    save_replay/run_whatif would have been called before starting a new replay anyway.
+  - G-057: route_notification in b7_notifications.py now imports CH_ALERTS from shared.redis_client and
+    publishes a JSON payload to captain:alerts after GUI/Telegram delivery loop. Try/except logs warning
+    on failure without crashing the notification flow.
+  - G-058: get_incident_detail in b9_incident_response.py: return {"error": str(exc)} was OUTSIDE the
+    except block at same indentation as try:, causing NameError on exc. Moved inside except block.
+    Error message uses generic string to avoid exception leakage.
+  - G-059: telegram_bot.py send_message except block: self._token replaced with *** in str(exc) before
+    logging. urllib errors often embed the request URL (which contains the bot token in the path).
+  - Matrix §6 Dashboard: UNRESOLVED 18→12, FIXED 39→45
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Resolved Decisions
+Check matrix for DEC-03 (CB layer count) and DEC-06 (AIM-16 dispatch) resolutions.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-015 | HIGH | GUI Data Server No Locks
+**File:** captain-command/captain_command/blocks/b2_gui_data_server.py
+**Fix:** Add threading.Lock around all global state mutations. Ensure financial snapshots are atomically updated for concurrent GUI clients.
+**Spec:** §7 B2 — real-time GUI data to multiple concurrent clients
+
+### 2. G-016 | HIGH | WebSocket Connections Dict Race
+**File:** captain-command/captain_command/api.py (`_active_connections`)
+**Fix:** Use `threading.Lock` or switch to `asyncio`-safe structure. Don't mutate dict during iteration on trade notification path.
+**Spec:** §7 B2 — broadcast trade notifications
+**Deps:** G-015
+
+### 3. G-078 | MEDIUM | AIM-16 Dead Dispatch Function
+**File:** shared/aim_compute.py
+**Lines:** 637-649
+**Fix:** Per DEC-06 resolution. If "Re-add to dispatch": wire `_aim16_hmm()` into the dispatch table. If "Remove": delete dead function. If UNRESOLVED: skip.
+**Spec:** §3 AIM-16
+**Deps:** DEC-06
+
+### 4. G-079 | MEDIUM | 7 AIM Features Missing in Replay
+**File:** shared/aim_feature_loader.py
+**Fix:** Add fallback/stub values for replay mode for: pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis. Document which are stubs.
+**Spec:** §3 — all 16 AIMs functional in replay
+**Deps:** G-073, G-074
+
+### 5. G-080 | MEDIUM | CB Layer Count Mismatch
+**File:** captain-online/captain_online/blocks/b5c_circuit_breaker.py
+**Line:** 11
+**Fix:** Per DEC-03 resolution. If "Keep 7, document": add V3 amendment comment. If "Remove L5/L6": strip safety layers. If UNRESOLVED: skip.
+**Spec:** §6 CB layers
+**Deps:** DEC-03
+
+### 6. G-081 | MEDIUM | Kelly Helper Duplicated 3x
+**Files:** captain-online/captain_online/blocks/b4_kelly_sizing.py:292, b5_trade_selection.py:192, b6_signal_output.py:310
+**Fix:** Extract `_get_ewma_for_regime()` to shared/statistics.py (or similar). Import from single source in all 3 files.
+**Spec:** DRY principle
+
+## Post-Fix
+1. Run `/ln-628-concurrency-auditor` targeting b2_gui_data_server.py and api.py
+2. Run `/ln-641-pattern-analyzer` targeting AIM dispatch and CB layers
+
+## Rules
+1. ONE ITEM AT A TIME. After each: show diff, run pytest, update matrix.
+2. If DEC-03, DEC-06 are UNRESOLVED, skip dependent items and flag.
+3. New issues → G-NEW-XXX, flag, do NOT fix.
+4. After all items: update §6 Dashboard, git commit.
+
+## Passover
+Write to `plans/prompts/.passovers/session_10.txt`:
+```
+Session 10 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

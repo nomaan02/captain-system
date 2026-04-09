@@ -1,0 +1,17 @@
+Session 07 complete. Here's the summary:
+
+## Session 07 Results — AIM Implementation
+
+| Gap | Status | Fix |
+|-----|--------|-----|
+| **G-075** | FIXED | `p3_spread_history` already existed in `init_questdb.py:647-664` |
+| **G-069** | FIXED | Same — table + comment already documented |
+| **G-073** | FIXED | AIM-07 disabled per DEC-08: removed from dispatch table, features set to None |
+| **G-074** | FIXED | D30 realised vol fallback in `_get_realised_vol` + `_get_trailing_overnight_vrp` for all 10 assets; replay path updated; ES-only docstrings removed |
+| **G-076** | FIXED | `b5_sensitivity.py:238`: `json.dumps({asset_id: val})` → plain `FRAGILE_MODIFIER` float |
+| **G-077** | FIXED | Replay path builds rolling 20d correlation series from 120 days of D30 data, then applies `z_score()` instead of raw Pearson r |
+
+**Tests:** 95 passed / 0 failed
+**Dashboard:** UNRESOLVED 30→24, FIXED 27→33
+**New findings:** G-NEW-022 through G-NEW-025 (data pipeline gaps for AIM-01/02 stubs)
+**Commit:** `bda610f`

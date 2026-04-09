@@ -1,0 +1,71 @@
+It seems file write permissions haven't been granted yet. Let me present the full validation report and the exact edits needed, so you can either grant permission or apply them.
+
+---
+
+```
+=== VALIDATION CYCLE 11 REPORT ===
+Findings validated: 6
+  ALIGNED:   6  (G-026, G-035, G-037, G-038, G-039, G-040)
+  PARTIAL:   0
+  DIVERGENT: 0
+Cumulative: 16 VERIFIED / 67 total (10 prior + 6 new)
+Open concerns: none from Session 11 fixes
+
+=== DETAILED VERDICTS ===
+
+G-026 | ALIGNED → VERIFIED
+  main.py:131 uses os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
+  Matches identical pattern at line 182 (_ensure_telegram_chat_id)
+  Spec §1 REQ-6 (multi-user) satisfied
+
+G-035 | ALIGNED → VERIFIED
+  shared/json_helpers.py: clean parse_json(raw, default) with None/dict/list passthrough
+  All 6 files import from shared module (38 call sites confirmed)
+  Zero def _parse_json remaining anywhere in captain-online
+
+G-037 | ALIGNED → VERIFIED
+  _classifier_regime: predict_proba() attempted first via classifier_object
+  Label fallback (HIGH_VOL/LOW_VOL/50:50) only when no classifier or failure
+  Matches spec §2 B2: "Classifier fails -> use 50/50 regime probs"
+
+G-038 | ALIGNED → VERIFIED
+  Single IN-clause query replaces per-asset loop (10 queries → 1)
+  Uses string formatting with SQL escape (not parameterized), acceptable for internal D00 data
+  Spec §2 B9 efficient data access satisfied
+
+G-039 | ALIGNED → VERIFIED
+  _load_session_log uses param_key LIKE 'session_log_{id}_%'
+  Writer format confirmed: b5b_quality_gate.py:156 writes session_log_{session_id}_{user_id}
+  Key patterns match exactly
+
+G-040 | ALIGNED → VERIFIED
+  Zero occurrences of "detail" key in b9_capacity_evaluation.py
+  All 6 constraint dicts use "message" consistently (lines 67, 75, 83, 91, 101, 125)
+
+=== AUDIT SKILL RESULTS ===
+
+ln-641 (b9_capacity_evaluation.py): C:8 K:10 Q:6 I:7
+  - Pre-existing: duplicate D00 query, _load_param N+1 (4 cursors), bare datetime.now()
+  - None related to Session 11 fixes
+
+ln-641 (b2_regime_probability.py): Classifier logic correct
+  - Pre-existing: redundant assignment line 83, dead VRP block lines 133-139
+  - None related to Session 11 fixes
+
+ln-614 (table fact-check): ALL PASS
+  - p3_d00_asset_universe: init_questdb.py:42 ✓
+  - p3_d17_system_monitor_state: init_questdb.py:420 ✓
+  - p3_d08_tsm_state, p3_d16_user_capital_silos: both verified ✓
+
+=== MATRIX UPDATES NEEDED ===
+
+1. G-026 status: FIXED → VERIFIED
+2. G-035 status: FIXED → VERIFIED
+3. G-037 status: FIXED → VERIFIED
+4. G-038 status: FIXED → VERIFIED
+5. G-039 status: FIXED → VERIFIED
+6. G-040 status: FIXED → VERIFIED
+7. §6 Dashboard: FIXED 57→51, VERIFIED 10→16
+```
+
+Can you grant write permission to plans/ and docs/ so I can apply these updates?

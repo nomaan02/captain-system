@@ -16,6 +16,8 @@ services:
     environment:
       QDB_CAIRO_COMMIT_LAG: 1000
       QDB_LINE_TCP_ENABLED: "true"
+      QDB_PG_USER: ${QUESTDB_USER:-captain}
+      QDB_PG_PASSWORD: ${QUESTDB_PASSWORD}
       JAVA_TOOL_OPTIONS: "-XX:-UseJVMCICompiler"
     restart: unless-stopped
     healthcheck:
@@ -30,10 +32,10 @@ services:
       - "127.0.0.1:6379:6379"    # Redis (internal only)
     volumes:
       - ./redis:/data
-    command: redis-server --appendonly yes --appendfsync everysec
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --appendfsync everysec
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a $REDIS_PASSWORD ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,8 +56,11 @@ services:
     environment:
       QUESTDB_HOST: questdb
       QUESTDB_PORT: "8812"
+      QUESTDB_USER: ${QUESTDB_USER:-captain}
+      QUESTDB_PASSWORD: ${QUESTDB_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       CAPTAIN_ROLE: OFFLINE
       TZ: America/New_York
       VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
@@ -86,8 +91,11 @@ services:
     environment:
       QUESTDB_HOST: questdb
       QUESTDB_PORT: "8812"
+      QUESTDB_USER: ${QUESTDB_USER:-captain}
+      QUESTDB_PASSWORD: ${QUESTDB_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       CAPTAIN_ROLE: ONLINE
       TZ: America/New_York
       VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
@@ -126,8 +134,11 @@ services:
     environment:
       QUESTDB_HOST: questdb
       QUESTDB_PORT: "8812"
+      QUESTDB_USER: ${QUESTDB_USER:-captain}
+      QUESTDB_PASSWORD: ${QUESTDB_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       CAPTAIN_ROLE: COMMAND
       TZ: America/New_York
       VAULT_KEY_PATH: /captain/vault/keys.vault

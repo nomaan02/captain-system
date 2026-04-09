@@ -232,13 +232,13 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §2 B7 — VIX spike, regime shift, and API commission checks
 - **Code:** b7_position_monitor.py:419-427 — all stubs returning True/None
 - **Delta:** Three monitoring checks are no-ops
-- **Deps:** None | **Skill:** ln-629 | **Status:** FIXED (PARTIAL: VIX z-score gap + wrong table name)
+- **Deps:** None | **Skill:** ln-629 | **Status:** VERIFIED (table name corrected, VIX z-score implemented per spec §2 B7)
 
 #### G-031 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — per-asset point values from D00
 - **Code:** b7_shadow_monitor.py:217-221 — POINT_VALUES dict hardcoded
 - **Delta:** Breaks if assets change; doesn't match D00
-- **Deps:** None | **Skill:** ln-641 | **Status:** FIXED (PARTIAL: wrong table name prefix)
+- **Deps:** None | **Skill:** ln-641 | **Status:** VERIFIED (table corrected to p3_d00_asset_universe, placeholder fixed to %s)
 
 #### G-032 | MEDIUM | Online B7 | Shadow Monitor
 - **Spec:** §2 B7 — expired shadow positions publish TIMEOUT outcome
@@ -444,13 +444,13 @@ Scope: 67 non-LOW gaps (CRITICAL + HIGH + MEDIUM). 33 LOW gaps DEFERRED.
 - **Spec:** §2 B9 — efficient data access
 - **Code:** b9_capacity_evaluation.py:108-117 — D00 queried per-asset in loop
 - **Delta:** N+1 query for 10 assets
-- **Deps:** None | **Skill:** ln-651 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-651 | **Status:** VERIFIED (_load_params_batch: single IN query for all params)
 
 #### G-039 | MEDIUM | Online B9 | Capacity Evaluator
 - **Spec:** §2 B9 — efficient data access
 - **Code:** b9_capacity_evaluation.py:160-177 — fetches ALL D17 session_log; filters in Python
 - **Delta:** Entire table loaded when only current session needed
-- **Deps:** None | **Skill:** ln-651 | **Status:** FIXED
+- **Deps:** None | **Skill:** ln-651 | **Status:** VERIFIED (_get_strategy_models: SQL WHERE IN clause + LATEST ON)
 
 #### G-040 | MEDIUM | Online B9 | Capacity Evaluator
 - **Spec:** — consistent constraint API
@@ -509,6 +509,28 @@ Full audit skill run against completed codebase. No code changes.
 | G-082 | Kelly | MDD fallback `or 4500.0` magic number |
 | G-083–G-088 | Feedback | Meta-gaps — fixed by constituent gap fixes |
 | Others | Various | Remaining LOW items from appendices |
+
+---
+
+### Cleanup Session | Pre-Live Blockers + Partial Fixes
+
+#### NEW-A01 | CRITICAL | Security | QuestDB Default Credentials
+- **Spec:** Security hardening — no default credentials in production
+- **Code:** shared/questdb_client.py:17, docker-compose.yml (questdb service)
+- **Delta:** QuestDB ran with admin/quest defaults; any local process could read/write trading data
+- **Deps:** None | **Skill:** ln-621 | **Status:** VERIFIED (ln-621 audit 8/10: credentials externalized, no hardcoded secrets, parameterized queries)
+
+#### NEW-A02 | HIGH | Security | Redis Without Authentication
+- **Spec:** Security hardening — authenticated message bus
+- **Code:** shared/redis_client.py:23, docker-compose.yml (redis service)
+- **Delta:** Redis had no requirepass; any process could inject trade commands
+- **Deps:** None | **Skill:** ln-621 | **Status:** VERIFIED (ln-621 audit 8/10: requirepass enabled, REDIS_PASSWORD from env, healthcheck updated)
+
+#### NEW-A04 | CRITICAL | Lifecycle | uvicorn Overrides Signal Handlers
+- **Spec:** Graceful shutdown — all resources cleaned up on SIGTERM
+- **Code:** captain-command/captain_command/main.py:356-362, api.py
+- **Delta:** signal.signal() registered before uvicorn.run() was silently overridden
+- **Deps:** None | **Skill:** ln-629 | **Status:** VERIFIED (ln-629 audit 9/10: no signal.signal calls, lifespan shutdown confirmed, startup ordering correct)
 
 ---
 
@@ -670,9 +692,9 @@ Full audit skill run against completed codebase. No code changes.
 | UNRESOLVED | 0 |
 | DECISION_NEEDED | 0 |
 | DEFERRED | 34 |
-| FIXED | 60 |
-| VERIFIED | 10 |
-| **TOTAL** | **104** |
+| FIXED | 56 |
+| VERIFIED | 17 |
+| **TOTAL** | **107** |
 
 ---
 
@@ -756,3 +778,13 @@ Full audit skill run against completed codebase. No code changes.
 | 2026-04-09 | 12 | FIXED | G-067 | Renamed or_tracker.py → b8_or_tracker.py; updated imports in main.py, orchestrator.py, replay_full_pipeline.py, test_or_tracker.py |
 | 2026-04-09 | 12 | FIXED | G-068 | Created b12_compliance_gate.py: reads flat rts6_* flags correctly (fixes b3 bug reading missing "requirements" key); B3+B2 delegate to it |
 | 2026-04-09 | 12 | NEW | G-NEW-027 | Block slot collision: b8_or_tracker.py shares b8 with b8_concentration_monitor.py; b9_session_controller.py shares b9 with b9_capacity_evaluation.py — recommend sub-slot rename (b8b_, b9b_) per established b5b/b5c pattern |
+| 2026-04-09 | C | FIXED | NEW-A04 | FastAPI lifespan replaces signal.signal(); orchestrator.stop() + telegram_bot.stop() called on SIGTERM |
+| 2026-04-09 | C | FIXED | NEW-A01 | QuestDB auth via env vars (QUESTDB_USER/QUESTDB_PASSWORD); default user changed to "captain", no default password |
+| 2026-04-09 | C | FIXED | NEW-A02 | Redis requirepass enabled; all clients pass REDIS_PASSWORD from env; healthcheck updated |
+| 2026-04-09 | C-V | VERIFIED | G-030 | VIX check: uses get_trailing_vix_closes() from vix_provider; z-score > 2.0 against 60-day trailing mean/stdev |
+| 2026-04-09 | C-V | VERIFIED | G-031 | Shadow monitor: p3_d00_asset_universe with LATEST ON, point_value column, %s placeholder |
+| 2026-04-09 | C-V | VERIFIED | G-038 | _load_params_batch: single IN query on p3_d17_system_monitor_state; no residual _load_param calls |
+| 2026-04-09 | C-V | VERIFIED | G-039 | _get_strategy_models: SQL WHERE IN + LATEST ON; accepts active_assets param |
+| 2026-04-09 | C-V | VERIFIED | NEW-A01 | ln-621 audit 8/10: QUESTDB_USER/PASSWORD from env, no hardcoded secrets, parameterized queries |
+| 2026-04-09 | C-V | VERIFIED | NEW-A02 | ln-621 audit 8/10: requirepass via env, REDIS_PASSWORD passed to all clients, healthcheck updated |
+| 2026-04-09 | C-V | VERIFIED | NEW-A04 | ln-629 audit 9/10: no signal.signal() calls, FastAPI lifespan shutdown confirmed, startup order correct |

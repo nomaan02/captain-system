@@ -23,6 +23,7 @@ from typing import Optional
 
 from shared.questdb_client import get_cursor
 from shared.statistics import get_ewma_for_regime
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def run_trade_selection(
         dict with selected_trades, score, expected_edge, updated final_contracts/recommendations
     """
     user_id = user_silo.get("user_id", "unknown")
-    accounts = _parse_json(user_silo.get("accounts", "[]"), [])
+    accounts = parse_json(user_silo.get("accounts", "[]"), [])
 
     # Compute expected edge per asset (shared intelligence)
     expected_edge = {}
@@ -149,7 +150,7 @@ def apply_hmm_session_allocation(
     if hmm_state is None:
         return final_contracts  # No HMM data — keep as-is
 
-    opp_weights = _parse_json(hmm_state.get("opportunity_weights"), {})
+    opp_weights = parse_json(hmm_state.get("opportunity_weights"), {})
     n_obs = hmm_state.get("n_observations", 0)
     cold_start = hmm_state.get("cold_start", True)
 
@@ -200,7 +201,7 @@ def _load_correlation_matrix(active_assets: list[str]) -> dict:
         )
         row = cur.fetchone()
     if row and row[0]:
-        return _parse_json(row[0], {})
+        return parse_json(row[0], {})
     return {}
 
 
@@ -231,12 +232,3 @@ def _load_hmm_opportunity_state() -> dict | None:
     return None
 
 
-def _parse_json(raw, default):
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default

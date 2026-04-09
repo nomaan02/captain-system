@@ -26,6 +26,7 @@ from datetime import datetime
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS
 from shared.questdb_client import get_cursor
 from shared.statistics import get_ewma_for_regime
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def run_signal_output(
     Publishes signals to Redis and returns signal list.
     """
     user_id = user_silo.get("user_id", "unknown")
-    accounts = _parse_json(user_silo.get("accounts", "[]"), [])
+    accounts = parse_json(user_silo.get("accounts", "[]"), [])
     total_capital = user_silo.get("total_capital", 0)
 
     # Load quality thresholds for confidence classification
@@ -327,12 +328,3 @@ def _load_system_param(key: str, default):
     return default
 
 
-def _parse_json(raw, default):
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default

@@ -1,0 +1,24 @@
+Report written: `.hex-skills/runtime-artifacts/runs/standalone-625-20260409124219/audit-report/ln-625--global.md`
+Score: **5.9/10** | Issues: 9 (C:0 H:1 M:5 L:3)
+
+---
+
+### Key Findings
+
+**HIGH (1)**
+- **Vite 6.4.1 — 2 active CVEs**: arbitrary file read via dev server WebSocket + path traversal in .map handling. Patch fix available (→ 6.4.2).
+
+**MEDIUM (5)**
+- **10 unused Python deps** across 3 services — `xgboost` (~500 MB), `scikit-learn` (~150 MB), `scipy`, `pydantic`, `tenacity`, `websockets`, `httpx` never imported. captain-online is worst at 45% waste.
+- **Ghost dep**: `prop-types` imported in 10 GUI components but absent from `package.json` — resolves only as transitive dep.
+- **6 hand-rolled retry loops** in production code — `tenacity>=8.0` is declared in 2 requirements.txt but never imported. Same `backoff = min(backoff * 2, 30)` pattern copy-pasted across 3 orchestrators.
+
+**LOW (3)**
+- 3 `urllib.request` calls bypass declared `requests`/`python-telegram-bot` deps
+- `pytz` used when Python 3.12 `zoneinfo` is available natively
+- 2 retry loops in utility scripts
+
+### Priority Actions
+1. `npm update vite` in captain-gui — fixes both CVEs, patch-level update (effort: S)
+2. Remove 10 unused Python packages from requirements.txt files — saves ~700 MB+ across Docker images (effort: S)
+3. Add `prop-types` to captain-gui/package.json (effort: S)

@@ -1,0 +1,56 @@
+---
+
+**Report written:** `.hex-skills/runtime-artifacts/runs/standalone-629-20260409124500/audit-report/ln-629--global.md`
+**Score: 7.1/10 | Issues: 6 (C:0 H:1 M:3 L:2)**
+
+---
+
+## Lifecycle Audit — Findings
+
+### Checks
+
+| Check | Status |
+|---|---|
+| Bootstrap Initialization Order | ✅ passed |
+| Graceful Shutdown | ❌ failed |
+| Resource Cleanup on Exit | ❌ failed |
+| Signal Handling | ⚠️ warning |
+| Liveness / Readiness Probes | ⚠️ warning |
+
+---
+
+### HIGH — `captain-command/main.py:363-369` — uvicorn overrides signal handlers
+
+`signal.signal(SIGTERM, shutdown_handler)` is registered before `uvicorn.run()`, but uvicorn calls `loop.add_signal_handler()` internally when it starts, replacing both handlers. On Docker `SIGTERM`, `orchestrator.stop()` and `telegram_bot.stop()` are **never called** — the CommandOrchestrator and TelegramBot shut down dirty.
+
+**Fix:** Use FastAPI's lifespan API:
+```python
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    orchestrator.stop()
+    if telegram_bot: telegram_bot.stop()
+
+app = FastAPI(lifespan=lifespan)
+# Remove the signal.signal() calls; remove sys.exit(0) from old handler
+```
+Effort: **M**
+
+---
+
+### MEDIUM × 3
+
+| Location | Issue | Effort |
+|---|---|---|
+| `captain-command/main.py:337-341` | `CommandOrchestrator` thread is `daemon=True` — killed immediately on main thread exit with no cleanup, no thread join | S |
+| `captain-offline/Dockerfile` + `captain-online/Dockerfile` (HEALTHCHECK) | HEALTHCHECK polls QuestDB (`http://questdb:9000/exec?query=SELECT%201`), not the process itself. If offline/online crashes while QuestDB is healthy, Docker never restarts the container. | M |
+| `captain-online/blocks/orchestrator.py:86-88` | `OnlineOrchestrator.stop()` only sets `running=False` — no thread join. Offline correctly joins `_redis_thread` with 5s timeout; online does not mirror this pattern. | S |
+
+---
+
+### LOW × 2
+
+| Location | Issue |
+|---|---|
+| All 3 `main.py` files | No `SIGHUP` handler — config reload requires full container restart |
+| All 3 `main.py` bootstrap sections | `get_last_checkpoint()` result is logged but never acted on — crash-resume intent of the SQLite WAL journal is unimplemented |

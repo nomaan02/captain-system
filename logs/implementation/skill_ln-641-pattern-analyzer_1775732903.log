@@ -1,0 +1,36 @@
+## Pattern Analysis Complete — 3.8/10
+
+Report written to `.hex-skills/runtime-artifacts/runs/standalone-641-20260409120800/audit-report/ln-641--full-codebase-pattern-analysis.md`
+
+**10 patterns analyzed across 48 files. 97 issues found: 7 CRITICAL, 31 HIGH, 40 MEDIUM, 19 LOW.**
+
+### Per-Pattern Scores
+
+| Pattern | Score | Verdict |
+|---------|-------|---------|
+| Strategy (AIM dispatch) | **7.0** | Strongest pattern — textbook dispatch table |
+| State Machine (account lifecycle) | **7.3** | Solid enum usage, good tests, but not persisted live |
+| Circuit Breaker | **6.8** | Correct math, L6 stub + no alerting |
+| Vault / Encryption | **6.8** | Correct crypto, operational gaps (rotation, atomicity) |
+| WebSocket Streaming | **6.1** | Good async-in-thread, token refresh dead |
+| AIM Lifecycle State Machine | **3.1** | No type safety, no tests, bypass-able gates |
+| Config + Crash Recovery | **0.7** | Template incomplete, journal is write-only observability |
+| Pub/Sub | **0.3** | No PEL recovery — crashes lose messages |
+| Pipeline | **0.2** | Monolithic error handling kills feedback loop |
+| Data Access | **0.0** | No timeout, no retry, no pool, N+1 connections |
+
+### Top 3 Systemic Risks
+
+1. **No PEL recovery system-wide** — After any crash, in-flight Redis Stream messages (trade outcomes, signals, commands) are permanently lost. The entire learning feedback loop depends on these.
+
+2. **No QuestDB connection resilience** — Zero timeout, zero retry, zero pooling. A transient DB blip silently skips DMA/Kelly/EWMA updates, leaving model weights stale.
+
+3. **AIM lifecycle has no guardrails** — String-literal states with no validation mean GUI commands can bypass feature gates, learning gates, and force any AIM active. Zero unit test coverage.
+
+### Quick Wins (all S effort)
+
+- C-01: Fix command type mismatch `ADOPT_STRATEGY` -> `ADOPTION_DECISION`
+- C-02: Add `connect_timeout=5` to `psycopg2.connect()`
+- C-03: Fix `$1` -> `%s` in `b7_notifications.py`
+- C-07: Add auth secrets to `.env.template`
+- H-15: Add `cur.close()` to `get_cursor()` context manager

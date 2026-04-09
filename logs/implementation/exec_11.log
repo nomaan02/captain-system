@@ -1,0 +1,14 @@
+Session 11 complete. Summary:
+
+**Completed (7 items):**
+- **G-025** — DEFERRED per DEC-04 resolution C (pseudotrader refactor postponed to post-live)
+- **G-026** — Hardcoded `primary_user` replaced with `BOOTSTRAP_USER_ID` env var in `main.py`
+- **G-035** — `_parse_json()` extracted to `shared/json_helpers.py`; 6 local copies removed (38 call sites)
+- **G-037** — Regime classifier now attempts inference first; 50/50 only as fallback
+- **G-038** — N+1 D00 query batched into single `IN` clause (10 queries → 1)
+- **G-039** — D17 session_log query filtered by `param_key LIKE` (full table → current session only)
+- **G-040** — `"detail"` key renamed to `"message"` for consistent constraint API
+
+**Tests:** 95 passed / 0 failed
+**Dashboard:** UNRESOLVED 6→3, DEFERRED 33→34, FIXED 51→57
+**New findings:** none

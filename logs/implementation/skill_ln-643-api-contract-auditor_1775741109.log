@@ -1,0 +1,26 @@
+Report written.
+
+**Score: 5.9/10** (C:45 K:30 Q:80 I:40) | Issues: 8 (H:2 M:3 L:3)
+
+---
+
+### Findings Summary
+
+| ID | Sev | Rule | Location | Issue |
+|----|-----|------|----------|-------|
+| F-001 | **HIGH** | Entity Leakage | `api.py` (all 26 endpoints) | Zero response DTOs — all endpoints return raw dicts via `JSONResponse()` |
+| F-002 | **HIGH** | Arch. Honesty | `b2_level_escalation.py:179` | `check_level_escalation()` performs DB writes, Redis publish, and global mutation behind a `check_` prefix |
+| F-003 | MEDIUM | Error Contracts | `api.py` (10 endpoints) | HTTP 200 returned with `{"error":...}` body on failure — clients can't distinguish success from error |
+| F-004 | MEDIUM | Error Contracts | `b11_replay_runner.py` | 3-way inconsistency: raises ValueError / returns None / returns `{"error":...}` |
+| F-005 | MEDIUM | Missing DTO | `b11_replay_runner.py:210,619` | 5+ shared params across `start_replay`, `start_batch_replay`, and both constructors |
+| F-006 | LOW | Error Contracts | `b1_data_ingestion.py:567` | `_get_current_session_volume()` returns `0` on failure while siblings return `None` |
+| F-007 | LOW | Missing DTO | `api.py:498,641` | Request DTOs use `dict[str, Any]` — no structural validation |
+| F-008 | LOW | Error Contracts | `b4_tsm_manager.py:197-209` | 3 failure modes collapsed into single `None` |
+
+### What passed clean
+- **R1 Layer Leakage:** Zero violations — API properly extracts primitives before calling service blocks
+- **R5 Redundant Overloads:** No `_with_`/`_and_` method pairs found
+- **GET endpoints are read-only** (correct architectural honesty at HTTP level)
+- **Circuit breaker** (`b5c_circuit_breaker.py`) has the best error contract design — consistent `str | None` across all 7 layers
+
+Full report: `.hex-skills/runtime-artifacts/runs/standalone-643-20260409143301/audit-report/643-api-contract.md`

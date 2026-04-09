@@ -14,7 +14,6 @@ main thread.
 
 import logging
 import os
-import signal
 import sys
 import threading
 
@@ -128,7 +127,7 @@ def _link_tsm_to_account(tsm_results: list[dict], account: dict):
         return
 
     # Inject user_id and current balance before storing
-    best["user_id"] = "primary_user"
+    best["user_id"] = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
     best["current_balance"] = balance
 
     _store_tsm_in_d08(account_id, best)
@@ -341,9 +340,10 @@ def main():
     orchestrator = CommandOrchestrator()
     orchestrator.telegram_bot = telegram_bot  # Inject bot for notification routing
 
-    # Register bot with API module so test/notification endpoints can send Telegram messages
-    from captain_command.api import set_telegram_bot
+    # Register bot and orchestrator with API module for lifespan shutdown + notification endpoints
+    from captain_command.api import set_telegram_bot, set_orchestrator
     set_telegram_bot(telegram_bot)
+    set_orchestrator(orchestrator)
 
     orch_thread = threading.Thread(
         target=orchestrator.start, daemon=True, name="cmd-orchestrator"
@@ -352,16 +352,8 @@ def main():
 
     write_checkpoint(ROLE, "ORCHESTRATOR_STARTED", "running", "starting_api_server")
 
-    # Handle SIGTERM/SIGINT
-    def shutdown_handler(signum, frame):
-        logger.info("Shutdown signal received")
-        orchestrator.stop()
-        if telegram_bot:
-            telegram_bot.stop()
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, shutdown_handler)
-    signal.signal(signal.SIGINT, shutdown_handler)
+    # Shutdown is handled by FastAPI lifespan in api.py (orchestrator.stop + telegram_bot.stop).
+    # No signal.signal() calls here — uvicorn manages SIGTERM/SIGINT via its own event loop.
 
     # Start FastAPI via uvicorn (main thread)
     import uvicorn

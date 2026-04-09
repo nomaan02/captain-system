@@ -1,0 +1,18 @@
+## Session 08 Complete
+
+**All 6 items resolved. 95 tests passed, 0 failed. Committed as `3c2d2f7`.**
+
+| Gap | Fix | Net Lines |
+|-----|-----|-----------|
+| G-045 | Removed `session == default_session` filter from bootstrap | -1 |
+| G-046 | Replaced hand-rolled Baum-Welch with `hmmlearn.GaussianHMM` (DEC-05=A) | -126 |
+| G-049 | Already fixed by G-076 (Session 07) — verified | 0 |
+| G-050 | `MAX_ACTION_QUEUE_SIZE=1000`, oldest dropped before D22 store | +5 |
+| G-052 | Docstring documenting D12 join strategy for online consumer | +14 |
+| G-034 | Removed dead `b3_aim_aggregation.py` shim, inlined imports | -27 |
+
+**Dashboard:** UNRESOLVED 24 -> 18, FIXED 33 -> 39
+
+**New finding:** G-NEW-026 — docs still reference removed `b3_aim_aggregation.py` (CLAUDE.md, REPLAY_FUNCTION_MAP.md, etc.). Not code-blocking.
+
+**Passover:** Written to `plans/prompts/.passovers/session_08.txt`.

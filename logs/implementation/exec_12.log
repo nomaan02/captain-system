@@ -1,0 +1,21 @@
+## Session 12 Complete
+
+**3/3 items fixed | 95 passed / 0 failed**
+
+---
+
+### G-066 — Session Controller (DEC-09 → A)
+Created `b9_session_controller.py`. Centralises session schedule (reads `session_registry.json` instead of hardcoded dict), asset-to-session routing, and session-open detection. Orchestrator now imports from it and removes the inline `SESSION_OPEN_TIMES`. Also fixed an APAC fallback bug introduced during the session: `(20, 0)` → `(18, 0)` to match the registry.
+
+### G-067 — OR Tracker Naming
+`or_tracker.py` → `b8_or_tracker.py`. Updated 4 files / 6 import statements (`main.py`, `orchestrator.py`, `replay_full_pipeline.py`, `test_or_tracker.py`).
+
+### G-068 — Compliance Gate (DEC-10 → A)
+Created `b12_compliance_gate.py` in captain-command. Fixes a pre-existing bug in b3's inline `check_compliance_gate()` which read `gate.get("requirements", {})` — a key that never existed in the flat JSON structure (`rts6_*` flags). B3 and B2 now delegate to b12.
+
+---
+
+### New Finding
+**G-NEW-027 (MEDIUM)** — `b8_or_tracker.py` and `b9_session_controller.py` share the `b8`/`b9` prefix slots with `b8_concentration_monitor.py` and `b9_capacity_evaluation.py`. Recommendation for next session: rename to `b8b_`/`b9b_` sub-slots to match the existing `b5b`/`b5c` pattern (4 import sites to update).
+
+**Dashboard**: UNRESOLVED 3→0, FIXED 57→60.

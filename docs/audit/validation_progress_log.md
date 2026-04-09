@@ -66,3 +66,57 @@ Agent B (Validator) — tracking all validation cycles.
 - **DIVERGENT:** 0
 - **Cumulative:** 18 / 67 total (all 18 FIXED -> VERIFIED)
 - **Open concerns:** G-NEW-007 through G-NEW-011 tracked as new findings for future sessions
+
+---
+
+## Cycle 06 — Session 06 Findings (2026-04-09 12:02 GMT+1)
+
+### G-023 | Concurrent Market Data Prefetch | ALIGNED
+- **Spec:** §1 — B1 latency budget <9s; parallel asset data fetch via ThreadPoolExecutor
+- **Verified:** `_prefetch_market_data()` at b1_data_ingestion.py:353-381 uses `ThreadPoolExecutor(max_workers=min(len(assets), 10))`. Results keyed by asset_id. `as_completed` loop with per-task exception handling. Integration at lines 809-812 feeds into `_run_data_moderator`.
+- **Regressions:** None.
+- **Verdict:** ALIGNED -> VERIFIED
+
+### G-018 | Rate Limit Retry with Exponential Backoff | ALIGNED
+- **Spec:** §10 — TopstepX REST handles rate limiting and timeout gracefully
+- **Verified:** Constants at topstep_client.py:28-29. `_post()` (lines 345-380): `timeout=10`, 429 retry with backoff 1s/2s/4s, `Retry-After` header respected. `authenticate()` (line 111): `timeout=10`.
+- **Regressions:** None.
+- **Verdict:** ALIGNED -> VERIFIED
+
+### G-030 | VIX Spike / Regime Shift / Commission Stubs | PARTIAL
+- **Spec:** §2 B7 — "VIX z-score > 2.0 (vs 60d trailing) -> HIGH alert"; regime shift -> CRITICAL; commission chain with fallback
+- **Regime shift:** ALIGNED. `_regime_shift_detected()` (line 502) reads `_regime_cache`, called from orchestrator.
+- **Commission:** ALIGNED in structure. `_get_api_commission()` (line 454) wired to `get_expected_fee`.
+- **VIX spike — PARTIAL:** `_check_vix_spike()` (line 476) uses flat `vix >= threshold` (default 50.0). Spec requires z-score > 2.0 vs 60d trailing.
+- **Regression — wrong table:** Lines 462, 487 query `system_params` (should be `p3_d17_system_monitor_state`) with wrong columns `value`/`key` (should be `param_value`/`param_key`). Runtime failure.
+- **Regression — dead code:** `resolve_commission` calls `_get_api_commission(account_id)` without `asset_id`/`tsm`.
+- **Verdict:** PARTIAL -> stays FIXED.
+
+### G-031 | point_value Query in Shadow Monitor | PARTIAL
+- **Spec:** §2 B7 — point_value from P3-D00 (asset_universe)
+- **Verified:** `_get_point_value()` at b7_shadow_monitor.py:217-230 uses LATEST ON with parameterized $1. Fallback 50.0.
+- **Regression — wrong table:** Line 222 queries `asset_universe` (should be `p3_d00_asset_universe`). Runtime failure.
+- **Verdict:** PARTIAL -> stays FIXED.
+
+### G-032 | Expired Shadow Position Resolution | ALIGNED
+- **Spec:** §2 B7 Phase 5 — shadow outcomes feed Category A learning
+- **Verified:** b7_shadow_monitor.py:88-95 calls `_resolve_shadow(shadow, "TIMEOUT", exit_price)`. Publishes `theoretical=True` outcome to `STREAM_SIGNAL_OUTCOMES`.
+- **Known follow-ups:** G-NEW-019 (datetime.now naive), G-NEW-020 (no retry on publish).
+- **Verdict:** ALIGNED -> VERIFIED
+
+### G-033 | Atomic Capital + CB Update | ALIGNED
+- **Spec:** §11 Loop 5 — atomic D23 L_t += pnl, n_t++ with D16 capital update
+- **Verified:** `_update_capital_and_cb()` uses single `with get_cursor() as cur:` for D16+D23. Old separate methods removed.
+- **Verdict:** ALIGNED -> VERIFIED
+
+### Audit Skills
+- **ln-641:** 2H (datetime.now in b7_pos_monitor; commission dead code), 4M, 8L across 4 files.
+- **ln-614:** 2 wrong table names (`system_params`, `asset_universe`). 10/12 claims verified.
+
+### Cycle 06 Summary
+- **Findings validated:** 6
+- **ALIGNED:** 4 (G-023, G-018, G-032, G-033)
+- **PARTIAL:** 2 (G-030, G-031)
+- **DIVERGENT:** 0
+- **Cumulative:** 22 / 67 total (4 new VERIFIED; 2 stay FIXED with notes)
+- **Open concerns:** G-030 VIX z-score + table bugs; G-031 table name; G-NEW-015 through G-NEW-021 tracked

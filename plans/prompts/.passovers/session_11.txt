@@ -1,0 +1,29 @@
+Session 11 Passover
+Items completed: G-026, G-035, G-037, G-038, G-039, G-040 (6 fixed), G-025 (deferred per DEC-04)
+Items remaining: none
+New findings: none
+Test status: 95 passed / 0 failed
+Audit skill results: not run (post-fix audit deferred to validation cycle)
+Notes:
+  - G-025: DEFERRED per DEC-04 resolution C. Pseudotrader god module refactor postponed
+    until after live trading stabilized. Tracked in DEFERRED section of matrix.
+  - G-026: main.py _link_tsm_to_account line 131: hardcoded "primary_user" replaced with
+    os.environ.get("BOOTSTRAP_USER_ID", "primary_user"). Matches existing pattern at line 181
+    (_ensure_telegram_chat_id). TSM linking now works for any user_id set via env var.
+  - G-035: Created shared/json_helpers.py with parse_json(raw, default). Removed local
+    _parse_json() from 6 files: b1_data_ingestion.py, b4_kelly_sizing.py, b5_trade_selection.py,
+    b5c_circuit_breaker.py, b6_signal_output.py, b7_position_monitor.py. All call sites renamed
+    from _parse_json() to parse_json(). 38 call sites across 6 files.
+  - G-037: _classifier_regime() restructured: attempts classifier_object.predict_proba() first
+    regardless of regime_label. Falls back to regime_label (HIGH_VOL/LOW_VOL/NEUTRAL) only when
+    no classifier object available or classifier fails. Previously, REGIME_NEUTRAL short-circuited
+    to 50/50 without ever attempting inference.
+  - G-038: Asset class homogeneity check in b9_capacity_evaluation.py replaced per-asset D00
+    query loop with single batched query using IN clause. Eliminates N+1 pattern (10 queries → 1).
+  - G-039: _load_session_log() now filters D17 query by param_key LIKE 'session_log_{id}_%'
+    instead of fetching entire table and filtering in Python. param_key format confirmed from
+    b5b_quality_gate.py writer: session_log_{session_id}_{user_id}.
+  - G-040: b9_capacity_evaluation.py ASSET_CLASS_HOMOGENEITY constraint: "detail" key renamed
+    to "message" to match all other constraint response dicts in the file.
+  - Matrix §6 Dashboard: UNRESOLVED 6→3, DEFERRED 33→34, FIXED 51→57
+  - Matrix §7 Changelog populated with all 7 entries (1 DEFERRED + 6 FIXED).

@@ -51,11 +51,18 @@ def run_capacity_evaluation(
     high_corr_pairs = _find_high_corr_pairs(active_assets, corr_matrix, threshold=0.7)
     effective_independent = active_asset_count - len(high_corr_pairs)
 
-    # System params
-    max_users = _load_param("max_users", 20)
-    max_accounts = _load_param("max_accounts_per_user", 10)
-    max_assets = _load_param("max_assets", 50)
-    quality_floor = _load_param("quality_hard_floor", 0.003)
+    # System params (single batched query instead of 4 separate DB calls)
+    param_defaults = {
+        "max_users": 20,
+        "max_accounts_per_user": 10,
+        "max_assets": 50,
+        "quality_hard_floor": 0.003,
+    }
+    params = _load_params_batch(param_defaults)
+    max_users = params["max_users"]
+    max_accounts = params["max_accounts_per_user"]
+    max_assets = params["max_assets"]
+    quality_floor = params["quality_hard_floor"]
 
     # Build constraints list
     constraints = []
@@ -104,23 +111,25 @@ def run_capacity_evaluation(
 
     # Asset class homogeneity check (P3-PG-29 lines 1647-1655)
     asset_classes = set()
-    for asset_id in active_assets:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT locked_strategy FROM p3_d00_asset_universe "
-                "LATEST ON last_updated PARTITION BY asset_id WHERE asset_id = %s",
-                (asset_id,),
-            )
-            row = cur.fetchone()
-        if row and row[0]:
-            strategy = json.loads(row[0]) if isinstance(row[0], str) else (row[0] or {})
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT asset_id, locked_strategy FROM p3_d00_asset_universe "
+            "LATEST ON last_updated PARTITION BY asset_id "
+            "WHERE asset_id IN ({})".format(
+                ", ".join("'{}'".format(a.replace("'", "''")) for a in active_assets)
+            ),
+        )
+        rows = cur.fetchall()
+    for row in rows:
+        if row[1]:
+            strategy = json.loads(row[1]) if isinstance(row[1], str) else (row[1] or {})
             asset_classes.add(strategy.get("asset_class", "EQUITY"))
 
     if len(asset_classes) <= 1 and len(active_assets) > 1:
         constraints.append({
             "type": "ASSET_CLASS_HOMOGENEITY",
             "severity": "MEDIUM",
-            "detail": f"All {len(active_assets)} assets are in class: {asset_classes}",
+            "message": f"All {len(active_assets)} assets are in class: {asset_classes}",
             "recommendation": "Add assets from different classes (bonds, commodities, FX) for diversification",
         })
 
@@ -158,20 +167,20 @@ def run_capacity_evaluation(
 # ---------------------------------------------------------------------------
 
 def _load_session_log(session_id: int) -> list[dict]:
+    key_prefix = f"session_log_{session_id}_"
     with get_cursor() as cur:
         cur.execute(
             """SELECT param_value FROM p3_d17_system_monitor_state
-               WHERE category = 'session_log'
+               WHERE category = 'session_log' AND param_key LIKE %s
                ORDER BY last_updated DESC""",
+            (key_prefix + "%",),
         )
         rows = cur.fetchall()
 
     results = []
     for r in rows:
         try:
-            data = json.loads(r[0])
-            if data.get("session_id") == session_id:
-                results.append(data)
+            results.append(json.loads(r[0]))
         except (json.JSONDecodeError, TypeError):
             continue
     return results
@@ -221,19 +230,19 @@ def _find_high_corr_pairs(assets: list[str], matrix: dict, threshold: float = 0.
 
 
 def _get_strategy_models(active_assets: list[str]) -> set:
+    if not active_assets:
+        return set()
+    placeholders = ", ".join("'{}'".format(a.replace("'", "''")) for a in active_assets)
     with get_cursor() as cur:
         cur.execute(
-            """SELECT asset_id, locked_strategy FROM p3_d00_asset_universe
-               ORDER BY last_updated DESC"""
+            f"SELECT asset_id, locked_strategy FROM p3_d00_asset_universe "
+            f"LATEST ON last_updated PARTITION BY asset_id "
+            f"WHERE asset_id IN ({placeholders})"
         )
         rows = cur.fetchall()
 
-    seen = set()
     models = set()
     for r in rows:
-        if r[0] in seen or r[0] not in active_assets:
-            continue
-        seen.add(r[0])
         try:
             strategy = json.loads(r[1]) if isinstance(r[1], str) else (r[1] or {})
             m = strategy.get("m")
@@ -258,21 +267,27 @@ def _count_accounts(active_users: list[dict]) -> int:
     return total
 
 
-def _load_param(key: str, default):
+def _load_params_batch(defaults: dict) -> dict:
+    """Load multiple D17 params in a single query. Returns dict with defaults applied."""
+    result = dict(defaults)
+    if not defaults:
+        return result
+    placeholders = ", ".join("'{}'".format(k.replace("'", "''")) for k in defaults)
     with get_cursor() as cur:
         cur.execute(
-            """SELECT param_value FROM p3_d17_system_monitor_state
-               LATEST ON last_updated PARTITION BY param_key
-               WHERE param_key = %s""",
-            (key,),
+            f"SELECT param_key, param_value FROM p3_d17_system_monitor_state "
+            f"LATEST ON last_updated PARTITION BY param_key "
+            f"WHERE param_key IN ({placeholders})"
         )
-        row = cur.fetchone()
-    if row and row[0]:
-        try:
-            return json.loads(row[0])
-        except (json.JSONDecodeError, TypeError):
-            return default
-    return default
+        rows = cur.fetchall()
+    for row in rows:
+        key, val = row[0], row[1]
+        if key in defaults and val:
+            try:
+                result[key] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return result
 
 
 def _save_capacity_state(session_id: int, state: dict):

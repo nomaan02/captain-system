@@ -13,8 +13,8 @@ from contextlib import contextmanager
 
 QUESTDB_HOST = os.environ.get("QUESTDB_HOST", "localhost")
 QUESTDB_PORT = int(os.environ.get("QUESTDB_PORT", "8812"))
-QUESTDB_USER = os.environ.get("QUESTDB_USER", "admin")
-QUESTDB_PASSWORD = os.environ.get("QUESTDB_PASSWORD", "quest")
+QUESTDB_USER = os.environ.get("QUESTDB_USER", "captain")
+QUESTDB_PASSWORD = os.environ.get("QUESTDB_PASSWORD", "")
 QUESTDB_DB = os.environ.get("QUESTDB_DB", "qdb")
 
 

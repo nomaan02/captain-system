@@ -1,0 +1,38 @@
+Report written to `docs/audit/ln-614--global.md`.
+
+## Documentation Fact-Checker Results: **3.2 / 10**
+
+**377 claims checked across 83 markdown files. 49 unique issues found.**
+
+### CRITICAL (3)
+
+| # | Issue | Impact |
+|---|-------|--------|
+| C-01 | `JWT_SECRET_KEY` and `API_SECRET_KEY` undocumented, default to empty strings | Unauthenticated API access |
+| C-02 | `.env.template` missing 22 env vars used in production code | Setup/deployment failure |
+| C-03 | QuestDB table count stale: docs say 29, actual is **38** (across 6+ docs) | Misleading architecture picture |
+
+### HIGH (10)
+
+| # | Issue |
+|---|-------|
+| H-01 | Two spec directories referenced in CLAUDE.md don't exist (`CAPTAIN-FUNCTION-DOCS-NEW-AMENDMENTS/`, `completion-validation-docs/`) |
+| H-02 | Deleted `b3_aim_aggregation.py` still referenced in **6 documents** (30+ stale refs) |
+| H-03 | Block counts wrong everywhere: "28 total" is actually ~40; per-process counts all understated |
+| H-04 | Redis migrated to Streams but CLAUDE.md still describes pub/sub; `stream:signal_outcomes` completely undocumented |
+| H-05 | Python version: docs say 3.11, Dockerfiles use **3.12** |
+| H-06 | MOST_COMPLETE_REFERENCE fabricates a `ThreadedConnectionPool` that doesn't exist in `questdb_client.py` |
+| H-07 | GUI_INTEGRATION_MAP has 11 wrong file paths (GUI restructured from .tsx to .jsx) |
+| H-08 | QuestDB image: doc says `:latest`, actual is pinned SHA256 digest |
+| H-09 | `TOPSTEP_CONTRACT_ID` used in command blocks but documented nowhere |
+| H-10 | "All processes" publish to `captain:status` -- Offline actually never does |
+
+### Key cross-doc contradictions
+
+The same facts are stated differently across documents for: table count, block counts, container count, active assets (10 vs 11), Redis architecture, Python version, and memory limits. Root cause: docs frozen at spec-time, codebase kept evolving.
+
+### Highest-priority fixes
+
+1. **Security** -- Add JWT_SECRET_KEY, API_SECRET_KEY, TOPSTEP_CONTRACT_ID to `.env.template`
+2. **CLAUDE.md** -- Update stale counts (tables, blocks, tests), remove deleted file ref, fix Redis channel table, remove nonexistent spec directory paths
+3. **MOST_COMPLETE_REFERENCE** -- Fix Python version, remove fabricated connection pool, update image tag

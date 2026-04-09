@@ -1,0 +1,43 @@
+## Pattern Analysis Complete — 10 Patterns, 89 Issues
+
+**Reports:** `.hex-skills/runtime-artifacts/runs/standalone-641-20260409132418/audit-report/`
+
+### Scorecard (ranked best → worst)
+
+| Pattern | Score | C | K | Q | I | Issues |
+|---|---|---|---|---|---|---|
+| Circuit Breaker | **7.7** | 78 | 72 | 82 | 75 | 5 (M:2 L:3) |
+| Pipeline/Block Processing | **7.2** | 74 | 68 | 70 | 76 | 10 (H:1 M:5 L:4) |
+| Orchestrator | **7.1** | 74 | 72 | 68 | 80 | 11 (H:2 M:6 L:3) |
+| Pub/Sub Messaging | **6.6** | 72 | 68 | 74 | 70 | 10 (Crit:1 H:3 M:4 L:2) |
+| State Machine | **6.4** | 72 | 61 | 74 | 58 | 10 (H:3 M:4 L:3) |
+| Data Access | **6.4** | 72 | 58 | 65 | 70 | 7 (H:2 M:3 L:2) |
+| Config Management | **6.4** | 72 | 48 | 78 | 65 | 6 (H:2 M:2 L:2) |
+| Journal/Crash Recovery | **6.3** | 72 | 60 | 70 | 65 | 8 (Crit:1 M:4 L:3) |
+| Bootstrap/Seeding | **6.1** | 62 | 74 | 70 | 68 | 14 (H:5 M:5 L:4) |
+| Health Check / Heartbeat | **5.1** | 68 | 52 | 61 | 65 | 10 (Crit:4 H:2 M:3 L:1) |
+| **Overall** | **6.5** | | | | | **89** (Crit:6 H:18 M:38 L:27) |
+
+### Top Critical/High Priority Findings
+
+**CRITICAL (6):**
+1. **Pub/Sub: No XPENDING recovery** — crash between handler and ACK permanently loses messages (trade outcomes, signals)
+2. **Journal: Recovery is log-only** — `next_action` field written but never acted upon; all processes restart from scratch
+3. **Health: `/api/health` returns HTTP 200 when DEGRADED** — Docker healthcheck always passes
+4. **Health: Offline never publishes heartbeat** — always shows `unknown`
+5. **Health: Online pipeline_stage has no status field** — always shows `unknown`
+6. **Health: Offline/Online Docker healthchecks probe QuestDB, not themselves** — crashed Python process shows healthy
+
+**HIGH (top 5 of 18):**
+1. **State Machine: LIVE failure path missing** — spec says fee + revert to EVAL; never implemented
+2. **Orchestrator: uvicorn overrides SIGTERM** — Command orchestrator.stop() never called on container shutdown
+3. **Pub/Sub: `MANUAL_HALT` unreachable** — published via pub/sub but Online reads streams only
+4. **Data Access: Wrong SQL placeholder** — `b7_notifications.py:433` uses `$1` not `%s` (runtime bug)
+5. **Data Access: No connection pooling** — 40+ connect/disconnect per pipeline run
+
+### Systemic Themes
+
+- **Completeness is the weakest dimension** across all patterns (avg 61/100) — missing recovery logic, missing health signals, missing DLQ, missing tests
+- **Compliance is the strongest** (avg 71/100) — naming conventions and basic patterns are consistent
+- **Test coverage gap** — orchestrators, command blocks, and bootstrap scripts have near-zero dedicated tests
+- **Inconsistency between processes** — shutdown, heartbeat, and checkpoint behaviors differ across Offline/Online/Command with no documented justification

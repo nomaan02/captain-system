@@ -24,6 +24,7 @@ import secrets
 import threading
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -58,7 +59,30 @@ from captain_command.blocks.b7_notifications import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Captain Command API", version="1.0.0")
+# Orchestrator instance — set by main.py before uvicorn.run()
+_orchestrator = None
+
+
+def set_orchestrator(orch):
+    """Store the orchestrator so the lifespan shutdown hook can stop it."""
+    global _orchestrator
+    _orchestrator = orch
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    """FastAPI lifespan: captures event loop on startup, stops orchestrator + bot on shutdown."""
+    set_event_loop(asyncio.get_running_loop())
+    yield
+    # Shutdown — runs when uvicorn receives SIGTERM/SIGINT
+    logger.info("Lifespan shutdown: stopping orchestrator and telegram bot")
+    if _orchestrator:
+        _orchestrator.stop()
+    if _telegram_bot:
+        _telegram_bot.stop()
+
+
+app = FastAPI(title="Captain Command API", version="1.0.0", lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +145,7 @@ class _JWTAuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_JWTAuthMiddleware)
 
 
-@app.on_event("startup")
-async def _capture_event_loop():
-    """Capture the uvicorn event loop so background threads can use run_coroutine_threadsafe."""
-    set_event_loop(asyncio.get_running_loop())
+# Event-loop capture moved into _lifespan() startup phase.
 
 
 # ---------------------------------------------------------------------------

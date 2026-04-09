@@ -149,41 +149,33 @@ def _classifier_regime(asset_id: str, features: dict, model: dict) -> Optional[d
     """
     regime_label = model.get("regime_label", "REGIME_NEUTRAL")
 
-    # If REGIME_NEUTRAL, return equal probs (strategy doesn't depend on regime)
-    if regime_label == "REGIME_NEUTRAL":
-        return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}
-
-    # Extract feature vector for classifier
-    from captain_online.blocks.b1_features import extract_classifier_features
-    feature_vector = extract_classifier_features(asset_id, features, model)
-
-    # Check for missing features
-    if any(v is None for v in feature_vector):
-        missing = [model["feature_list"][i] for i, v in enumerate(feature_vector) if v is None]
-        logger.warning("ON-B2: Missing classifier features for %s: %s", asset_id, missing)
-        return None
-
-    # Load and run the classifier
-    # In production, model["classifier_object"] contains the serialised XGBoost model
+    # Attempt classifier inference first if a trained model is available
     classifier_obj = model.get("classifier_object")
-    if classifier_obj is None:
-        # No trained classifier available — fall back to regime label
-        logger.info("ON-B2: No classifier object for %s — using regime label %s", asset_id, regime_label)
-        if regime_label == "HIGH_VOL":
-            return {"HIGH_VOL": 1.0, "LOW_VOL": 0.0}
-        elif regime_label == "LOW_VOL":
-            return {"HIGH_VOL": 0.0, "LOW_VOL": 1.0}
-        return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}
+    if classifier_obj is not None:
+        from captain_online.blocks.b1_features import extract_classifier_features
+        feature_vector = extract_classifier_features(asset_id, features, model)
 
-    try:
-        import numpy as np
-        X = np.array([feature_vector])
-        proba = classifier_obj.predict_proba(X)[0]
-        # Assume class ordering: [LOW_VOL, HIGH_VOL]
-        return {"LOW_VOL": float(proba[0]), "HIGH_VOL": float(proba[1])}
-    except Exception as e:
-        logger.error("ON-B2: Classifier failed for %s: %s", asset_id, e)
-        return None
+        if any(v is None for v in feature_vector):
+            missing = [model["feature_list"][i] for i, v in enumerate(feature_vector) if v is None]
+            logger.warning("ON-B2: Missing classifier features for %s: %s — falling back to regime label", asset_id, missing)
+        else:
+            try:
+                import numpy as np
+                X = np.array([feature_vector])
+                proba = classifier_obj.predict_proba(X)[0]
+                # Class ordering: [LOW_VOL, HIGH_VOL]
+                return {"LOW_VOL": float(proba[0]), "HIGH_VOL": float(proba[1])}
+            except Exception as e:
+                logger.error("ON-B2: Classifier failed for %s: %s — falling back to regime label", asset_id, e)
+
+    # No classifier object or classifier failed — fall back to regime label from P2
+    if regime_label == "HIGH_VOL":
+        return {"HIGH_VOL": 1.0, "LOW_VOL": 0.0}
+    elif regime_label == "LOW_VOL":
+        return {"HIGH_VOL": 0.0, "LOW_VOL": 1.0}
+    else:
+        logger.info("ON-B2: No classifier for %s, regime=%s — equal probs", asset_id, regime_label)
+        return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}
 
 
 def argmax_regime(regime_probs: dict) -> str:

@@ -36,6 +36,7 @@ import math
 from typing import Optional
 
 from shared.questdb_client import get_cursor
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +270,7 @@ def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: float) -> str | No
     the halt threshold, not just trades where L_t has already breached it.
     When H = 0, all trading stops. No exceptions.
     """
-    topstep_params = _parse_json(tsm.get("topstep_params"), {})
+    topstep_params = parse_json(tsm.get("topstep_params"), {})
 
     c = topstep_params.get("c", 0.5)    # Hard halt fraction
     e = topstep_params.get("e", 0.01)   # Daily exposure fraction
@@ -299,7 +300,7 @@ def _layer2_budget(intraday: dict, tsm: dict, fee_per_trade: float = 0.0) -> str
     MDD is read from TSM config (not hardcoded) so changes propagate automatically.
     n_t is total trades completed today (all baskets), NOT consecutive losses.
     """
-    topstep_params = _parse_json(tsm.get("topstep_params"), {})
+    topstep_params = parse_json(tsm.get("topstep_params"), {})
 
     p = topstep_params.get("p", 0.005)  # Fraction of MDD% risked per trade
     e = topstep_params.get("e", 0.01)   # Daily exposure fraction
@@ -424,7 +425,7 @@ def _layer4_correlation_sharpe(
     S = mu_b / denominator
 
     # Lambda threshold from topstep_params
-    topstep_params = _parse_json(tsm.get("topstep_params"), {})
+    topstep_params = parse_json(tsm.get("topstep_params"), {})
     lambda_threshold = topstep_params.get("lambda", DEFAULT_LAMBDA)
 
     if S <= lambda_threshold:
@@ -526,8 +527,8 @@ def _load_intraday_state(accounts: list[str]) -> dict:
         result[r[0]] = {
             "l_t": r[1] or 0.0,
             "n_t": r[2] or 0,
-            "l_b": _parse_json(r[3], {}),
-            "n_b": _parse_json(r[4], {}),
+            "l_b": parse_json(r[3], {}),
+            "n_b": parse_json(r[4], {}),
         }
     return result
 
@@ -539,7 +540,7 @@ def _resolve_fee(tsm: dict, asset_id: str, fallback_fee: float) -> float:
     Fallback: commission_per_contract * 2 (round-trip)
     Last resort: fallback_fee parameter.
     """
-    fee_schedule = _parse_json(tsm.get("fee_schedule"), {})
+    fee_schedule = parse_json(tsm.get("fee_schedule"), {})
 
     fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
     instrument_fee = fees_by_instrument.get(asset_id, {})
@@ -579,12 +580,3 @@ def _check_manual_halt(ac_id: str) -> bool:
     return False
 
 
-def _parse_json(raw, default):
-    if raw is None:
-        return default
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default

@@ -1,0 +1,111 @@
+# Agent C — Executor Session 11: Code Quality + Remaining
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+
+## Previous Session Passover
+Session 10 Passover
+Items completed: G-015, G-016, G-078, G-079, G-080, G-081 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-001: Duplicate key 7 in _AIM_NAMES dict (aim_compute.py:103-104). 7:"DISABLED" then 7:"COT", first is dead.
+  - G-NEW-002: CB trips never publish to captain:alerts (b5c_circuit_breaker.py). Only logger.info, no Redis alert.
+  - G-NEW-003: L6 _check_manual_halt is a permanent stub returning False. No D17 parameter lookup wired.
+  - G-NEW-004 (HIGH): api.py _process_health, _api_connections, _last_signal_time written by bg threads, read by health()/status() with no lock.
+  - G-NEW-005 (MEDIUM): api.py status() and health() read _ws_sessions without _ws_lock.
+  - G-NEW-006 (MEDIUM): api.py route_command() called synchronously inside async websocket_endpoint, blocks event loop during DB writes.
+  - G-NEW-007 (LOW): api.py set_event_loop() and set_telegram_bot() write globals without lock (write-once-at-startup, comment-only fix).
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-628-concurrency-auditor: completed. Score 7.8/10 (up from 5.3). 4 remaining gaps flagged.
+  - ln-641-pattern-analyzer: completed. AIM dispatch correct, CB V3 documented. 3 new findings flagged.
+Notes:
+  - G-015: threading.Lock (_state_lock) added to b2_gui_data_server.py. Protects _user_stream,
+    _account_data, _pipeline_stage. build_dashboard_snapshot() snapshots all three atomically
+    under lock, then passes snapshots to _get_capital_silo(user_stream=) and
+    _get_api_connection_status(user_stream=, account_data=). Lock NOT held during DB queries.
+  - G-016: threading.Lock (_ws_lock) added to api.py. Protects _ws_sessions dict across async
+    event loop (websocket_endpoint connect/disconnect) and background threads (gui_push).
+    gui_push snapshots session list under lock. All mutation sites (add, discard, pop) guarded.
+  - G-078: _aim16_hmm re-added to dispatch table in shared/aim_compute.py per DEC-06 resolution A.
+    Online B3 now invokes HMM inference for session budget allocation.
+  - G-079: 7 features without replay data sources stubbed as None in aim_feature_loader.py:
+    pcr_z, gex, cot_smi, cot_speculator_z, event_proximity, events_today, cl_basis.
+    Stubs set BEFORE real feature loading so real values override if available.
+  - G-080: b5c_circuit_breaker.py docstring updated: L5/L6 marked [V3 amendment] with explanatory
+    paragraph citing DEC-03 resolution B.
+  - G-081: _get_ewma_for_regime() extracted to shared/statistics.py as get_ewma_for_regime().
+    Local copies deleted from b4_kelly_sizing.py, b5_trade_selection.py, b6_signal_output.py.
+    All three files now import from shared.statistics.
+  - Matrix §6 Dashboard: UNRESOLVED 12→6, FIXED 45→51
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Resolved Decisions
+Check matrix for DEC-04 (Pseudotrader refactor scope) resolution.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-025 | HIGH | Pseudotrader God Module
+**File:** captain-offline/captain_offline/blocks/b3_pseudotrader.py (1,432 lines)
+**Fix:** Per DEC-04 resolution. If "Defer": mark DEFERRED in matrix, skip. If "Extract 3": split out the 3 biggest concerns into separate modules. If UNRESOLVED: skip.
+**Spec:** §4 B3 — single-responsibility
+**Deps:** DEC-04
+
+### 2. G-026 | HIGH | Multi-User Hardcoded primary_user
+**File:** captain-command/captain_command/main.py
+**Line:** 131
+**Fix:** Replace hardcoded `primary_user` with dynamic user resolution from the request context or env var. TSM linking must work for any user_id.
+**Spec:** §1 REQ-6 — multi-user from day one
+
+### 3. G-035 | MEDIUM | _parse_json Duplicated 6x
+**Files:** b4_kelly_sizing.py:461 + 5 others
+**Fix:** Extract `_parse_json()` to shared utility (e.g., shared/utils.py or shared/json_helpers.py). Import in all 6 blocks.
+**Spec:** DRY principle
+
+### 4. G-037 | MEDIUM | Regime Classifier 50/50 for C1-C3
+**File:** captain-online/captain_online/blocks/b2_regime_probability.py
+**Lines:** 150-154
+**Fix:** Implement actual regime probability computation for classifier tiers C1, C2, C3 instead of returning [0.5, 0.5].
+**Spec:** §2 B2 — regime probabilities per asset
+
+### 5. G-038 | MEDIUM | Capacity Evaluator N+1 Query
+**File:** captain-online/captain_online/blocks/b9_capacity_evaluation.py
+**Lines:** 108-117
+**Fix:** Batch D00 query to fetch all assets at once instead of per-asset in loop.
+**Spec:** §2 B9 — efficient data access
+
+### 6. G-039 | MEDIUM | Capacity Evaluator Full Table Load
+**File:** captain-online/captain_online/blocks/b9_capacity_evaluation.py
+**Lines:** 160-177
+**Fix:** Add WHERE clause to D17 session_log query to fetch only current session, not entire table.
+**Spec:** §2 B9 — efficient data access
+
+### 7. G-040 | MEDIUM | Capacity Evaluator Inconsistent API
+**File:** captain-online/captain_online/blocks/b9_capacity_evaluation.py
+**Line:** 124
+**Fix:** Change `"detail"` key to `"message"` to match the pattern used by other constraint responses.
+**Spec:** Consistent constraint API
+
+## Post-Fix
+1. Run `/ln-623-code-quality-auditor` if available, else `/ln-624-code-quality-auditor`
+2. Run `/ln-651-runtime-performance-auditor` if available
+
+## Rules
+1. ONE ITEM AT A TIME. After each: show diff, run pytest, update matrix.
+2. If DEC-04 is UNRESOLVED, skip G-025 and flag.
+3. New issues → G-NEW-XXX, flag, do NOT fix.
+4. After all items: update §6 Dashboard, git commit.
+
+## Passover
+Write to `plans/prompts/.passovers/session_11.txt`:
+```
+Session 11 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

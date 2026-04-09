@@ -1,0 +1,53 @@
+Report written: `.hex-skills/runtime-artifacts/runs/standalone-629-20260409155000/audit-report/ln-629--global.md`
+Score: **7.3/10** | Issues: 5 (C:0 H:1 M:3 L:1)
+
+---
+
+## Lifecycle Audit — Findings Summary
+
+### Checks
+
+| Check | Status |
+|-------|--------|
+| Bootstrap Initialization Order | **passed** |
+| Graceful Shutdown | **failed** |
+| Resource Cleanup on Exit | **warning** |
+| Signal Handling | **warning** |
+| Liveness/Readiness Probes | **warning** |
+
+---
+
+### Findings
+
+**HIGH — `captain-command/captain_command/main.py:363-371`**
+`uvicorn.run()` installs its own SIGTERM/SIGINT handlers, overriding the custom `shutdown_handler` registered just above it at L363-364. On every Docker `docker compose down`, uvicorn's internal handler fires instead — `orchestrator.stop()` is never called, `telegram_bot.stop()` is never called, and the orchestrator daemon thread is killed mid-flight.
+
+Fix: Move shutdown logic into a FastAPI `lifespan` context manager in `api.py`, or use `uvicorn.Server(config, install_signal_handlers=False)` and handle signals manually. Effort: M.
+
+---
+
+**MEDIUM — All three processes: shutdown handlers**
+Redis singleton pool (`shared/redis_client.py`) is never explicitly closed in any of the three shutdown handlers. Any pending `XACK` or pub/sub operations are dropped silently.
+
+Fix: Call `get_redis_client().close()` before `sys.exit(0)` in all three handlers. Effort: S.
+
+---
+
+**MEDIUM — `captain-online/Dockerfile:32-33`, `captain-offline/Dockerfile:32-33`**
+`HEALTHCHECK` queries `questdb:9000/exec?query=SELECT%201` — tests QuestDB connectivity from within the container, not captain process health. A crashed or hung captain-online/offline Python process passes health checks indefinitely as long as QuestDB is alive; Docker never triggers a restart.
+
+Fix: Have each orchestrator's main loop `touch /tmp/captain_{role}_heartbeat`; change `HEALTHCHECK CMD` to `find /tmp/captain_online_heartbeat -mmin -2 || exit 1`. Effort: M.
+
+---
+
+**MEDIUM — `captain-command/captain_command/main.py:356-361`**
+captain-command's `shutdown_handler` doesn't call `write_checkpoint(ROLE, "SHUTDOWN", ...)`. captain-online (L125) and captain-offline (L145) both write a shutdown marker; command goes dark with no recovery trace.
+
+Fix: Add `write_checkpoint(ROLE, "SHUTDOWN", "running", "shutdown")` before `sys.exit(0)`. Effort: S.
+
+---
+
+**LOW — `captain-command/captain_command/main.py:348-350`**
+Orchestrator thread is `daemon=True`. When uvicorn exits, Python exits immediately without joining the thread, silently dropping any `XREADGROUP` messages being processed.
+
+Fix: Dependent on the HIGH fix above — once lifespan hooks call `orchestrator.stop()`, set `daemon=False` and join with a timeout. Effort: S.

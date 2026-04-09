@@ -1,0 +1,84 @@
+# Agent C — Executor Session 09: Command Pipeline + QuestDB
+
+You are AGENT C (Executor). You implement code changes.
+You do NOT plan future sessions or make architectural decisions.
+
+## Previous Session Passover
+Session 08 Passover
+Items completed: G-045, G-046, G-049, G-050, G-052, G-034 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-026: b3_aim_aggregation.py removed — docs referencing this file (CLAUDE.md architecture table, REPLAY_FUNCTION_MAP.md, AIM_Audit_Report.md, captain_online.md) still mention it. Doc cleanup needed but not code-blocking.
+Test status: 95 passed / 0 failed
+Audit skill results: deferred (see below)
+Notes:
+  - G-045: Removed `and session == default_session` from bootstrap regime filter. All 3 sessions now get regime-filtered EWMA stats instead of only the default session (others fell back to unconditional).
+  - G-046: DEC-05 resolved as A (switch to hmmlearn). Replaced ~150 lines of hand-rolled Baum-Welch (forward-backward, xi, gamma, M-step) with hmmlearn.hmm.GaussianHMM(n_components=3, covariance_type="diag"). Same interface, same cold-start logic, same D26 output schema. Supervised label initialization preserved.
+  - G-049: Already resolved by G-076 fix from Session 07. Verified: b5_sensitivity.py passes FRAGILE_MODIFIER as plain float to SQL INSERT.
+  - G-050: Added MAX_ACTION_QUEUE_SIZE=1000 constant. Action queue trimmed (oldest dropped) before D22 store.
+  - G-052: Added comprehensive docstring to run_kelly_update() documenting D12 join strategy: per-cell rows (asset, regime, session) for kelly_full; shrinkage row (asset, "ALL", 0) for shrinkage_factor; online b4_kelly_sizing consumption pattern.
+  - G-034: Removed dead b3_aim_aggregation.py re-export shim. Inlined imports to shared.aim_compute in orchestrator.py:206 and replay_full_pipeline.py:150.
+  - Matrix §6 Dashboard: UNRESOLVED 24→18, FIXED 33→39.
+  - Matrix §7 Changelog populated with all 6 fixes.
+  - Post-fix audits (ln-625-dependencies-auditor, ln-626-dead-code-auditor) deferred — hmmlearn now actively imported; b3_aim_aggregation.py removed.
+
+Read `plans/CAPTAIN_RECONCILIATION_MATRIX.md` in full before starting.
+
+## Assignment (in order)
+
+### 1. G-022 | HIGH | Reconciliation Never Writes D08 Correction
+**File:** captain-command/captain_command/blocks/b8_reconciliation.py
+**Lines:** 483-515
+**Fix:** When broker balance diverges from D08, actually write the corrected balance to D08 (QuestDB append). Currently only logs.
+**Spec:** §7 Command B8 — reconciliation corrects D08
+
+### 2. G-019 | HIGH | Hardcoded f_target_max
+**File:** captain-command/captain_command/blocks/b8_reconciliation.py
+**Line:** 336
+**Fix:** Read `f_target_max` from D17 `p3_d17_system_params` instead of hardcoded `0.03`.
+**Spec:** §7 B8 — payout MDD threshold from D17
+
+### 3. G-054 | MEDIUM | Replay Session Memory Leak
+**File:** captain-command/captain_command/blocks/b11_replay_runner.py
+**Lines:** 206-218
+**Fix:** Remove completed sessions from `_active_sessions` dict on completion.
+**Spec:** §7 B11 — replay sessions cleaned up
+
+### 4. G-057 | MEDIUM | Notifications Not on Redis Alerts
+**File:** captain-command/captain_command/blocks/b7_notifications.py
+**Line:** 7 (CH_ALERTS imported but unused)
+**Fix:** Publish notifications to `captain:alerts` Redis channel in addition to (or instead of) current delivery method.
+**Spec:** §7 B7 — publishes to `captain:alerts`
+
+### 5. G-058 | MEDIUM | Incident Response NameError
+**File:** captain-command/captain_command/blocks/b9_incident_response.py
+**Line:** 257
+**Fix:** Fix `exc` NameError — either move the reference inside the try/except block or remove the dead code path.
+**Spec:** §7 B9 — incident response handler must not crash
+
+### 6. G-059 | MEDIUM | Telegram Token in Logs
+**File:** captain-command/captain_command/telegram_bot.py
+**Line:** 600
+**Fix:** Replace bot token in URL strings with masked version for logging. Use `TELEGRAM_BOT_TOKEN` env var reference, not literal token value in constructed URLs.
+**Spec:** §10 — secrets not in logs
+
+## Post-Fix
+1. Run `/ln-643-api-contract-auditor` targeting command pipeline contracts
+2. Run `/ln-654-resource-lifecycle-auditor` if available, else `/ln-629-lifecycle-auditor`
+
+## Rules
+1. ONE ITEM AT A TIME. After each: show diff, run pytest, update matrix.
+2. New issues → G-NEW-XXX, flag, do NOT fix.
+3. After all items: update §6 Dashboard, git commit.
+
+## Passover
+Write to `plans/prompts/.passovers/session_09.txt`:
+```
+Session 09 Passover
+Items completed: [list]
+Items remaining: [list or "none"]
+New findings: [list or "none"]
+Test status: [pass/fail count]
+Audit skill results: [summary]
+Notes: [anything for next session]
+```

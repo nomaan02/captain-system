@@ -1,0 +1,85 @@
+## ENV CONFIG AUDIT FINDINGS
+
+**Overall Score: 6.5/10** | Issues: 8 (H:3 M:3 L:2)
+
+### ✅ Passing Checks
+- **C1.1**: Comprehensive `.env.template` exists (2096 bytes, well-documented)
+- **C1.2**: No `.env` files committed (properly gitignored)
+- **C1.3**: Environment-specific structure present
+- **C3.1**: Consistent SCREAMING_SNAKE_CASE naming throughout
+- **C3.3**: Good documentation in `.env.template` with generation instructions
+
+### 🔴 Critical Issues
+
+**C2.1 — Missing vars in .env.template (9 vars used in code)**
+
+Used in code but not documented in `.env.template`:
+- `JWT_SECRET_KEY` — captain-command/api.py
+- `JWT_EXPIRY_HOURS` — captain-command/api.py  
+- `API_SECRET_KEY` — captain-command/api.py
+- `VAULT_KEY_PATH` — shared/vault.py
+- `VAULT_PATH` — shared/vault.py (appears 5+ times)
+- `CAPTAIN_JOURNAL_PATH` — captain-offline/main.py
+- `DATA_DIR` — captain-online/main.py
+- `COMPLIANCE_GATE_PATH` — captain-command/main.py
+- `TSM_CONFIG_DIR` — captain-command/blocks/b4_tsm_manager.py
+
+**Recommendation:** Add these 9 vars to `.env.template` with defaults and documentation.
+
+---
+
+**C2.2 — .env.example & .env.template desync**
+
+- `.env.example` has **1 var** (TELEGRAM_BOT_TOKEN only)
+- `.env.template` has **9 vars** (comprehensive)
+- These files conflict in source of truth
+
+**Recommendation:** Either deprecate `.env.example` or sync it with `.env.template`.
+
+---
+
+**C4.1 — No startup validation**
+
+- No `pydantic BaseSettings` found
+- Manual `os.getenv()` calls throughout
+- No fail-fast if required vars are missing
+- Sensitive secrets (API key, vault key) have no validation at boot
+
+**Recommendation:** Implement startup validation with clear error messages for missing required vars.
+
+### 🟡 Medium Issues
+
+**C3.2 — Vault config redundancy**
+
+Three vault-related vars without clear relationship:
+- `VAULT_MASTER_KEY` — encryption key for credential vault
+- `VAULT_KEY_PATH` — path to vault file
+- `VAULT_PATH` — another vault path reference
+
+**Recommendation:** Document which var is used where, or consolidate if redundant.
+
+---
+
+**C2.3 — Default value inconsistency**
+
+- `QUESTDB_PORT` in `.env.template` is commented as "override defaults only"
+- `docker-compose.yml` hardcodes `8812` for QuestDB port
+- No unified source of truth for defaults
+
+**Recommendation:** Clarify whether QuestDB/Redis defaults should be overridable via env vars.
+
+### 📊 Summary Table
+
+| Check | Status | Severity | Effort |
+|-------|--------|----------|--------|
+| C1.1 | ✅ Pass | — | — |
+| C1.2 | ✅ Pass | — | — |
+| C1.3 | ✅ Pass | — | — |
+| C2.1 | ❌ 9 missing vars | HIGH | M |
+| C2.2 | ❌ File mismatch | MEDIUM | S |
+| C2.3 | ⚠️ Desync | LOW | S |
+| C3.1 | ✅ Pass | — | — |
+| C3.2 | ⚠️ Redundancy | MEDIUM | M |
+| C3.3 | ✅ Pass | — | — |
+| C4.1 | ❌ No validation | MEDIUM | M |
+| C4.2 | ✅ Pass (placeholders OK) | — | — |

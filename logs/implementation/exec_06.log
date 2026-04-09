@@ -1,0 +1,20 @@
+## Session 06 Complete
+
+**All 6 items fixed**, committed as `072fa82`.
+
+| Gap | Severity | File | Fix |
+|-----|----------|------|-----|
+| G-023 | HIGH | b1_data_ingestion.py | `_prefetch_market_data()` — ThreadPoolExecutor(10) fetches price/volume concurrently |
+| G-018 | HIGH | topstep_client.py | `timeout=10` on all requests + 429 exponential backoff (1s/2s/4s) |
+| G-030 | MEDIUM | b7_position_monitor.py | VIX spike (vix_provider + D17), regime shift (module cache), commission (get_expected_fee) |
+| G-031 | MEDIUM | b7_shadow_monitor.py | `_get_point_value()` queries D00 instead of hardcoded dict |
+| G-032 | MEDIUM | b7_shadow_monitor.py | Expired shadows publish TIMEOUT outcome via `_resolve_shadow()` |
+| G-033 | MEDIUM | b7_position_monitor.py | `_update_capital_and_cb()` — single cursor for D16+D23 |
+
+**Tests:** 95 passed / 0 failed
+
+**Audit scores:** ln-653 runtime: 8.9/10 | ln-629 lifecycle: 7.6/10
+
+**New findings flagged (G-NEW-015 through G-NEW-021):** lock-held-over-sleep, TOCTOU, regime cache priming, thread join, shadow timezone, shadow retry, TSM cache. See passover for details.
+
+**Dashboard:** UNRESOLVED 36->30, FIXED 25->31.

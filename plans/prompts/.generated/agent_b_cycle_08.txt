@@ -1,0 +1,73 @@
+# Agent B — Validation Cycle for Session 08
+
+You are **Agent B (Validator)**. This is validation cycle 08.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 08)
+
+Session 08 Passover
+Items completed: G-045, G-046, G-049, G-050, G-052, G-034 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-026: b3_aim_aggregation.py removed — docs referencing this file (CLAUDE.md architecture table, REPLAY_FUNCTION_MAP.md, AIM_Audit_Report.md, captain_online.md) still mention it. Doc cleanup needed but not code-blocking.
+Test status: 95 passed / 0 failed
+Audit skill results: deferred (see below)
+Notes:
+  - G-045: Removed `and session == default_session` from bootstrap regime filter. All 3 sessions now get regime-filtered EWMA stats instead of only the default session (others fell back to unconditional).
+  - G-046: DEC-05 resolved as A (switch to hmmlearn). Replaced ~150 lines of hand-rolled Baum-Welch (forward-backward, xi, gamma, M-step) with hmmlearn.hmm.GaussianHMM(n_components=3, covariance_type="diag"). Same interface, same cold-start logic, same D26 output schema. Supervised label initialization preserved.
+  - G-049: Already resolved by G-076 fix from Session 07. Verified: b5_sensitivity.py passes FRAGILE_MODIFIER as plain float to SQL INSERT.
+  - G-050: Added MAX_ACTION_QUEUE_SIZE=1000 constant. Action queue trimmed (oldest dropped) before D22 store.
+  - G-052: Added comprehensive docstring to run_kelly_update() documenting D12 join strategy: per-cell rows (asset, regime, session) for kelly_full; shrinkage row (asset, "ALL", 0) for shrinkage_factor; online b4_kelly_sizing consumption pattern.
+  - G-034: Removed dead b3_aim_aggregation.py re-export shim. Inlined imports to shared.aim_compute in orchestrator.py:206 and replay_full_pipeline.py:150.
+  - Matrix §6 Dashboard: UNRESOLVED 24→18, FIXED 33→39.
+  - Matrix §7 Changelog populated with all 6 fixes.
+  - Post-fix audits (ln-625-dependencies-auditor, ln-626-dead-code-auditor) deferred — hmmlearn now actively imported; b3_aim_aggregation.py removed.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 08:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 08 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

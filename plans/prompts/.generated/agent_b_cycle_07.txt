@@ -1,0 +1,75 @@
+# Agent B — Validation Cycle for Session 07
+
+You are **Agent B (Validator)**. This is validation cycle 07.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 07)
+
+Session 07 Passover
+Items completed: G-075, G-069, G-073, G-074, G-076, G-077 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-022: AIM-01 VRP requires implied vol (D31) which only exists for ES. D30 fallback provides realised vol z-score for all assets, but true VRP (IV-RV) still ES-only until options data pipeline exists.
+  - G-NEW-023: AIM-02 PCR stubs (_get_options_volume, _get_put_iv, _get_trailing_pcr) return None for ALL assets including ES. No PCR data source exists anywhere in system.
+  - G-NEW-024: _get_overnight_range stub returns None unconditionally — compute_overnight_vrp dead for all assets.
+  - G-NEW-025: aim_feature_loader.py _load_ohlcv_features fetches only 30 rows for correlation (LIMIT 30), now extended to 120 in G-077 fix but only for the ES comparison query; the initial asset query still uses 30.
+Decisions still needed: none
+Test status: 95 passed / 0 failed
+Audit skill results: not run (post-fix audits deferred to end-of-session)
+Notes:
+  - G-075 + G-069: Already resolved — p3_spread_history table existed in init_questdb.py:647-664 with correct 4-column schema.
+  - G-073: AIM-07 disabled per DEC-08. Removed from dispatch table (aim_compute.py:199), feature computation skipped (b1_features.py:610-612 sets None), feature map cleared (b1_features.py:501).
+  - G-074: Added D30-based realised vol fallback in _get_realised_vol (b1_features.py) and _get_trailing_overnight_vrp (b1_features.py). Replay path in aim_feature_loader.py _load_iv_rv_features also has D30 fallback. Removed "ES only" docstrings. Contract multiplier fallback comment updated.
+  - G-076: b5_sensitivity.py:238 changed from json.dumps({asset_id: FRAGILE_MODIFIER}) to plain FRAGILE_MODIFIER float. One-line fix.
+  - G-077: aim_feature_loader.py replay path now builds rolling 20d correlation series from 120 days of data, then applies z_score() instead of using raw Pearson r. Live path was already correct (b1_features.py:624 uses z_score with trailing_252d).
+  - Matrix §6 Dashboard: UNRESOLVED 30→24, FIXED 27→33.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 07:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 07 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

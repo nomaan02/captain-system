@@ -1,0 +1,33 @@
+---
+
+## Session 05 Complete ✅
+
+**All 6 items completed.** Tests: 95 passed / 0 failed.
+
+### Summary
+
+| Item | Status | Details |
+|------|--------|---------|
+| **G-024** | ✅ FIXED | Offline scheduler timezone: orchestrator.py:534 `datetime.now()` → `now_et()` |
+| **G-029** | ✅ FIXED | Online 3-site timezone: b1_data_ingestion.py:436,690 + b1_features.py:547 → `now_et()` |
+| **G-051** | ✅ FIXED | Offline-wide: 16 `datetime.now()` across 6 files (b2, b4, b5, b7, b9, orchestrator) → `now_et()` |
+| **G-036** | ✅ FIXED | Session open time: `_get_session_open_time()` reads per-asset or_start from session_registry.json |
+| **G-065** | ✅ FIXED | ZN/ZB mapping: Already fixed in Session 01 (G-017); status updated UNRESOLVED→FIXED |
+| **G-007** | ✅ FIXED | AIM-03 GEX: `_get_contract_multiplier()` queries D00 point_value instead of hardcoded 50.0 |
+
+### Key Changes
+
+- **shared/constants.py:** Added `now_et()` helper — returns `datetime.now(ZoneInfo("America/New_York"))`
+- **captain-offline:** Zero remaining `datetime.now()` calls (all 17 → `now_et()`)
+- **captain-online:** Fixed 3 critical timestamp sites in B1 data ingestion + features
+- **session_registry.json:** Per-session open times enforced (NY=09:30, LON=03:00, APAC=18:00, NY_PRE=06:00)
+- **Matrix §6 Dashboard:** UNRESOLVED: 42→36, FIXED: 19→25
+- **Passover:** `/plans/prompts/.passovers/session_05.txt` — complete notes for next executor
+
+### Deferred Finding
+
+**G-NEW-014:** 70 remaining naive timestamps across captain-online (15) and captain-command (55). Same REQ-4 violation but outside Session 05 scope. Recommend future session using inherited `now_et()` helper.
+
+---
+
+**Commit:** `6321342` — "fix: Session 05 timezone & session infrastructure — 6 gaps resolved"

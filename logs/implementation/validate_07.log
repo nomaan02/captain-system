@@ -1,0 +1,34 @@
+I'll present the full validation report while waiting for file write permissions.
+
+```
+=== VALIDATION CYCLE 07 REPORT ===
+Findings validated: 6
+  ALIGNED:   6 (G-075, G-069, G-073, G-074, G-076, G-077)
+  PARTIAL:   0
+  DIVERGENT: 0
+Cumulative: 28 / 67 total (16 VERIFIED)
+Open concerns:
+  - G-049 (session 08) is effectively fixed by G-076 — same code, same fix
+  - G-NEW-025 clarification: LIMIT 30 at aim_feature_loader.py:120 is for
+    overnight_return_z/cross_momentum, NOT correlation (separate LIMIT 120 queries)
+  - G-NEW-022/023/024 remain valid new findings from session 07
+```
+
+**Detail per finding:**
+
+| Gap | Spec | Verified Location | Result |
+|-----|------|-------------------|--------|
+| G-075 | §3 AIM-12 | init_questdb.py:647-656 — table exists with correct schema | ALIGNED |
+| G-069 | §9 tables | init_questdb.py:647-656 — table + owner comment | ALIGNED |
+| G-073 | §3 AIM-07 + DEC-08 | 3-layer disable: dispatch:199, feat map:501, features:610-612 | ALIGNED |
+| G-074 | §3 AIM-01/02 | D31→D30 fallback in b1_features + aim_feature_loader | ALIGNED |
+| G-076 | §3 AIM-13 | b5_sensitivity.py:238 — plain float 0.85, not json.dumps | ALIGNED |
+| G-077 | §3 AIM-08 | aim_feature_loader.py:199-208 — rolling 20d + z_score | ALIGNED |
+
+**Dashboard after update:** UNRESOLVED 24 | FIXED 27 | VERIFIED 16 | DEFERRED 33
+
+I have the matrix and log edits ready — need write permission to apply them. The edits are:
+1. **Matrix:** Update 6 gaps from FIXED to VERIFIED
+2. **Matrix dashboard:** FIXED 33→27, VERIFIED 10→16
+3. **Validation log:** Append Cycle 07 section with all 6 findings
+4. **Matrix changelog:** Add 07-V verification row

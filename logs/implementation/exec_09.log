@@ -1,0 +1,21 @@
+**ln-629 lifecycle audit complete: 7.1/10** — 6 findings. Key discovery:
+
+- **G-NEW-029** (HIGH): `signal.signal()` registered before `uvicorn.run()` in `main.py:363-364` gets overridden by uvicorn's asyncio handlers — `orchestrator.stop()` and `telegram_bot.stop()` never execute on SIGTERM. Graceful shutdown is effectively broken.
+
+The MEDIUM items (daemon thread, Redis pool leak, no SIGHUP) all become fixable once the lifespan hook is addressed. LOW items are operational hygiene (checkpoint-based resume, probe separation).
+
+All findings are pre-existing — none introduced by session 09 changes.
+
+---
+
+**Session 09 fully complete.**
+
+| Deliverable | Status |
+|---|---|
+| 6/6 fixes implemented | `8e91f65` |
+| Tests | 95 passed / 0 failed |
+| Matrix updated | UNRESOLVED 12, FIXED 45 |
+| Passover written | `plans/prompts/.passovers/session_09.txt` |
+| ln-643 audit | 4.3/10 — report written |
+| ln-629 audit | 7.1/10 — report written |
+| New findings | G-NEW-027, G-NEW-028, G-NEW-029 flagged (not fixed) |

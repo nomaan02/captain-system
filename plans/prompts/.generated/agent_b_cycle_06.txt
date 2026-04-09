@@ -1,0 +1,81 @@
+# Agent B — Validation Cycle for Session 06
+
+You are **Agent B (Validator)**. This is validation cycle 06.
+**You NEVER write implementation code.**
+
+## Re-read Now
+- `plans/CAPTAIN_RECONCILIATION_MATRIX.md` — re-read in full before validating
+
+## What Changed (Session 06)
+
+Session 06 Passover
+Items completed: G-023, G-018, G-030, G-031, G-032, G-033 (all 6)
+Items remaining: none
+New findings:
+  - G-NEW-015: _publish_trade_outcome retry (0.5s+1s+2s = 3.5s max) runs under _position_lock, blocking TAKEN position registration during Redis outage. Should move publish+retry outside the lock.
+  - G-NEW-016: TOCTOU on open_positions/shadow_positions truthiness check in orchestrator — read without lock before calling monitor functions that acquire it.
+  - G-NEW-017: _regime_cache not primed on orchestrator restart — if monitor runs before first session, regime shift detection is inert. Should prime from QuestDB during start().
+  - G-NEW-018: _command_listener thread in online orchestrator not joined on stop() (captain-offline does join with 5s timeout).
+  - G-NEW-019: Shadow monitor uses datetime.now() (timezone-naive) for created_at and age calculation — same REQ-4 violation pattern as G-NEW-014.
+  - G-NEW-020: Shadow _resolve_shadow has no retry on publish_to_stream, unlike real position outcomes which retry 3x. Transient Redis blip drops theoretical outcomes.
+  - G-NEW-021: _load_tsm_configs called every 10s monitor poll with no caching — 6 DB queries/min.
+Decisions still needed: none
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-653 Runtime Performance: 8.9/10 (M:1 L:3) — no async code, sync patterns clean
+  - ln-629 Lifecycle: 7.6/10 (M:4 L:4) — lock scope, TOCTOU, regime cache priming, thread join
+Notes:
+  - G-023: Added _prefetch_market_data() with ThreadPoolExecutor(max_workers=10) to b1_data_ingestion.py. _run_data_moderator now accepts market_data dict, using pre-fetched REST results instead of sequential per-asset calls.
+  - G-018: topstep_client._post() now retries up to 3x on HTTP 429 with exponential backoff (1s/2s/4s). Respects Retry-After header. All timeouts standardized to 10s.
+  - G-030: _check_vix_spike reads vix_provider + D17 threshold (default 50). _regime_shift_detected uses module-level _regime_cache set by orchestrator after B2 computes regime_probs. _get_api_commission wired to get_expected_fee() with D17 fallback.
+  - G-031: _get_point_value() in b7_shadow_monitor now queries D00 asset_universe point_value via LATEST ON, fallback to 50.0.
+  - G-032: Expired shadow positions now call _resolve_shadow("TIMEOUT", live_price) instead of silently dropping. Offline Category A learning receives complete signal universe.
+  - G-033: New _update_capital_and_cb() replaces separate _update_capital_silo + _update_intraday_cb_state. Both reads and writes execute in single cursor context.
+  - Matrix §6 Dashboard: UNRESOLVED 36→30, FIXED 25→31.
+  - Matrix §7 Changelog populated with all 6 fixes.
+
+## Validation Steps
+
+For EACH finding marked `FIXED` in the matrix from session 06:
+
+1. **Read the changed file(s)** — examine the actual diff
+2. **Read the spec reference** — find the §N section in `docs/audit/spec_reference.md`
+3. **Cross-reference** with Obsidian vault at `/mnt/c/Users/nomaa/Documents/Quant_Project/` if spec_reference.md is ambiguous
+4. **Confirm alignment**: `ALIGNED` / `PARTIAL` / `DIVERGENT`
+5. **Check for regressions** against adjacent gaps
+6. **Log** to `docs/audit/validation_progress_log.md`
+
+## Post-Validation Skills
+
+Run these on each changed file:
+- `/ln-641-pattern-analyzer` — pattern compliance
+- `/ln-614-docs-fact-checker` — table name and constant verification
+
+## Report Format
+
+After validation, output:
+
+```
+=== VALIDATION CYCLE 06 REPORT ===
+Findings validated: N
+  ALIGNED:   N
+  PARTIAL:   N
+  DIVERGENT: N
+Cumulative: N / 67 total
+Open concerns: [list or "none"]
+```
+
+## Matrix Updates
+
+For each validated finding:
+- `ALIGNED` → update matrix status to `VERIFIED`
+- `PARTIAL` → keep `FIXED`, add note with remaining delta
+- `DIVERGENT` → revert to `UNRESOLVED`, add regression note
+
+Update the §6 Dashboard counts after all updates.
+
+## Rules
+1. Never write implementation code
+2. Always read actual files — never trust summaries
+3. Always read the spec section — compare against §N
+4. Re-read matrix before starting — executor may have changed it

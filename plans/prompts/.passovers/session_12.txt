@@ -1,0 +1,31 @@
+Session 12 Passover
+Items completed: G-066 (session controller), G-067 (OR tracker rename), G-068 (compliance gate block)
+Items remaining: none
+New findings: G-NEW-027 (block slot collision — b8/b9 each have two files)
+Test status: 95 passed / 0 failed
+Audit skill results:
+  - ln-629 (lifecycle): Score 6.2/10 — 1 HIGH (pre-existing from earlier sessions), 4 MEDIUM, 4 LOW.
+    New files pass bootstrap/shutdown/cleanup checks cleanly. ORTracker.clear() not called in
+    shutdown handler (LOW, not a real leak). Session registry dual-caching (b8 + b9 each cache
+    separately) flagged as LOW.
+  - ln-641 (pattern analyzer): Score 9.1/10 — 1 MEDIUM (slot collision), 2 LOW.
+    All three new files pass: file naming, snake_case functions, module docstrings, public API names,
+    absence of run_*() (correct for utility blocks). MEDIUM finding is G-NEW-027.
+Notes:
+  - G-066: Created b9_session_controller.py. The orchestrator's hardcoded SESSION_OPEN_TIMES dict is
+    replaced by get_session_open_times() which reads session_registry.json. _is_session_opening() now
+    delegates to _sc_is_session_opening() from the new block. Fixed APAC fallback default: was (20,0)
+    from old orchestrator; corrected to (18,0) to match session_registry.json definition.
+  - G-067: or_tracker.py renamed to b8_or_tracker.py. All 6 files / 8 import statements updated.
+    Documentation files (audit prompts, docs) still reference old name — not runtime code, not updated.
+  - G-068: Created b12_compliance_gate.py in captain-command. Fixed bug in b3_api_adapter inline
+    check_compliance_gate(): it read gate.get("requirements", {}) but compliance_gate.json has flat
+    rts6_* keys, not nested under "requirements". b3 inline function removed; b3 and b2 now import
+    from b12. Also wires AUTO_EXECUTE env var into execution_mode logic.
+  - G-NEW-027: Flagged (do NOT fix). b8_or_tracker.py and b9_session_controller.py share b8/b9
+    slots with b8_concentration_monitor.py and b9_capacity_evaluation.py respectively. Recommendation:
+    rename to b8b_or_tracker.py and b9b_session_controller.py (matching existing b5b/b5c sub-slot
+    pattern). Updates required: orchestrator.py and main.py imports + b9b reference in orchestrator
+    where it imports from b9_session_controller. Low risk change but 4 import sites to update.
+  - Matrix §6 Dashboard: UNRESOLVED 3→0, FIXED 57→60. G-NEW-027 noted in changelog.
+  - Session 13 is the Verification Sweep (no implementation) — full audit skill run only.

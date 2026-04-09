@@ -1,0 +1,23 @@
+Report written: `.hex-skills/runtime-artifacts/runs/standalone-624-20260409153600/audit-report/ln-624--global.md`
+Score: **0.0/10** | Issues: **221** (C:0 H:64 M:124 L:33)
+
+---
+
+### Key takeaways
+
+**The score is brutal because the penalty formula compounds across 10 checks on 110 files.** ~60% of HIGH findings concentrate in just 5 files:
+
+| File | Violations |
+|------|-----------|
+| `shared/replay_engine.py` | 1641 LOC, complexity 89, 5 functions >100 lines, `999` sentinel x13 |
+| `captain-offline/.../b3_pseudotrader.py` | 1117 LOC, complexity 49, duplicate thresholds, hardcoded drawdowns |
+| `captain-online/.../b4_kelly_sizing.py` | Complexity 38, 172 lines, 12 params, unnamed Kelly multipliers |
+| `captain-online/.../b1_features.py` | 1106 LOC, 75 functions, complexity 56 |
+| `captain-command/.../b2_gui_data_server.py` | 1300 LOC, 32 endpoints, N+1 queries |
+
+**3 quick wins that eliminate 24 findings in ~5 hours:**
+1. **Centralise constants** -- define ~15 named constants, import `EVAL_MLL` instead of `4500` (18 findings)
+2. **Batch INSERTs** -- `executemany` in `b1_dma_update` and `b8_kelly_update` (2 HIGH on critical path)
+3. **Parameter dataclasses** -- `TradeOutcome`, `DiagnosticAction`, `NotificationRecord` for worst signatures (4 HIGH)
+
+**What's clean:** No boolean flag anti-patterns. O(n^2) algorithms are all bounded by domain (n<=60). Side-effect architecture is mostly sinks (shared/ is 100% sinks). Only 1 cascade reaches depth 4.

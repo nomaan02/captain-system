@@ -1,0 +1,42 @@
+I'll present the full validation report while waiting for file write permissions. Here are all the findings:
+
+---
+
+```
+=== VALIDATION CYCLE 08 REPORT ===
+Findings validated: 6
+  ALIGNED:   6
+  PARTIAL:   0
+  DIVERGENT: 0
+Cumulative: 16 / 100 total VERIFIED (10 prior + 6 this cycle)
+Open concerns: 
+  - G-045: bootstrap.py:111 — `default_session` variable defined but no longer used (dead code, non-blocking)
+  - G-034: b2_gui_data_server.py:1066 — `source_file` metadata still references removed b3_aim_aggregation.py (part of G-NEW-026 doc cleanup)
+  - G-046: Spec §3 mentions TVTP (time-varying transition probabilities) but hmmlearn GaussianHMM uses fixed transitions — pre-existing gap, not a regression from this change
+```
+
+### Per-Finding Details
+
+| Gap | Spec | Code Verified | Verdict | Notes |
+|-----|------|---------------|---------|-------|
+| G-045 | §4 Offline Orch — multi-session regime filtering | bootstrap.py:117-125 — iterates all 3 sessions with regime filter, no `session == default_session` guard | ALIGNED | All sessions get regime-filtered EWMA; dead `default_session` var remains |
+| G-046 | §3 AIM-16 — Baum-Welch, GaussianHMM, N=3, diag, 60d window | b1_aim16_hmm.py:30 import + :104-117 GaussianHMM(n_components=3, covariance_type="diag"), supervised init, cold-start 50/50 blend | ALIGNED | DEC-05 resolved as A. hmmlearn replaces ~150 lines hand-rolled EM. Same output schema. |
+| G-049 | §3 AIM-13 — modifier as float | Already resolved by G-076 (Session 07). b5_sensitivity.py passes FRAGILE_MODIFIER=0.85 as plain float | ALIGNED | Duplicate dependency; no additional code change needed |
+| G-050 | §4 B9 — bounded action queue | b9_diagnostic.py:37 MAX_ACTION_QUEUE_SIZE=1000, :875-876 oldest-dropped trim before D22 store | ALIGNED | Spec doesn't specify cap number; 1000 is reasonable |
+| G-052 | §5 Kelly — per-cell rows + shrinkage row at (asset,"ALL",0) | b8_kelly_update.py:138-153 docstring + :189-221 dual-row impl. Shrinkage = max(0.3, 1-1/sqrt(n)) | ALIGNED | Docstring matches spec §5 L1+L3 exactly; online consumer pattern documented |
+| G-034 | §2 B3 — AIM aggregation | b3_aim_aggregation.py confirmed deleted. orchestrator.py:206 + replay_full_pipeline.py:150 import directly from shared.aim_compute | ALIGNED | G-NEW-026 doc refs remain (non-code-blocking) |
+
+### Dashboard Update Needed
+
+```
+FIXED:    39 → 33  (-6)
+VERIFIED: 10 → 16  (+6)
+```
+
+### Changelog Entry Needed
+
+```
+| 2026-04-09 | 08-V | VERIFIED | G-045, G-046, G-049, G-050, G-052, G-034 | Validation Cycle 08: all 6 ALIGNED. G-045 dead var, G-034 stale GUI metadata, G-046 TVTP pre-existing gap — all non-blocking |
+```
+
+I need write permission to the matrix file to apply these updates. Shall I proceed?

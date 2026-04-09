@@ -1,0 +1,32 @@
+Report written. Here's the summary:
+
+---
+
+**Score: 4.5/10 (C:68 K:60 Q:67 I:71) | Issues: 88 (C:9 H:34 M:32 L:13)**
+
+**Architecture Health: 61.6/100** across 14 patterns analyzed.
+
+### 3 CRITICAL-risk patterns
+
+| Pattern | Score | Core Problem |
+|---------|-------|-------------|
+| **Crash Recovery** | 1.3/10 | Journal writes checkpoints but no process ever branches on them — recovery is a no-op |
+| **Event-Driven** | 0.6/10 | No DLQ, no idempotency, no PEL reclaim — lost trade outcomes break the adaptive learning loop |
+| **Health Check** | 2.8/10 | Online + Offline never publish heartbeats — `/api/health` perpetually reports DEGRADED |
+
+### Top 5 systemic risks
+
+1. **Crash recovery is instrumentation, not recovery** — `next_action` and `state_hash` are written but never consumed
+2. **Event system has no durability guarantees** — a crash at the wrong moment permanently loses trade outcomes
+3. **Health endpoint is structurally misleading** — 2 of 3 processes always show "unknown"
+4. **No QuestDB connection pooling** — 31+ new TCP connections per session in B1 alone
+5. **Vault runs 600K PBKDF2 iterations per API key lookup** — no caching, no write lock
+
+### P0 immediate actions
+
+- Add heartbeats from Online + Offline orchestrators
+- Add PEL reclaim (`XCLAIM`) on startup for all stream consumers
+- Add DLQ fallback for trade outcome publishing
+- Either implement actual crash recovery branching or remove the false-confidence journal pattern
+
+Full report: `.hex-skills/runtime-artifacts/runs/standalone-641-20260409145830/audit-report/ln-641--full-codebase.md`
