@@ -116,7 +116,6 @@ run_batch() {
 
   # Run Claude session
   cd "$GUI_DIR"
-  set +e
   claude -p "$(cat "$prompt_file")" \
     --model "$MODEL" \
     --effort "$EFFORT" \
@@ -124,7 +123,6 @@ run_batch() {
     --output-format text \
     2>&1 | tee -a "$LOG_FILE"
   local exit_code=${PIPESTATUS[0]}
-  set -e
 
   # Stop heartbeat
   kill "$hb_pid" 2>/dev/null; wait "$hb_pid" 2>/dev/null || true
@@ -755,9 +753,9 @@ failed=0
 for i in $(seq "$START_BATCH" $((TOTAL - 1))); do
   current_batch=$i
   if run_batch "$i"; then
-    ((passed++))
+    passed=$((passed + 1))
   else
-    ((failed++))
+    failed=$((failed + 1))
     log "STOPPING — batch $i failed"
     echo ""
     echo "  Resume with:  bash $0 --resume $i"

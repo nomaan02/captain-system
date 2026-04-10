@@ -9,7 +9,7 @@ async function fetchJson(url, options = {}) {
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
     localStorage.removeItem("captain_jwt");
-    window.location.href = "/login";
+    window.dispatchEvent(new Event("auth:expired"));
     throw new Error("Session expired");
   }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
