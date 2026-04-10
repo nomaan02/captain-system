@@ -25,7 +25,11 @@ const AIM_CONFIG = {
 const TIER_LABELS = { 0: "N/A", 1: "T1 \u2014 Weekly", 2: "T2 \u2014 Monthly", 3: "T3 \u2014 Quarterly" };
 
 const CheckIcon = ({ ok }) => (
-  <span className={`font-mono text-[10px] ${ok ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+  <span
+    role="img"
+    aria-label={ok ? "Passed" : "Failed"}
+    className={`font-mono text-[11px] ${ok ? "text-[#10b981]" : "text-[#ef4444]"}`}
+  >
     {ok ? "\u2713" : "\u2717"}
   </span>
 );
@@ -35,6 +39,8 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const modalRef = useRef(null);
+  const closeRef = useRef(null);
+  const triggerRef = useRef(document.activeElement);
 
   // Fetch detail on mount
   useEffect(() => {
@@ -63,6 +69,32 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
+  // Focus trap: cycle Tab within modal, auto-focus close button
+  useEffect(() => {
+    closeRef.current?.focus();
+    const handleTab = (e) => {
+      if (e.key !== "Tab" || !modalRef.current) return;
+      const els = modalRef.current.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!els.length) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleTab);
+    return () => {
+      document.removeEventListener("keydown", handleTab);
+      triggerRef.current?.focus();
+    };
+  }, []);
+
   const config = AIM_CONFIG[aimId] || {};
   const tierLabel = TIER_LABELS[config.tier] || "Unknown";
 
@@ -70,12 +102,15 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
         ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="aim-modal-title"
         className="bg-surface-elevated border border-border-accent max-w-[640px] w-[95vw] max-h-[80vh] overflow-y-auto font-mono"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-3">
-            <span className="text-white text-sm tracking-[1px]">
+            <span id="aim-modal-title" className="text-white text-sm tracking-[1px]">
               AIM-{String(aimId).padStart(2, "0")}: {aimName}
             </span>
             {detail && (
@@ -83,8 +118,10 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
             )}
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
-            className="text-[#64748b] hover:text-white text-sm bg-transparent border-none cursor-pointer px-2"
+            aria-label="Close"
+            className="text-[#64748b] hover:text-white text-sm bg-transparent border-none cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center"
           >
             ✕
           </button>
@@ -102,11 +139,11 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
             <>
               {/* Section A: Per-Asset Breakdown */}
               <div className="mb-4">
-                <div className="text-[10px] text-captain-green tracking-[1.5px] uppercase mb-2">
+                <div className="text-[11px] text-captain-green tracking-[1.5px] uppercase mb-2">
                   Per-Asset Breakdown
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-[10px] border-collapse">
+                  <table className="w-full text-[11px] border-collapse">
                     <thead>
                       <tr className="text-[rgba(226,232,240,0.5)] uppercase tracking-wider">
                         <th className="text-left py-1 pr-2">Asset</th>
@@ -166,10 +203,10 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
 
               {/* Section B: QuestDB Data Validation */}
               <div className="mb-4">
-                <div className="text-[10px] text-captain-green tracking-[1.5px] uppercase mb-2">
+                <div className="text-[11px] text-captain-green tracking-[1.5px] uppercase mb-2">
                   Data Validation
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                   <div className="flex items-center justify-between text-[#94a3b8]">
                     <span>P3-D01 (model states)</span>
                     <CheckIcon ok={detail.validation.d01_populated} />
@@ -189,7 +226,7 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
                     </div>
                   )}
                 </div>
-                <div className={`mt-2 text-[10px] px-2 py-1 border ${
+                <div className={`mt-2 text-[11px] px-2 py-1 border ${
                   detail.validation.all_checks_pass
                     ? "bg-[rgba(16,185,129,0.1)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
                     : "bg-[rgba(239,68,68,0.1)] border-[rgba(239,68,68,0.3)] text-[#ef4444]"
@@ -200,10 +237,10 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
 
               {/* Section C: AIM Configuration */}
               <div>
-                <div className="text-[10px] text-captain-green tracking-[1.5px] uppercase mb-2">
+                <div className="text-[11px] text-captain-green tracking-[1.5px] uppercase mb-2">
                   Configuration
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px]">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
                   <div>
                     <span className="text-[rgba(226,232,240,0.5)]">Tier: </span>
                     <span className="text-white">{tierLabel}</span>
@@ -233,7 +270,7 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2 border-t border-border-subtle text-[10px] text-[rgba(226,232,240,0.25)] flex justify-between">
+        <div className="px-4 py-2 border-t border-border-subtle text-[11px] text-[rgba(226,232,240,0.25)] flex justify-between">
           <span>SYS:AIM_REGISTRY</span>
           <span>SRC:P3-D01+D02</span>
         </div>

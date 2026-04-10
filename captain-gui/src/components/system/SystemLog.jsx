@@ -71,7 +71,7 @@ const TelegramFeed = () => {
 
   if (loading && items.length === 0) {
     return (
-      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#64748b]">
+      <div className="flex items-center justify-center py-4 px-2 text-[11px] text-[#64748b]">
         Loading Telegram history...
       </div>
     );
@@ -79,7 +79,7 @@ const TelegramFeed = () => {
 
   if (error && items.length === 0) {
     return (
-      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#ef4444]">
+      <div className="flex items-center justify-center py-4 px-2 text-[11px] text-[#ef4444]">
         {error}
       </div>
     );
@@ -87,7 +87,7 @@ const TelegramFeed = () => {
 
   if (items.length === 0) {
     return (
-      <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#64748b]">
+      <div className="flex items-center justify-center py-4 px-2 text-[11px] text-[#64748b]">
         No Telegram notifications sent yet
       </div>
     );
@@ -103,18 +103,11 @@ const TelegramFeed = () => {
     const prioColor = PRIORITY_COLORS[item.priority] || "#64748b";
     return (
       <div key={item.notif_id} className="flex items-start py-0 px-2">
-        <div className="relative leading-[13.6px]">
+        <div className="relative leading-relaxed">
           <span>{`${time} `}</span>
           <span
-            style={{
-              color: prioColor,
-              backgroundColor: `${prioColor}22`,
-              borderRadius: "2px",
-              padding: "0 3px",
-              marginRight: "4px",
-              fontSize: "8px",
-              fontWeight: 600,
-            }}
+            style={{ color: prioColor, backgroundColor: `${prioColor}22` }}
+            className="rounded-sm px-[3px] mr-1 text-[10px] font-semibold"
           >
             {item.priority}
           </span>
@@ -148,12 +141,13 @@ const SystemLog = ({ className = "" }) => {
     return (
       <button
         data-testid={`syslog-filter-${key.toLowerCase()}`}
+        aria-pressed={active}
         onClick={() => setActiveFilter(key)}
         style={active ? { backgroundColor: colors.bg, borderColor: colors.border } : undefined}
         className={`cursor-pointer border-[#2e4e5a] border-solid border-[0.9px] pt-0 pb-px pl-[5px] pr-[3px] ${active ? "" : "bg-[transparent]"} self-stretch flex-1 flex items-start hover:bg-[rgba(84,115,128,0.09)] hover:border-[#547380] hover:border-solid hover:border-[0.9px] hover:box-border`}
       >
         <div
-          className="relative text-[8.6px] leading-[13px] font-medium font-[Inter] text-center"
+          className="relative text-[10px] leading-[13px] font-medium font-[Inter] text-center"
           style={{ color: active ? colors.text : "#e2e8f0" }}
         >
           {label}
@@ -164,46 +158,55 @@ const SystemLog = ({ className = "" }) => {
 
   return (
     <div
-      className={`w-full flex flex-col h-full items-start gap-[1.3px] text-left text-[9.7px] text-[#fff] font-['JetBrains_Mono'] ${className}`}
+      className={`w-full flex flex-col h-full items-start gap-[1.3px] text-left text-[11px] text-[#fff] font-['JetBrains_Mono'] ${className}`}
     >
       <div className="self-stretch flex items-start pt-0 pb-[3px] pl-0 pr-px font-[Inter]">
         <div className="self-stretch flex-1 border-[#2e4e5a] border-solid border-b-[0.9px] flex items-end pt-[4.3px] px-2 pb-1 gap-[24.2px]">
-          <div className="flex items-start gap-[8.1px]">
+          <div
+            className="flex items-start gap-[8.1px]"
+            role="tablist"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                const next = activeView === "log" ? "telegram" : "log";
+                setActiveView(next);
+                document.getElementById(`tab-${next}`)?.focus();
+              }
+            }}
+          >
             <button
               data-testid="syslog-header"
+              id="tab-log"
+              role="tab"
+              aria-selected={activeView === "log"}
+              aria-controls="tabpanel-content"
+              tabIndex={activeView === "log" ? 0 : -1}
               onClick={() => setActiveView("log")}
-              className="cursor-pointer bg-transparent border-none p-0"
+              className={`cursor-pointer bg-transparent border-none p-0 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[#e2e8f0] ${activeView === "log" ? "text-[#e2e8f0]" : "text-[#64748b]"}`}
             >
-              <div
-                className="relative leading-[14.6px]"
-                style={{
-                  color: activeView === "log" ? "#e2e8f0" : "#64748b",
-                  borderBottom: activeView === "log" ? "1px solid #e2e8f0" : "1px solid transparent",
-                }}
-              >
+              <div className={`relative leading-[14.6px] ${activeView === "log" ? "border-b border-solid border-b-[#e2e8f0]" : "border-b border-solid border-b-transparent"}`}>
                 SYSTEM LOG
               </div>
             </button>
             <button
               data-testid="syslog-telegram-tab"
+              id="tab-telegram"
+              role="tab"
+              aria-selected={activeView === "telegram"}
+              aria-controls="tabpanel-content"
+              tabIndex={activeView === "telegram" ? 0 : -1}
               onClick={() => setActiveView("telegram")}
-              className="cursor-pointer bg-transparent border-none p-0"
+              className={`cursor-pointer bg-transparent border-none p-0 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[#e2e8f0] ${activeView === "telegram" ? "text-[#0065f5]" : "text-[#0065f580]"}`}
             >
-              <div
-                className="relative leading-[14.6px] font-['JetBrains_Mono']"
-                style={{
-                  color: activeView === "telegram" ? "#0065f5" : "#0065f580",
-                  borderBottom: activeView === "telegram" ? "1px solid #0065f5" : "1px solid transparent",
-                }}
-              >
+              <div className={`relative leading-[14.6px] font-['JetBrains_Mono'] ${activeView === "telegram" ? "border-b border-solid border-b-[#0065f5]" : "border-b border-solid border-b-transparent"}`}>
                 TELEGRAM
               </div>
             </button>
           </div>
           {activeView === "log" && (
             <div className="flex-1 flex items-start gap-[2.2px]">
-              <button data-testid="syslog-filter-all" onClick={() => setActiveFilter("ALL")} className={`cursor-pointer border-[#2e4e5a] border-solid border-[0.9px] pt-0 pb-px pl-[5px] pr-[3px] ${activeFilter === "ALL" ? "bg-[#2e4e5a]" : "bg-[transparent]"} self-stretch flex items-start hover:bg-[#547380] hover:border-[#547380] hover:border-solid hover:border-[0.9px] hover:box-border`}>
-                <div className="relative text-[8.6px] leading-[13px] font-medium font-[Inter] text-[#e2e8f0] text-center">
+              <button data-testid="syslog-filter-all" aria-pressed={activeFilter === "ALL"} onClick={() => setActiveFilter("ALL")} className={`cursor-pointer border-[#2e4e5a] border-solid border-[0.9px] pt-0 pb-px pl-[5px] pr-[3px] ${activeFilter === "ALL" ? "bg-[#2e4e5a]" : "bg-[transparent]"} self-stretch flex items-start hover:bg-[#547380] hover:border-[#547380] hover:border-solid hover:border-[0.9px] hover:box-border`}>
+                <div className="relative text-[10px] leading-[13px] font-medium font-[Inter] text-[#e2e8f0] text-center">
                   All
                 </div>
               </button>
@@ -214,7 +217,7 @@ const SystemLog = ({ className = "" }) => {
           )}
         </div>
       </div>
-      <div className="w-full flex flex-col overflow-y-auto flex-1 min-h-0">
+      <div role="tabpanel" id="tabpanel-content" aria-labelledby={`tab-${activeView}`} className="w-full flex flex-col overflow-y-auto flex-1 min-h-0">
         {activeView === "telegram" ? (
           <TelegramFeed />
         ) : filtered.length > 0 ? (
@@ -230,19 +233,12 @@ const SystemLog = ({ className = "" }) => {
             const msgColor = isError ? "text-[#ef4444]" : isWarning ? "text-[#f59e0b]" : isMetric ? "text-[#06b6d4]" : "text-[#e2e8f0]";
             return (
               <div data-testid="syslog-entry" key={n.notif_id} className="flex items-start py-0 px-2">
-                <div className="relative leading-[13.6px]">
+                <div className="relative leading-relaxed">
                   <span>{`${time} `}</span>
                   {cat && (
                     <span
-                      style={{
-                        color: catColor.text,
-                        backgroundColor: catColor.bg,
-                        borderRadius: "2px",
-                        padding: "0 3px",
-                        marginRight: "4px",
-                        fontSize: "8px",
-                        fontWeight: 600,
-                      }}
+                      style={{ color: catColor.text, backgroundColor: catColor.bg }}
+                      className="rounded-sm px-[3px] mr-1 text-[10px] font-semibold"
                     >
                       {LABEL_MAP[cat]}
                     </span>
@@ -253,7 +249,7 @@ const SystemLog = ({ className = "" }) => {
             );
           })
         ) : (
-          <div className="flex items-center justify-center py-4 px-2 text-[9.7px] text-[#64748b]">
+          <div className="flex items-center justify-center py-4 px-2 text-[11px] text-[#64748b]">
             {activeFilter === "ALL" ? "No log entries" : `No ${activeFilter.toLowerCase()} entries`}
           </div>
         )}
