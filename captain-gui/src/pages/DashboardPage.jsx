@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import MarketTicker from "../components/layout/MarketTicker";
 import RiskPanel from "../components/risk/RiskPanel";
@@ -21,7 +21,7 @@ if (import.meta.env.DEV) {
 
 // ── DEV MOCK DATA (2026-03-30 NY session replay) ──────────────────────
 // Remove this block once live backend data is confirmed working.
-const DEV_MOCK_ENABLED = import.meta.env.DEV;
+const DEV_MOCK_ENABLED = import.meta.env.VITE_DEV_MOCK === 'true';
 
 const MOCK_SIGNALS = [
   { signal_id: "SIG-MES-20260330", asset: "MES", direction: "SHORT", strategy_name: "ORB v1.3", entry_price: 6455.00, tp_level: 6443.80, sl_level: 6460.60, quality_score: 0.82, confidence_tier: "HIGH", pnl: 616.00, timestamp: "2026-03-30T09:35:00" },
@@ -146,8 +146,8 @@ const ResizeHandle = ({ orientation = "horizontal" }) => (
   <Separator
     className={`group relative flex items-center justify-center ${
       orientation === "horizontal"
-        ? "w-[5px] cursor-col-resize"
-        : "h-[5px] cursor-row-resize"
+        ? "w-2 cursor-col-resize"
+        : "h-2 cursor-row-resize"
     }`}
   >
     <div
@@ -157,6 +157,15 @@ const ResizeHandle = ({ orientation = "horizontal" }) => (
           : "h-[1px] w-full bg-[#1e293b]"
       }`}
     />
+    <div
+      className={`absolute flex gap-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 ${
+        orientation === "horizontal" ? "flex-col" : "flex-row"
+      }`}
+    >
+      <div className="size-[3px] rounded-full bg-[#475569]" />
+      <div className="size-[3px] rounded-full bg-[#475569]" />
+      <div className="size-[3px] rounded-full bg-[#475569]" />
+    </div>
   </Separator>
 );
 
@@ -176,6 +185,7 @@ const useLeftLayout = () =>
 const DashboardPage = () => {
   useWebSocket("primary_user");
   const connected = useDashboardStore((s) => s.connected);
+  const [initialLoading, setInitialLoading] = useState(!DEV_MOCK_ENABLED);
 
   const { defaultLayout: mainLayout, onLayoutChanged: onMainChanged } = useMainLayout();
   const { defaultLayout: centerLayout, onLayoutChanged: onCenterChanged } = useCenterLayout();
@@ -193,7 +203,8 @@ const DashboardPage = () => {
 
     api.dashboard("primary_user").then((data) => {
       useDashboardStore.getState().setSnapshot(data);
-    }).catch(() => {});
+      setInitialLoading(false);
+    }).catch(() => { setInitialLoading(false); });
 
     if (connected) return;
 
@@ -207,7 +218,13 @@ const DashboardPage = () => {
   }, [connected]);
 
   return (
-    <div data-testid="app-shell" className="w-full bg-surface overflow-hidden flex flex-col flex-1 min-h-0">
+    <div data-testid="app-shell" className="relative w-full bg-surface overflow-hidden flex flex-col flex-1 min-h-0">
+      <h1 className="sr-only">Captain Trading Dashboard</h1>
+      {initialLoading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface/80">
+          <span className="text-xs text-[#64748b] font-['JetBrains_Mono']">Loading dashboard…</span>
+        </div>
+      )}
       {/* Resizable 3-column layout fills remaining height */}
       <Group
         orientation="horizontal"
@@ -267,7 +284,7 @@ const DashboardPage = () => {
             <ResizeHandle orientation="vertical" />
 
             {/* Signal Cards */}
-            <Panel id="signals" defaultSize={40} minSize={5}>
+            <Panel id="signals" defaultSize={40} minSize={15}>
               <div className="h-full overflow-y-auto border-t border-[#1e293b]">
                 <SignalCards />
               </div>
@@ -287,7 +304,7 @@ const DashboardPage = () => {
             className="h-full"
           >
             {/* Trade Log */}
-            <Panel id="tradelog" defaultSize={35} minSize={5}>
+            <Panel id="tradelog" defaultSize={35} minSize={15}>
               <div className="h-full overflow-y-auto">
                 <TradeLog />
               </div>
@@ -296,7 +313,7 @@ const DashboardPage = () => {
             <ResizeHandle orientation="vertical" />
 
             {/* System Log */}
-            <Panel id="syslog" defaultSize={65} minSize={5}>
+            <Panel id="syslog" defaultSize={65} minSize={15}>
               <div className="h-full overflow-y-auto">
                 <SystemLog />
               </div>
