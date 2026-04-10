@@ -1,0 +1,36 @@
+You are executing BATCH 4 — Position + AIM of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/trading/ActivePosition.jsx src/components/aim/AimRegistryPanel.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/trading/ActivePosition.jsx (FIX-079..083):
+   - FIX-079 CRITICAL: Replace hardcoded `pl-[346px] pr-[265px]` on SL/TP bar with percentage-based or flex positioning that adapts to container width
+   - FIX-080 CRITICAL: Increase ENTRY/CURRENT/SL/TP labels from text-[7.2px] to min text-[10px]
+   - FIX-081: Round text-[18.4px] to text-lg or text-[18px]
+   - FIX-082: Increase direction badge/contracts/order info from text-[8.2px] to min text-[10px]
+   - FIX-083: Replace mq450/mq750/mq1025 with Tailwind sm:/md:/lg:
+
+2. src/components/aim/AimRegistryPanel.jsx (FIX-031..038):
+   - FIX-031 CRITICAL: Increase Activate/Deactivate buttons from py-0.5 text-[9px] to min h-[32px] text-[11px]
+   - FIX-032 CRITICAL: Convert AimCard from `<div onClick>` to proper `<button>` or add `role="button"`, `tabIndex={0}`, `onKeyDown` (Enter/Space)
+   - FIX-033: Increase tier badge from text-[8px] to min text-[10px]
+   - FIX-034: Increase AIM card content from text-[10px] to text-[11px], increase padding from p-2 to p-3
+   - FIX-035..036: Add `role="progressbar"`, `aria-valuenow`, `aria-valuemin`, `aria-valuemax` on weight and warmup bars
+   - FIX-037: Fix tier badge overlap with status badge — adjust positioning
+   - FIX-038: Clean up redundant grid breakpoints (grid-cols-4 2xl:grid-cols-4 xl:grid-cols-4 → just grid-cols-4)
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

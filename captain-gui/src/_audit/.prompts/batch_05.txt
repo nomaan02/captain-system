@@ -1,0 +1,38 @@
+You are executing BATCH 5 — Modal + SysLog of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "fixing-accessibility"
+  args: "src/components/aim/AimDetailModal.jsx src/components/system/SystemLog.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/aim/AimDetailModal.jsx (FIX-047..053):
+   - FIX-047 CRITICAL: Add `role="dialog"`, `aria-modal="true"`, `aria-labelledby` pointing to the modal title
+   - FIX-048 CRITICAL: Implement focus trap. On open, cycle Tab within modal. On close, return focus to trigger. Use a useEffect with keydown listener — no new deps needed.
+   - FIX-049 CRITICAL: On mount, auto-focus the close button or first focusable element inside modal
+   - FIX-050 CRITICAL: Add `aria-label="Close"` on close button
+   - FIX-051: Increase close button to min w-[32px] h-[32px]
+   - FIX-052: Increase body text from text-[10px] to text-[11px]
+   - FIX-053: Add `aria-label` or `role="img"` with alt text to CheckIcon ✓/✗
+
+2. src/components/system/SystemLog.jsx (FIX-061..067):
+   - FIX-061 CRITICAL: Implement proper ARIA tablist: role="tablist" on tab container, role="tab" on each tab button, role="tabpanel" on content, aria-selected on active tab, arrow-key navigation between tabs
+   - FIX-062 CRITICAL: Add `aria-pressed={isActive}` on filter buttons (ALL/Errors/Signals/Orders)
+   - FIX-063: Increase filter button text from text-[8.6px] to min text-[10px]
+   - FIX-064: Increase category labels from fontSize: "8px" to min 10px, convert from inline style to Tailwind
+   - FIX-065: Convert all remaining inline styles to Tailwind classes
+   - FIX-066: Increase log entry text from text-[9.7px] to text-[11px], increase leading from leading-[13.6px] to leading-relaxed
+   - FIX-067: Add focus-visible styling on tab switching buttons
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

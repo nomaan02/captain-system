@@ -1,0 +1,41 @@
+You are executing BATCH 0 — Foundation of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/shared/"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic: monospace fonts, near-black backgrounds (#0a0e17, #111827), 1px solid borders (#1e293b), Lucide icons
+- DO NOT change layout structure, component hierarchy, or routing
+- DO NOT add new dependencies
+
+### Fixes
+
+1. src/global.css (FIX-145):
+   Add a global `*:focus-visible` ring style: `outline: 2px solid #3b82f6; outline-offset: 2px`. This cascades app-wide.
+
+2. src/components/shared/StatusDot.jsx (FIX-146):
+   Accept a `label` prop, render `role="status"` and `aria-label={label}`. Add sr-only text span.
+
+3. src/components/shared/CollapsiblePanel.jsx (FIX-074..078):
+   - Add `aria-expanded={isOpen}` on toggle button
+   - Add `aria-controls` pointing to panel id
+   - Generate unique `id` on content panel
+   - Wrap chevron chars in `aria-hidden="true"`
+   - Add `focus-visible` ring on toggle
+
+4. src/components/shared/DataTable.jsx (FIX-131..132):
+   - Add `aria-label` on search input
+   - Add a subtle gradient fade or shadow on the scroll edge as scroll affordance
+
+5. src/components/shared/StatusBadge.jsx (FIX-147):
+   Bump `text-[10px]` to `text-[11px]`.
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

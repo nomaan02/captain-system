@@ -1,0 +1,26 @@
+You are executing BATCH 11 — Cleanup of the captain-gui UX audit.
+This batch is store logic and JS only — no UI skill needed.
+
+Read each file before editing. Minimal changes only.
+
+### Rules
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/stores/dashboardStore.js (FIX-141..142):
+   - Add explicit fallback for unknown direction values (0, null, "BUY" → map to normalized "LONG"/"SHORT"/"UNKNOWN")
+   - Cap localStorage signal archive at 500 entries with FIFO pruning
+
+2. src/stores/notificationStore.js (FIX-153):
+   Add max-size cap of 500 notifications. When adding beyond cap, shift oldest off the array.
+
+3. src/ws/useWebSocket.js (FIX-152):
+   On eviction (4001) or auth failure (4003) close codes, push a visible notification via notificationStore (e.g., "WebSocket disconnected: session evicted" or "WebSocket disconnected: authentication failed").
+
+4. src/components/chart/TradingViewWidget.jsx (FIX-157):
+   Add min-height (e.g., min-h-[200px]) or a guard that checks parent height > 0 before rendering the widget to prevent zero-height flash.
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

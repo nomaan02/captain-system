@@ -1,0 +1,38 @@
+You are executing BATCH 7 — Replay Controls of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "fixing-accessibility"
+  args: "src/components/replay/PlaybackControls.jsx src/components/replay/ReplayConfigPanel.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/replay/PlaybackControls.jsx (FIX-023..030):
+   - FIX-023..024 CRITICAL: Add aria-label="Play"/"Pause"/"Skip" on Unicode button elements
+   - Increase Play/Pause from 24px to min 32px
+   - Increase speed pills from text-[8px] to min text-[10px] with min h-[28px]
+   - Increase progress bar from h-[3px] to h-[6px]
+   - Add aria-pressed on active speed button
+   - Add role="progressbar", aria-valuenow/min/max on progress bar
+   - FIX-030 LOW: Add Space for play/pause keyboard shortcut if feasible
+
+2. src/components/replay/ReplayConfigPanel.jsx (FIX-054..060):
+   - Increase labels from text-[8px] to min text-[10px]
+   - Increase toggle switches from h-[16px] w-[32px] to h-[20px] w-[40px]
+   - Increase Run Replay button to min h-[36px] text-[12px]
+   - Fix Label components: add htmlFor + matching id on inputs
+   - Add aria-label on toggle switches
+   - Add aria-label on preset select
+   - Add aria-label on preset name input
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

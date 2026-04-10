@@ -25,9 +25,10 @@ const DataTable = ({ columns, data, searchPlaceholder = "Search...", emptyMessag
         value={globalFilter}
         onChange={(e) => setGlobalFilter(e.target.value)}
         placeholder={searchPlaceholder}
+        aria-label={searchPlaceholder}
         className="bg-surface-dark border border-border-subtle text-white font-mono text-xs px-3 py-1.5 w-full mb-3 placeholder-[#64748b] focus:outline-none focus:border-border-accent"
       />
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" style={{ boxShadow: "inset -12px 0 8px -8px rgba(10,14,23,0.6)" }}>
         <table className="w-full">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (

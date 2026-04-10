@@ -1,0 +1,39 @@
+You are executing BATCH 6 — Signals + Dashboard of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/signals/ src/pages/DashboardPage.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/signals/SignalCards.jsx (FIX-098..101):
+   - Increase direction badges from text-[8px] to min text-[10px]
+   - Increase confidence tier badge from text-[7px] to min text-[10px]
+   - Increase clear button from text-[8px] px-[6px] py-[1px] to min h-[28px] px-[8px] text-[10px]
+   - Normalize font sizes: collapse the 5-size range (11/10/9/8/7px) to 2-3 sizes max (11/10px)
+
+2. src/components/signals/SignalExecutionBar.jsx (FIX-102..105):
+   - Replace fixed `w-[558.7px]` with `w-full` or `max-w-xl` flex layout
+   - Add `aria-current="step"` on active pipeline stage pill
+   - Round text-[12.1px] to text-xs (12px)
+   - Replace mq750/mq450 with Tailwind sm:/md:
+
+3. src/pages/DashboardPage.jsx (FIX-089..093):
+   - FIX-089 CRITICAL: Gate mock data injection behind `import.meta.env.VITE_DEV_MOCK === 'true'` instead of blanket `import.meta.env.DEV`
+   - Increase ResizeHandle from 5px to 8px with visible drag indicator (3 dots or line)
+   - Raise panel minSize from 5 to 15
+   - Add a loading skeleton or spinner for initial API data fetch
+   - Add visually-hidden h1 for screen reader landmarks
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

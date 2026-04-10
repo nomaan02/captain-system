@@ -1,0 +1,40 @@
+You are executing BATCH 10 — Pages B of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/pages/ReportsPage.jsx src/pages/SystemOverviewPage.jsx src/pages/ProcessesPage.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/pages/ReportsPage.jsx (FIX-123..125):
+   - Add responsive breakpoint (grid-cols-1 md:grid-cols-3)
+   - Replace magic 140px in max-h calc with a CSS variable or comment explaining the value
+   - Add aria-current="true" on selected report type
+
+2. src/pages/SystemOverviewPage.jsx (FIX-126..128):
+   - Increase text sizes from text-[10px] to text-[11px]
+   - Improve stub section messages: replace "available via RPT-XX" with clearer "Coming soon — data source not yet connected"
+   - Add aria-label on radar chart SVG container
+
+3. src/pages/ProcessesPage.jsx (FIX-139..140):
+   - Increase badge text to min text-[10px]
+   - Increase file path text to min text-[10px]
+
+4. src/pages/ConfigPage.jsx (FIX-150):
+   Improve stub messaging — add a meaningful placeholder explaining what will go here.
+
+5. src/pages/SettingsPage.jsx (FIX-151):
+   Add aria-pressed or aria-checked on theme toggle button.
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

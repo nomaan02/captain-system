@@ -1,0 +1,45 @@
+You are executing BATCH 9 — Pages A of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "fixing-accessibility"
+  args: "src/pages/HistoryPage.jsx src/pages/LoginPage.jsx src/pages/ReplayPage.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/pages/HistoryPage.jsx (FIX-110..113):
+   - Add role="tablist" on tab container
+   - Add role="tab" + aria-selected on tab buttons
+   - Add role="tabpanel" on content area
+   - Increase tab button padding to min py-2 px-4
+
+2. src/pages/LoginPage.jsx (FIX-114..116):
+   - Increase submit button to min h-[44px]
+   - Add aria-describedby linking error message to input
+   - Add role="alert" on error div
+   - Remove autoFocus (or gate behind desktop check)
+
+3. src/pages/ModelsPage.jsx (FIX-117..119):
+   - Add TODO comment about independent data fetch for direct nav
+   - Increase grid to grid-cols-2 md:grid-cols-3
+
+4. src/pages/ReplayPage.jsx (FIX-120..122):
+   - Add responsive breakpoint on 3-col grid (stack on narrow)
+   - Increase drag handle to h-[8px]
+   - Add role="separator" + aria-label on drag handle
+
+5. src/components/replay/WhatIfComparison.jsx (FIX-137..138):
+   - Increase max-h from 120px to 200px on contracts scroll
+   - Add responsive handling for 4-col grid overflow
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.
