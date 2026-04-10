@@ -19,58 +19,54 @@ const TradeLog = ({ className = "" }) => {
 
   return (
     <div
-      className={`w-full h-full flex items-start pt-0 pb-[4.7px] pl-px pr-0 text-center text-[10.8px] text-[#94a3b8] font-['JetBrains_Mono'] ${className}`}
+      className={`w-full h-full flex items-start pt-0 pb-1 pl-px pr-0 text-center text-[11px] text-[#94a3b8] font-mono ${className}`}
     >
-      <div className="h-full flex-1 border-[#2e4e5a] border-solid border-b-[0.9px] box-border flex flex-col items-start pt-0 px-0 pb-[17px] overflow-y-auto">
-        <div className="self-stretch h-[24.1px] border-[#2e4e5a] border-solid border-b-[0.9px] box-border flex items-start pt-[4.2px] px-2 pb-[3px] shrink-0 text-left text-[9.7px] text-[#fff] font-[Inter]">
-          <div data-testid="tradelog-header" className="relative leading-[14.6px]">TRADE LOG</div>
+      <div className="h-full flex-1 border-[#2e4e5a] border-solid border-b box-border flex flex-col items-start pt-0 px-0 pb-4 overflow-y-auto">
+        <div className="self-stretch h-6 border-[#2e4e5a] border-solid border-b box-border flex items-start pt-1 px-2 pb-[3px] shrink-0 text-left text-[10px] text-[#fff] font-sans">
+          <div data-testid="tradelog-header" className="relative leading-4">TRADE LOG</div>
         </div>
-        <div className="self-stretch h-[18.2px] border-[#2e4e5a] border-solid border-b-[0.9px] box-border flex items-start justify-between pt-[2.2px] pb-0.5 pl-2 pr-2.5 gap-5 shrink-0 text-[8.6px] text-[#fff]">
-          <div className="flex items-start gap-[33px]">
-            <div className="relative leading-[13px]">TIME</div>
-            <div className="flex items-start gap-[11.4px]">
-              <div className="relative leading-[13px]">ASSET</div>
-              <div className="relative leading-[13px]">D</div>
-            </div>
-          </div>
-          <div className="flex items-start gap-[37.3px]">
-            <div className="relative leading-[13px]">{`P&L`}</div>
-            <div className="relative leading-[13px]">DUR</div>
-          </div>
-        </div>
-        {closedTrades.length > 0 ? (
-          closedTrades.map((trade, idx) => {
-            const pnl = trade.pnl ?? trade.current_pnl ?? 0;
-            const isWin = pnl >= 0;
-            const bgClass = isWin ? "bg-[rgba(16,185,129,0.05)]" : "bg-[rgba(239,68,68,0.05)]";
-            const pnlColor = isWin ? "text-[#00ad74]" : "text-[#ef4444]";
-            const dirLetter = trade.direction === "LONG" ? "L" : "S";
-            const dirColor = trade.direction === "LONG" ? "text-[#00ad74]" : "text-[#ef4444]";
-            const time = trade.entry_time ? new Date(trade.entry_time).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/New_York" }) : "—";
-            const duration = computeDuration(trade.entry_time, trade.exit_time);
-            return (
-              <div data-testid="tradelog-row" key={trade.trade_id ?? trade.order_id ?? idx} className={`self-stretch ${bgClass} flex items-start justify-between pt-[1.1px] pb-[0.2px] pl-2 pr-2.5 gap-5 shrink-0`}>
-                <div className="flex items-start gap-[20.2px]">
-                  <div className="relative leading-[16.2px]">{time}</div>
-                  <div className="relative leading-[16.2px] text-[#e2e8f0]">{trade.asset_id ?? trade.asset ?? "—"}</div>
-                  <div className={`relative leading-[16.2px] ${dirColor}`}>{dirLetter}</div>
-                </div>
-                <div className="flex items-start gap-[33.3px] text-left">
-                  <div className={`relative leading-[16.2px] ${pnlColor}`}>{pnl !== 0 || trade.pnl != null ? (pnl >= 0 ? "+" : "") + Math.round(pnl) : "—"}</div>
-                  <div className="relative leading-[16.2px] text-[#fff] text-center">
-                    {duration}
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="self-stretch flex items-center justify-center py-4 text-[9.7px] text-[#64748b]">
-            No trades today
-          </div>
-        )}
-        <div className="self-stretch h-[24.1px] border-[#2e4e5a] border-solid border-t-[0.9px] box-border flex items-start pt-[3px] px-2 pb-[5px] shrink-0 text-left text-[9.7px] text-[#fff]">
-          <div data-testid="tradelog-total" className="relative leading-[14.6px]">
+        <table className="w-full border-collapse text-[10px]">
+          <thead>
+            <tr className="border-[#2e4e5a] border-solid border-b text-[#fff]">
+              <th className="text-left font-normal leading-[13px] pt-0.5 pb-0.5 pl-2">TIME</th>
+              <th className="text-left font-normal leading-[13px] pt-0.5 pb-0.5">ASSET</th>
+              <th className="text-left font-normal leading-[13px] pt-0.5 pb-0.5">D</th>
+              <th className="text-right font-normal leading-[13px] pt-0.5 pb-0.5">{`P&L`}</th>
+              <th className="text-right font-normal leading-[13px] pt-0.5 pb-0.5 pr-2.5">DUR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {closedTrades.length > 0 ? (
+              closedTrades.map((trade, idx) => {
+                const pnl = trade.pnl ?? trade.current_pnl ?? 0;
+                const isWin = pnl >= 0;
+                const bgClass = isWin ? "bg-[rgba(16,185,129,0.05)]" : "bg-[rgba(239,68,68,0.05)]";
+                const pnlColor = isWin ? "text-[#00ad74]" : "text-[#ef4444]";
+                const dirLetter = trade.direction === "LONG" ? "L" : "S";
+                const dirColor = trade.direction === "LONG" ? "text-[#00ad74]" : "text-[#ef4444]";
+                const time = trade.entry_time ? new Date(trade.entry_time).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/New_York" }) : "—";
+                const duration = computeDuration(trade.entry_time, trade.exit_time);
+                return (
+                  <tr data-testid="tradelog-row" key={trade.trade_id ?? trade.order_id ?? idx} className={bgClass}>
+                    <td className="text-left leading-4 pt-px pb-0 pl-2">{time}</td>
+                    <td className="text-left leading-4 pt-px pb-0 text-[#e2e8f0]">{trade.asset_id ?? trade.asset ?? "—"}</td>
+                    <td className={`text-left leading-4 pt-px pb-0 ${dirColor}`}>{dirLetter}</td>
+                    <td className={`text-right leading-4 pt-px pb-0 ${pnlColor}`}>{pnl !== 0 || trade.pnl != null ? (pnl >= 0 ? "+" : "") + Math.round(pnl) : "—"}</td>
+                    <td className="text-right leading-4 pt-px pb-0 pr-2.5 text-[#fff]">{duration}</td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={5} className="text-center py-4 text-[10px] text-[#64748b]">
+                  No trades today
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div className="self-stretch h-6 border-[#2e4e5a] border-solid border-t box-border flex items-start pt-[3px] px-2 pb-[5px] shrink-0 text-left text-[11px] text-[#fff]">
+          <div data-testid="tradelog-total" className="relative leading-4">
             <span>{`Total: `}</span>
             <span className="text-[#00ad74]">{formatCurrency(closedTrades.reduce((sum, t) => sum + (t.pnl ?? t.current_pnl ?? 0), 0), { showSign: true })}</span>
             <span>{` | ${closedTrades.length} trades`}</span>
