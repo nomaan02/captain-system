@@ -163,7 +163,7 @@ const ReplaySummary = () => {
       {tradesSorted.length > 0 && (
         <div className="border-t border-[#1e293b] pt-2">
           <div className="text-[8px] uppercase tracking-[0.5px] text-[#64748b] font-mono mb-1">All Trades</div>
-          <div className="max-h-[160px] overflow-y-auto">
+          <div className="max-h-[240px] overflow-y-auto">
             {tradesSorted.map((t) => {
               const pnl = getTradePnl(t);
               const reason = t.exitResult?.exit_reason || t.exitResult?.reason || "--";
@@ -194,14 +194,14 @@ const ReplaySummary = () => {
         <button
           data-testid="replay-what-if-btn"
           onClick={handleWhatIf}
-          className="flex-1 py-[4px] text-[9px] font-mono border border-solid bg-[rgba(6,182,212,0.1)] border-[rgba(6,182,212,0.3)] text-[#06b6d4] cursor-pointer hover:bg-[rgba(6,182,212,0.2)] transition-colors"
+          className="flex-1 min-h-[32px] py-[4px] text-[9px] font-mono border border-solid bg-[rgba(6,182,212,0.1)] border-[rgba(6,182,212,0.3)] text-[#06b6d4] cursor-pointer hover:bg-[rgba(6,182,212,0.2)] transition-colors"
         >
           What-If
         </button>
         <button
           data-testid="replay-save-btn"
           onClick={handleSave}
-          className="flex-1 py-[4px] text-[9px] font-mono border border-solid bg-[rgba(16,185,129,0.1)] border-[rgba(16,185,129,0.3)] text-[#10b981] cursor-pointer hover:bg-[rgba(16,185,129,0.2)] transition-colors"
+          className="flex-1 min-h-[32px] py-[4px] text-[9px] font-mono border border-solid bg-[rgba(16,185,129,0.1)] border-[rgba(16,185,129,0.3)] text-[#10b981] cursor-pointer hover:bg-[rgba(16,185,129,0.2)] transition-colors"
         >
           Save
         </button>

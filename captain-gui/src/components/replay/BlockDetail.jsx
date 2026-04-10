@@ -8,8 +8,8 @@ const TableHeader = ({ children }) => (
   </th>
 );
 
-const TableCell = ({ children, className = "" }) => (
-  <td className={`text-[9px] text-[#e2e8f0] font-mono px-2 py-[3px] border-b border-solid border-[#1e293b] ${className}`}>
+const TableCell = ({ children, className = "", title }) => (
+  <td title={title} className={`text-[9px] text-[#e2e8f0] font-mono px-2 py-[3px] border-b border-solid border-[#1e293b] ${className}`}>
     {children}
   </td>
 );
@@ -158,7 +158,7 @@ const B3Detail = () => {
                         <TableCell className={modColor(info.modifier)}>{info.modifier?.toFixed(4) ?? "--"}</TableCell>
                         <TableCell>{info.confidence?.toFixed(2) ?? "--"}</TableCell>
                         <TableCell>{info.dma_weight?.toFixed(3) ?? "--"}</TableCell>
-                        <TableCell className="text-[#94a3b8] max-w-[150px] truncate">{info.reason_tag || "--"}</TableCell>
+                        <TableCell className="text-[#94a3b8] max-w-[150px] truncate" title={info.reason_tag || ""}>{info.reason_tag || "--"}</TableCell>
                       </tr>
                     ))}
                 </tbody>
@@ -257,7 +257,7 @@ const Fallback = ({ text }) => (
 const GenericDetail = ({ data }) => {
   if (!data) return <Fallback text="No data available" />;
   return (
-    <pre className="text-[8px] text-[#e2e8f0] font-mono p-2 whitespace-pre-wrap overflow-x-auto max-h-[200px]">
+    <pre className="text-[8px] text-[#e2e8f0] font-mono p-2 whitespace-pre-wrap overflow-x-auto">
       {JSON.stringify(data, null, 2)}
     </pre>
   );

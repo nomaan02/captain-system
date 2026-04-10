@@ -32,6 +32,7 @@ const AssetCard = ({ asset, data, aimModifier }) => {
     <div
       data-testid={`asset-card-${asset}`}
       data-status={status}
+      aria-busy={isShimmer}
       className={`border border-solid ${cfg.border} ${cfg.bg} p-2 font-mono ${isShimmer ? "animate-pulse" : ""}`}
     >
       {/* Header row: Asset name + status badge */}
@@ -40,7 +41,7 @@ const AssetCard = ({ asset, data, aimModifier }) => {
           <span data-testid={`asset-card-name-${asset}`} className="text-[11px] text-[#06b6d4] font-semibold">{asset}</span>
           {direction && (
             <span
-              className={`px-1 py-[1px] text-[7px] leading-[10px] border border-solid ${
+              className={`px-1 py-[1px] text-[10px] leading-[14px] border border-solid ${
                 direction === "LONG"
                   ? "bg-[rgba(16,185,129,0.2)] border-[rgba(16,185,129,0.4)] text-[#10b981]"
                   : "bg-[rgba(239,68,68,0.2)] border-[rgba(239,68,68,0.4)] text-[#ef4444]"
@@ -50,7 +51,7 @@ const AssetCard = ({ asset, data, aimModifier }) => {
             </span>
           )}
           {orResult?.session && (
-            <span className="px-1 py-[1px] text-[6px] leading-[9px] border border-solid border-[#374151] text-[#64748b] uppercase">
+            <span className="px-1 py-[1px] text-[8px] leading-[11px] border border-solid border-[#374151] text-[#64748b] uppercase">
               {orResult.session}
             </span>
           )}
