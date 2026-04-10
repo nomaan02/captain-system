@@ -27,7 +27,7 @@ const ModelsPage = () => {
         <h2 className="text-sm font-mono text-captain-green tracking-[1.5px] uppercase mb-3">
           AIM Registry
         </h2>
-        <div className="grid grid-cols-1 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           {aimStates.length > 0 ? (
             aimStates.map((aim, idx) => (
               <div

@@ -86,12 +86,14 @@ const HistoryPage = () => {
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">History</h1>
 
       {/* Tab bar */}
-      <div className="flex gap-2 mb-4">
+      <div role="tablist" className="flex gap-2 mb-4">
         {tabs.map((tab, i) => (
           <button
             key={tab.name}
+            role="tab"
+            aria-selected={i === activeTab}
             onClick={() => setActiveTab(i)}
-            className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider border border-solid transition-colors ${
+            className={`px-4 py-2 text-[10px] font-mono uppercase tracking-wider border border-solid transition-colors ${
               i === activeTab
                 ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
                 : "bg-transparent border-[#2e4e5a] text-[#64748b] hover:bg-[rgba(100,116,139,0.05)]"
@@ -103,7 +105,7 @@ const HistoryPage = () => {
       </div>
 
       {/* Active table */}
-      <div className="bg-surface-card border border-border-subtle p-3">
+      <div role="tabpanel" className="bg-surface-card border border-border-subtle p-3">
         <DataTable
           columns={current.columns}
           data={current.data}

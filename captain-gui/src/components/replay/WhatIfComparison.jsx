@@ -51,7 +51,7 @@ const WhatIfComparison = () => {
   });
 
   return (
-    <div data-testid="what-if-comparison" className="p-3 space-y-2">
+    <div data-testid="what-if-comparison" className="p-3 space-y-2 overflow-x-auto">
       <div className="text-[9px] uppercase tracking-[1px] text-[#06b6d4] font-mono">What-If Comparison</div>
 
       {/* Header row */}
@@ -71,7 +71,7 @@ const WhatIfComparison = () => {
       {comparison.asset_results && comparison.asset_results.length > 0 && (
         <div className="border-t border-[#1e293b] pt-2 mt-2">
           <div className="text-[8px] uppercase tracking-[0.5px] text-[#64748b] font-mono mb-1">Per-Asset Contracts</div>
-          <div className="max-h-[120px] overflow-y-auto">
+          <div className="max-h-[200px] overflow-y-auto">
             {comparison.asset_results.map((ar) => {
               const asset = ar.asset || ar.asset_id;
               const origContracts = assetResults[asset]?.sizing?.final ?? assetResults[asset]?.sizing?.contracts ?? 0;
