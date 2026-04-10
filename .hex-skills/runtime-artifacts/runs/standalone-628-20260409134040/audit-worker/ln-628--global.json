@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "summary_kind": "audit-worker",
+  "run_id": "standalone-628-20260409134040",
+  "identifier": "global",
+  "producer_skill": "ln-628",
+  "produced_at": "2026-04-09T14:40:40Z",
+  "payload": {
+    "status": "completed",
+    "category": "Concurrency",
+    "report_path": "docs/audit/ln-628--global.md",
+    "score": 4.4,
+    "issues_total": 8,
+    "severity_counts": {
+      "critical": 1,
+      "high": 2,
+      "medium": 2,
+      "low": 3
+    },
+    "warnings": [],
+    "checks": {
+      "async_races": {"status": "pass", "findings": 0},
+      "thread_safety": {"status": "fail", "findings": 3},
+      "toctou": {"status": "fail", "findings": 3},
+      "deadlock_potential": {"status": "pass", "findings": 0},
+      "blocking_io": {"status": "warn", "findings": 1},
+      "resource_contention": {"status": "warn", "findings": 1},
+      "cross_process_races": {"status": "pass", "findings": 0}
+    },
+    "top_findings": [
+      {
+        "id": "F-001",
+        "severity": "CRITICAL",
+        "location": "shared/vault.py:78-82",
+        "summary": "store_api_key read-modify-write race — API key loss across Docker containers"
+      },
+      {
+        "id": "F-002",
+        "severity": "HIGH",
+        "location": "captain-command/captain_command/api.py:607-621",
+        "summary": "Unguarded module-level globals written by background threads"
+      },
+      {
+        "id": "F-003",
+        "severity": "HIGH",
+        "location": "shared/questdb_client.py:81-99",
+        "summary": "update_d00_fields read-modify-write on D00 without cross-process sync"
+      }
+    ]
+  }
+}

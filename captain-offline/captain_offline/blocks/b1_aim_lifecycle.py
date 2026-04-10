@@ -51,8 +51,8 @@ def _load_aim_states(asset_id: str) -> list[dict]:
             """SELECT aim_id, asset_id, status, model_object, warmup_progress,
                       current_modifier, last_retrained, missing_data_rate_30d
                FROM p3_d01_aim_model_states
-               LATEST ON last_updated PARTITION BY aim_id, asset_id
                WHERE asset_id = %s
+               LATEST ON last_updated PARTITION BY aim_id, asset_id
                ORDER BY aim_id""",
             (asset_id,),
         )
@@ -77,8 +77,8 @@ def _load_meta_weight(aim_id: int, asset_id: str) -> float:
     with get_cursor() as cur:
         cur.execute(
             """SELECT inclusion_probability FROM p3_d02_aim_meta_weights
-               LATEST ON last_updated PARTITION BY aim_id, asset_id
-               WHERE aim_id = %s AND asset_id = %s""",
+               WHERE aim_id = %s AND asset_id = %s
+               LATEST ON last_updated PARTITION BY aim_id, asset_id""",
             (aim_id, asset_id),
         )
         row = cur.fetchone()
@@ -329,8 +329,8 @@ def run_tier_retrain(asset_id: str, aim_ids: list[int]):
         with get_cursor() as cur:
             cur.execute(
                 """SELECT status FROM p3_d01_aim_model_states
-                   LATEST ON last_updated PARTITION BY aim_id, asset_id
-                   WHERE aim_id = %s AND asset_id = %s""",
+                   WHERE aim_id = %s AND asset_id = %s
+                   LATEST ON last_updated PARTITION BY aim_id, asset_id""",
                 (aim_id, asset_id),
             )
             row = cur.fetchone()
@@ -380,8 +380,8 @@ def _load_meta_weight_history(aim_id: int, asset_id: str) -> dict:
     with get_cursor() as cur:
         cur.execute(
             """SELECT days_below_threshold FROM p3_d02_aim_meta_weights
-               LATEST ON last_updated PARTITION BY aim_id, asset_id
-               WHERE aim_id = %s AND asset_id = %s""",
+               WHERE aim_id = %s AND asset_id = %s
+               LATEST ON last_updated PARTITION BY aim_id, asset_id""",
             (aim_id, asset_id),
         )
         row = cur.fetchone()

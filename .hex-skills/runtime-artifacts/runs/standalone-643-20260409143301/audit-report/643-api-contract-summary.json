@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0.0",
+  "summary_kind": "audit_worker",
+  "run_id": "standalone-643-20260409143301",
+  "identifier": "api-contracts",
+  "producer_skill": "ln-643-api-contract-auditor",
+  "produced_at": "2026-04-09T14:33:01Z",
+  "payload": {
+    "status": "completed",
+    "category": "architecture",
+    "report_path": ".hex-skills/runtime-artifacts/runs/standalone-643-20260409143301/audit-report/643-api-contract.md",
+    "score": 5.9,
+    "issues_total": 8,
+    "severity_counts": {
+      "critical": 0,
+      "high": 2,
+      "medium": 3,
+      "low": 3
+    },
+    "diagnostic_scores": {
+      "compliance": 45,
+      "completeness": 30,
+      "quality": 80,
+      "implementation": 40
+    },
+    "warnings": [
+      "26/26 endpoints return raw dicts — zero response DTOs",
+      "check_level_escalation() performs writes behind check_ prefix",
+      "3 incompatible error patterns coexist in API layer"
+    ]
+  }
+}

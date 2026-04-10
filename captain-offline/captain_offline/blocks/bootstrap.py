@@ -38,8 +38,8 @@ def _load_locked_strategy(asset_id: str) -> dict | None:
     with get_cursor() as cur:
         cur.execute(
             """SELECT locked_strategy FROM p3_d00_asset_universe
-               LATEST ON last_updated PARTITION BY asset_id
-               WHERE asset_id = %s""",
+               WHERE asset_id = %s
+               LATEST ON last_updated PARTITION BY asset_id""",
             (asset_id,),
         )
         row = cur.fetchone()
@@ -162,8 +162,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
                 cur.execute(
                     """SELECT win_rate, avg_win, avg_loss
                        FROM p3_d05_ewma_states
-                       LATEST ON last_updated PARTITION BY asset_id, regime, session
-                       WHERE asset_id = %s AND regime = %s AND session = %s""",
+                       WHERE asset_id = %s AND regime = %s AND session = %s
+                       LATEST ON last_updated PARTITION BY asset_id, regime, session""",
                     (asset_id, regime, session),
                 )
                 row = cur.fetchone()
@@ -191,8 +191,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
         with get_cursor() as cur:
             cur.execute(
                 """SELECT status FROM p3_d01_aim_model_states
-                   LATEST ON last_updated PARTITION BY aim_id, asset_id
-                   WHERE aim_id = %s AND asset_id = %s""",
+                   WHERE aim_id = %s AND asset_id = %s
+                   LATEST ON last_updated PARTITION BY aim_id, asset_id""",
                 (aim_id, asset_id),
             )
             row = cur.fetchone()
@@ -248,8 +248,8 @@ def asset_warmup_check():
             with get_cursor() as cur:
                 cur.execute(
                     """SELECT status FROM p3_d01_aim_model_states
-                       LATEST ON last_updated PARTITION BY aim_id, asset_id
-                       WHERE aim_id = %s AND asset_id = %s""",
+                       WHERE aim_id = %s AND asset_id = %s
+                       LATEST ON last_updated PARTITION BY aim_id, asset_id""",
                     (aim_id, asset_id),
                 )
                 row = cur.fetchone()

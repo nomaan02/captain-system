@@ -5,6 +5,7 @@ import { formatCurrency, formatPrice } from "../../utils/formatting";
 const SignalCards = ({ className = "" }) => {
   const pendingSignals = useDashboardStore((s) => s.pendingSignals);
   const dailyTradeStats = useDashboardStore((s) => s.dailyTradeStats);
+  const clearSignals = useDashboardStore((s) => s.clearSignals);
 
   return (
     <div
@@ -89,11 +90,22 @@ const SignalCards = ({ className = "" }) => {
 
       {/* Session summary footer — compact single row */}
       <div data-testid="signal-session-footer" className="self-stretch bg-[#0a1614] flex items-center justify-between px-3 py-[4px] text-[9px] shrink-0">
-        <div className="flex items-center gap-1">
-          <span className="text-[#64748b]">P&L</span>
-          <span data-testid="signal-session-pnl" className={`text-[12px] ${(dailyTradeStats?.total_pnl ?? 0) >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
-            {formatCurrency(dailyTradeStats?.total_pnl ?? 0, { showSign: true })}
-          </span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <span className="text-[#64748b]">P&L</span>
+            <span data-testid="signal-session-pnl" className={`text-[12px] ${(dailyTradeStats?.total_pnl ?? 0) >= 0 ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+              {formatCurrency(dailyTradeStats?.total_pnl ?? 0, { showSign: true })}
+            </span>
+          </div>
+          {pendingSignals.length > 0 && (
+            <button
+              data-testid="clear-signals-btn"
+              onClick={clearSignals}
+              className="px-[6px] py-[1px] text-[8px] font-mono border border-solid border-[#2e4e5a] bg-[#111827] text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#547380] cursor-pointer transition-colors"
+            >
+              Clear
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span>

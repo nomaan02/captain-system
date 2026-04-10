@@ -184,8 +184,8 @@ def _ensure_telegram_chat_id():
         with get_cursor() as cur:
             cur.execute(
                 """SELECT telegram_chat_id FROM p3_d16_user_capital_silos
-                   LATEST ON last_updated PARTITION BY user_id
-                   WHERE user_id = %s""",
+                   WHERE user_id = %s
+                   LATEST ON last_updated PARTITION BY user_id""",
                 (user_id,),
             )
             row = cur.fetchone()
@@ -200,8 +200,8 @@ def _ensure_telegram_chat_id():
                           correlation_threshold, user_kelly_ceiling, capital_history,
                           created
                    FROM p3_d16_user_capital_silos
-                   LATEST ON last_updated PARTITION BY user_id
-                   WHERE user_id = %s""",
+                   WHERE user_id = %s
+                   LATEST ON last_updated PARTITION BY user_id""",
                 (user_id,),
             )
             src = cur.fetchone()

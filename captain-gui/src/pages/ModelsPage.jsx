@@ -8,7 +8,7 @@ const ModelsPage = () => {
 
   if (!connected && aimStates.length === 0 && !regimePanel) {
     return (
-      <div className="h-screen bg-surface p-4 flex items-center justify-center">
+      <div className="h-full bg-surface p-4 flex items-center justify-center">
         <div className="text-[#64748b] text-xs font-mono text-center">
           Connect to the dashboard first to load data
         </div>
@@ -17,7 +17,7 @@ const ModelsPage = () => {
   }
 
   return (
-    <div className="h-screen bg-surface p-4 overflow-y-auto">
+    <div className="h-full bg-surface p-4 overflow-y-auto">
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">
         Models
       </h1>

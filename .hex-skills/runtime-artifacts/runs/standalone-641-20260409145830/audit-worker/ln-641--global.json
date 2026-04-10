@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "summary_kind": "audit-worker",
+  "run_id": "standalone-641-20260409145830",
+  "identifier": "global",
+  "producer_skill": "ln-641",
+  "produced_at": "2026-04-09T14:58:30Z",
+  "payload": {
+    "status": "completed",
+    "category": "Pattern Analysis",
+    "report_path": ".hex-skills/runtime-artifacts/runs/standalone-641-20260409145830/audit-report/ln-641--full-codebase.md",
+    "score": 4.5,
+    "issues_total": 88,
+    "severity_counts": {
+      "critical": 9,
+      "high": 34,
+      "medium": 32,
+      "low": 13
+    },
+    "warnings": [],
+    "diagnostic_scores": {
+      "compliance": 68,
+      "completeness": 60,
+      "quality": 67,
+      "implementation": 71
+    },
+    "metadata": {
+      "patterns_analyzed": 14,
+      "architecture_health": 61.6,
+      "files_analyzed": 42
+    }
+  }
+}

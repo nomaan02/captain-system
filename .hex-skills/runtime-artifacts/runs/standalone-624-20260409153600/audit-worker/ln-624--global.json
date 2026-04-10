@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "summary_kind": "audit-worker",
+  "run_id": "standalone-624-20260409153600",
+  "identifier": "global",
+  "producer_skill": "ln-624",
+  "produced_at": "2026-04-09T15:36:00Z",
+  "payload": {
+    "status": "completed",
+    "category": "Code Quality",
+    "report_path": ".hex-skills/runtime-artifacts/runs/standalone-624-20260409153600/audit-report/ln-624--global.md",
+    "score": 0.0,
+    "issues_total": 221,
+    "severity_counts": {
+      "critical": 0,
+      "high": 64,
+      "medium": 124,
+      "low": 33
+    },
+    "warnings": [
+      "Score 0.0 reflects full-codebase 10-check scan across 110 files; ~60% of HIGH findings concentrate in 5 files",
+      "Systemic pattern: 130+ functions return bare -> dict with no TypedDict",
+      "Systemic pattern: block entry points average 8-12 parameters; no context dataclasses exist"
+    ]
+  }
+}

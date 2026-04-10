@@ -44,8 +44,8 @@ def _load_active_aims(asset_id: str) -> list[dict]:
             """SELECT aim_id, inclusion_probability, inclusion_flag,
                       recent_effectiveness, days_below_threshold
                FROM p3_d02_aim_meta_weights
-               LATEST ON last_updated PARTITION BY aim_id, asset_id
                WHERE asset_id = %s
+               LATEST ON last_updated PARTITION BY aim_id, asset_id
                ORDER BY aim_id""",
             (asset_id,),
         )
@@ -71,8 +71,8 @@ def _load_ewma_regime(asset_id: str, regime: str) -> dict:
         cur.execute(
             """SELECT session, win_rate, avg_win, avg_loss, n_trades
                FROM p3_d05_ewma_states
-               LATEST ON last_updated PARTITION BY session
                WHERE asset_id = %s AND regime = %s
+               LATEST ON last_updated PARTITION BY session
                ORDER BY session""",
             (asset_id, regime),
         )

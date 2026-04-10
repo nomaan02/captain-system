@@ -125,7 +125,7 @@ def _resolve_from_d00(asset_id: str) -> str | None:
         with get_cursor() as cur:
             cur.execute(
                 "SELECT roll_calendar FROM p3_d00_asset_universe "
-                "LATEST ON last_updated PARTITION BY asset_id WHERE asset_id = %s",
+                "WHERE asset_id = %s LATEST ON last_updated PARTITION BY asset_id",
                 (asset_id,),
             )
             row = cur.fetchone()

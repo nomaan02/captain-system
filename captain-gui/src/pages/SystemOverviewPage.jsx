@@ -141,7 +141,7 @@ const SystemOverviewPage = () => {
   const isAdmin = true;
   if (!isAdmin) {
     return (
-      <div className="h-screen bg-surface p-4 flex items-center justify-center">
+      <div className="h-full bg-surface p-4 flex items-center justify-center">
         <div className="text-[#64748b] text-sm font-mono">Access restricted to administrators.</div>
       </div>
     );
@@ -149,7 +149,7 @@ const SystemOverviewPage = () => {
 
   if (loading && !overview) {
     return (
-      <div className="h-screen bg-surface p-4">
+      <div className="h-full bg-surface p-4">
         <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">System Overview</h1>
         <div className="text-[#64748b] text-xs font-mono py-8 text-center">Loading system overview...</div>
       </div>
@@ -171,7 +171,7 @@ const SystemOverviewPage = () => {
   const barColor = passRate >= 70 ? "bg-[#10b981]" : passRate >= 40 ? "bg-[#f59e0b]" : "bg-[#ef4444]";
 
   return (
-    <div className="h-screen bg-surface p-4 overflow-y-auto">
+    <div className="h-full bg-surface p-4 overflow-y-auto">
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">System Overview</h1>
 
       {error && (

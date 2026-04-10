@@ -140,6 +140,9 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       CAPTAIN_ROLE: COMMAND
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      API_SECRET_KEY: ${API_SECRET_KEY:-}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
       TZ: America/New_York
       VAULT_KEY_PATH: /captain/vault/keys.vault
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

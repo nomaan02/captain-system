@@ -2,9 +2,14 @@ import { useEffect } from "react";
 import {
   Routes,
   Route,
+  Navigate,
+  Outlet,
   useNavigationType,
   useLocation,
 } from "react-router-dom";
+import { useAuth } from "./auth/AuthContext";
+import TopBar from "./components/layout/TopBar";
+import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ModelsPage from "./pages/ModelsPage";
 import ConfigPage from "./pages/ConfigPage";
@@ -14,6 +19,28 @@ import ReportsPage from "./pages/ReportsPage";
 import ProcessesPage from "./pages/ProcessesPage";
 import SystemOverviewPage from "./pages/SystemOverviewPage";
 import ReplayPage from "./pages/ReplayPage";
+
+function RequireAuth({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) return null;
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
+  return children;
+}
+
+function AuthenticatedLayout() {
+  return (
+    <div className="h-screen w-full flex flex-col overflow-hidden">
+      <div className="shrink-0">
+        <TopBar />
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col">
+        <Outlet />
+      </div>
+    </div>
+  );
+}
 
 function App() {
   const action = useNavigationType();
@@ -71,15 +98,18 @@ function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<DashboardPage />} />
-      <Route path="/models" element={<ModelsPage />} />
-      <Route path="/config" element={<ConfigPage />} />
-      <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/history" element={<HistoryPage />} />
-      <Route path="/reports" element={<ReportsPage />} />
-      <Route path="/processes" element={<ProcessesPage />} />
-      <Route path="/system" element={<SystemOverviewPage />} />
-      <Route path="/replay" element={<ReplayPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<RequireAuth><AuthenticatedLayout /></RequireAuth>}>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/models" element={<ModelsPage />} />
+        <Route path="/config" element={<ConfigPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/processes" element={<ProcessesPage />} />
+        <Route path="/system" element={<SystemOverviewPage />} />
+        <Route path="/replay" element={<ReplayPage />} />
+      </Route>
     </Routes>
   );
 }

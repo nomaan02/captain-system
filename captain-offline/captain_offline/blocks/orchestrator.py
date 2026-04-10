@@ -487,8 +487,8 @@ class OfflineOrchestrator:
                               max_daily_loss, profit_target, risk_goal,
                               evaluation_end_date
                        FROM p3_d08_tsm_state
-                       LATEST ON last_updated PARTITION BY account_id
-                       WHERE account_id = %s""",
+                       WHERE account_id = %s
+                       LATEST ON last_updated PARTITION BY account_id""",
                     (account_id,),
                 )
                 row = cur.fetchone()
@@ -579,8 +579,8 @@ class OfflineOrchestrator:
                     cur.execute(
                         """SELECT aim_id, current_modifier
                            FROM p3_d01_aim_model_states
-                           LATEST ON last_updated PARTITION BY aim_id, asset_id
-                           WHERE asset_id = %s""",
+                           WHERE asset_id = %s
+                           LATEST ON last_updated PARTITION BY aim_id, asset_id""",
                         (asset_id,),
                     )
                     aim_rows = cur.fetchall()

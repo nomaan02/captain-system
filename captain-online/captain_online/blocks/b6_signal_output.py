@@ -315,8 +315,8 @@ def _load_system_param(key: str, default):
     with get_cursor() as cur:
         cur.execute(
             """SELECT param_value FROM p3_d17_system_monitor_state
-               LATEST ON last_updated PARTITION BY param_key
-               WHERE param_key = %s""",
+               WHERE param_key = %s
+               LATEST ON last_updated PARTITION BY param_key""",
             (key,),
         )
         row = cur.fetchone()

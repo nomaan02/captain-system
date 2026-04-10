@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "summary_kind": "audit-worker",
+  "run_id": "standalone-625-20260409124219",
+  "identifier": "global",
+  "producer_skill": "ln-625",
+  "produced_at": "2026-04-09T12:42:19Z",
+  "payload": {
+    "status": "completed",
+    "category": "Dependencies & Reuse",
+    "report_path": ".hex-skills/runtime-artifacts/runs/standalone-625-20260409124219/audit-report/ln-625--global.md",
+    "score": 5.9,
+    "issues_total": 9,
+    "severity_counts": {
+      "critical": 0,
+      "high": 1,
+      "medium": 5,
+      "low": 3
+    },
+    "warnings": [
+      "pip-audit not available on host — Python CVE scan limited to constraint analysis",
+      "No Python lockfile detected — builds not reproducible"
+    ]
+  }
+}

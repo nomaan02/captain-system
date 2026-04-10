@@ -176,8 +176,8 @@ def _load_drift_states(asset_id: str):
         with get_cursor() as cur:
             cur.execute(
                 "SELECT adwin_states FROM p3_d04_decay_detector_states "
-                "LATEST ON last_updated PARTITION BY asset_id "
-                "WHERE asset_id = %s",
+                "WHERE asset_id = %s "
+                "LATEST ON last_updated PARTITION BY asset_id",
                 (asset_id,),
             )
             row = cur.fetchone()
@@ -239,8 +239,9 @@ def _renormalise_weights(asset_id: str):
     with get_cursor() as cur:
         cur.execute(
             """SELECT aim_id, inclusion_probability FROM p3_d02_aim_meta_weights
+               WHERE asset_id = %s
                LATEST ON last_updated PARTITION BY aim_id, asset_id
-               WHERE asset_id = %s ORDER BY aim_id""",
+               ORDER BY aim_id""",
             (asset_id,),
         )
         rows = cur.fetchall()
@@ -296,8 +297,8 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
             with get_cursor() as cur:
                 cur.execute(
                     """SELECT inclusion_probability FROM p3_d02_aim_meta_weights
-                       LATEST ON last_updated PARTITION BY aim_id, asset_id
-                       WHERE aim_id = %s AND asset_id = %s""",
+                       WHERE aim_id = %s AND asset_id = %s
+                       LATEST ON last_updated PARTITION BY aim_id, asset_id""",
                     (aim_id, asset_id),
                 )
                 row = cur.fetchone()

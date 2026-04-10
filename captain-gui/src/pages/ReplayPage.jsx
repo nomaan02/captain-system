@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import TopBar from "../components/layout/TopBar";
 import ReplayConfigPanel from "../components/replay/ReplayConfigPanel";
 import PipelineStepper from "../components/replay/PipelineStepper";
 import BlockDetail from "../components/replay/BlockDetail";
@@ -123,12 +122,7 @@ const ReplayPage = () => {
   }, []);
 
   return (
-    <div data-testid="replay-page" className="h-screen w-full bg-[#0a0f0d] overflow-hidden flex flex-col text-white font-mono">
-      {/* TopBar */}
-      <div className="shrink-0">
-        <TopBar />
-      </div>
-
+    <div data-testid="replay-page" className="w-full bg-[#0a0f0d] overflow-hidden flex flex-col flex-1 min-h-0 text-white font-mono">
       {/* Playback controls bar */}
       <div className="shrink-0">
         <ErrorBoundary name="PlaybackControls"><PlaybackControls /></ErrorBoundary>

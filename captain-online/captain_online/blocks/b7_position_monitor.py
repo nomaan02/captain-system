@@ -307,16 +307,16 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
         # ── Read both current states ──
         cur.execute(
             """SELECT total_capital, accounts FROM p3_d16_user_capital_silos
-               LATEST ON last_updated PARTITION BY user_id
-               WHERE user_id = %s""",
+               WHERE user_id = %s
+               LATEST ON last_updated PARTITION BY user_id""",
             (user_id,),
         )
         d16_row = cur.fetchone()
 
         cur.execute(
             """SELECT l_t, n_t, l_b, n_b FROM p3_d23_circuit_breaker_intraday
-               LATEST ON last_updated PARTITION BY account_id
-               WHERE account_id = %s""",
+               WHERE account_id = %s
+               LATEST ON last_updated PARTITION BY account_id""",
             (account_id,),
         )
         d23_row = cur.fetchone()
@@ -461,8 +461,8 @@ def _get_api_commission(account_id: str, asset_id: str = "", tsm: dict | None = 
         with get_cursor() as cur:
             cur.execute(
                 "SELECT param_value FROM p3_d17_system_monitor_state "
-                "LATEST ON last_updated PARTITION BY param_key "
-                "WHERE param_key = 'default_commission_per_contract'"
+                "WHERE param_key = 'default_commission_per_contract' "
+                "LATEST ON last_updated PARTITION BY param_key"
             )
             row = cur.fetchone()
             if row:

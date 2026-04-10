@@ -779,7 +779,8 @@ def _check_constraint_resolution(constraint_type: str) -> str:
             with get_cursor() as cur:
                 cur.execute(
                     "SELECT missing_data_rate_30d FROM p3_d01_aim_model_states "
-                    "LATEST ON last_updated PARTITION BY aim_id WHERE aim_id = %s",
+                    "WHERE aim_id = %s "
+                    "LATEST ON last_updated PARTITION BY aim_id",
                     (aim_id,),
                 )
                 row = cur.fetchone()

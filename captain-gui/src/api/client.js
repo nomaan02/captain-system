@@ -1,10 +1,17 @@
 const BASE = "/api";
 
 async function fetchJson(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options.headers },
-    ...options,
-  });
+  const token = localStorage.getItem("captain_jwt");
+  const headers = { "Content-Type": "application/json", ...options.headers };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    localStorage.removeItem("captain_jwt");
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json();
 }

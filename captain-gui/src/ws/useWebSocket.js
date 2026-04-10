@@ -8,6 +8,7 @@ import useReplayStore from "../stores/replayStore";
 const BASE_DELAY = 2000;
 const MAX_DELAY = 30000;
 const EVICTION_CODE = 4001;
+const AUTH_FAILURE_CODE = 4003;
 
 export default function useWebSocket(userId = "primary_user") {
   const wsRef = useRef(null);
@@ -29,7 +30,9 @@ export default function useWebSocket(userId = "primary_user") {
   const getWsUrl = useCallback(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
-    return `${proto}//${host}/ws/${userId}`;
+    const token = localStorage.getItem("captain_jwt");
+    const base = `${proto}//${host}/ws/${userId}`;
+    return token ? `${base}?token=${token}` : base;
   }, [userId]);
 
   const connect = useCallback(() => {
@@ -48,8 +51,13 @@ export default function useWebSocket(userId = "primary_user") {
       setConnected(false);
       wsRef.current = null;
 
-      // Don't reconnect if evicted or unmounted
+      // Don't reconnect if evicted, auth failure, or unmounted
       if (event.code === EVICTION_CODE) return;
+      if (event.code === AUTH_FAILURE_CODE) {
+        localStorage.removeItem("captain_jwt");
+        window.location.href = "/login";
+        return;
+      }
       if (!mountedRef.current) return;
 
       // Exponential backoff

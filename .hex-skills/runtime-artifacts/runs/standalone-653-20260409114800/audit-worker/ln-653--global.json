@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "summary_kind": "audit-worker",
+  "run_id": "standalone-653-20260409114800",
+  "identifier": "global",
+  "producer_skill": "ln-653-runtime-performance-auditor",
+  "produced_at": "2026-04-09T11:48:00Z",
+  "payload": {
+    "status": "completed",
+    "category": "Runtime Performance",
+    "report_path": ".hex-skills/runtime-artifacts/runs/standalone-653-20260409114800/audit-report/ln-653--global.md",
+    "score": 8.9,
+    "issues_total": 4,
+    "severity_counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 1,
+      "low": 3
+    },
+    "warnings": []
+  }
+}

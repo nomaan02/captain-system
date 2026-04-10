@@ -380,8 +380,8 @@ def _get_user_preferences(user_id: str) -> dict:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT details FROM p3_session_event_log
-                   LATEST ON ts PARTITION BY user_id, event_type
-                   WHERE user_id = %s AND event_type = 'NOTIFICATION_PREFS'""",
+                   WHERE user_id = %s AND event_type = 'NOTIFICATION_PREFS'
+                   LATEST ON ts PARTITION BY user_id, event_type""",
                 (user_id,),
             )
             row = cur.fetchone()
@@ -420,8 +420,8 @@ def _get_telegram_chat_id(user_id: str) -> str | None:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT telegram_chat_id FROM p3_d16_user_capital_silos
-                   LATEST ON last_updated PARTITION BY user_id
-                   WHERE user_id = %s AND telegram_chat_id IS NOT NULL""",
+                   WHERE user_id = %s AND telegram_chat_id IS NOT NULL
+                   LATEST ON last_updated PARTITION BY user_id""",
                 (user_id,),
             )
             row = cur.fetchone()

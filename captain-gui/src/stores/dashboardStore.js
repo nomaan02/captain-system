@@ -36,6 +36,7 @@ const useDashboardStore = create((set, get) => ({
   openPositions: [],
   closedTrades: [],
   pendingSignals: [],
+  signalHistory: JSON.parse(localStorage.getItem("captain:signalHistory") || "[]"),
   aimStates: [],
   tsmStatus: [],
   decayAlerts: [],
@@ -105,6 +106,16 @@ const useDashboardStore = create((set, get) => ({
     set((state) => ({
       pendingSignals: state.pendingSignals.filter((s) => s.signal_id !== signalId),
     })),
+
+  clearSignals: () => {
+    const { pendingSignals, signalHistory } = get();
+    if (pendingSignals.length === 0) return;
+    const cleared_at = new Date().toISOString();
+    const archived = pendingSignals.map((s) => ({ ...s, cleared_at }));
+    const updated = [...archived, ...signalHistory];
+    localStorage.setItem("captain:signalHistory", JSON.stringify(updated));
+    set({ pendingSignals: [], signalHistory: updated });
+  },
 
   setClosedTrades: (trades) => set({ closedTrades: normalizePositions(trades) }),
 

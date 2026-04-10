@@ -138,8 +138,8 @@ def load_replay_config(overrides: dict | None = None) -> dict:
         cur.execute(
             "SELECT total_capital, accounts, max_simultaneous_positions "
             "FROM p3_d16_user_capital_silos "
-            "LATEST ON last_updated PARTITION BY user_id "
-            "WHERE user_id = 'primary_user'"
+            "WHERE user_id = 'primary_user' "
+            "LATEST ON last_updated PARTITION BY user_id"
         )
         row = cur.fetchone()
     user_capital = row[0] if row else 150000.0
@@ -174,8 +174,8 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             "max_drawdown_limit, max_daily_loss, max_contracts, "
             "topstep_optimisation, risk_goal "
             "FROM p3_d08_tsm_state "
-            "LATEST ON last_updated PARTITION BY account_id "
-            "WHERE account_id = %s",
+            "WHERE account_id = %s "
+            "LATEST ON last_updated PARTITION BY account_id",
             (_dynamic_account_id,)
         )
         row = cur.fetchone()

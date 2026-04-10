@@ -1,6 +1,6 @@
 const ConfigPage = () => {
   return (
-    <div className="h-screen bg-surface p-4 overflow-y-auto">
+    <div className="h-full bg-surface p-4 overflow-y-auto">
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">
         Configuration
       </h1>

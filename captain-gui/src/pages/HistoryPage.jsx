@@ -15,6 +15,7 @@ const signalColumns = [
   columnHelper.accessor("direction", { header: "Dir" }),
   columnHelper.accessor("confidence_tier", { header: "Confidence" }),
   columnHelper.accessor("quality_score", { header: "Quality", cell: (info) => { const v = info.getValue(); return v != null ? v.toFixed(3) : "—"; } }),
+  columnHelper.accessor("pnl", { header: "P&L", cell: (info) => { const v = info.getValue(); if (v == null) return "—"; return <span className={v >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}>{formatCurrency(v)}</span>; } }),
   columnHelper.accessor("signal_id", { header: "ID", cell: (info) => <span className="text-[10px] text-[#64748b]">{info.getValue()}</span> }),
 ];
 
@@ -56,13 +57,13 @@ const TABS = ["Signals", "Trade Outcomes", "Decay Events", "AIM Changes", "Syste
 const HistoryPage = () => {
   const [activeTab, setActiveTab] = useState(0);
   const connected = useDashboardStore((s) => s.connected);
-  const pendingSignals = useDashboardStore((s) => s.pendingSignals);
+  const signalHistory = useDashboardStore((s) => s.signalHistory);
   const decayAlerts = useDashboardStore((s) => s.decayAlerts);
   const aimStates = useDashboardStore((s) => s.aimStates);
 
-  if (!connected && (pendingSignals || []).length === 0 && (decayAlerts || []).length === 0 && (aimStates || []).length === 0) {
+  if (!connected && (signalHistory || []).length === 0 && (decayAlerts || []).length === 0 && (aimStates || []).length === 0) {
     return (
-      <div className="h-screen bg-surface p-4 flex items-center justify-center">
+      <div className="h-full bg-surface p-4 flex items-center justify-center">
         <div className="text-[#64748b] text-xs font-mono text-center">
           Connect to the dashboard first to load data
         </div>
@@ -71,7 +72,7 @@ const HistoryPage = () => {
   }
 
   const tabs = [
-    { name: TABS[0], columns: signalColumns, data: pendingSignals || [], search: "Search signals...", empty: "No pending signals" },
+    { name: TABS[0], columns: signalColumns, data: signalHistory || [], search: "Search signals...", empty: "No signal history — clear signals from the dashboard to archive them here" },
     { name: TABS[1], columns: tradeColumns, data: [], search: "Search trades...", empty: "No historical data available. History is populated from completed trading sessions." },
     { name: TABS[2], columns: decayColumns, data: decayAlerts || [], search: "Search decay events...", empty: "No decay events" },
     { name: TABS[3], columns: aimColumns, data: aimStates || [], search: "Search AIMs...", empty: "No AIM data" },
@@ -81,7 +82,7 @@ const HistoryPage = () => {
   const current = tabs[activeTab];
 
   return (
-    <div className="h-screen bg-surface p-4 overflow-y-auto">
+    <div className="h-full bg-surface p-4 overflow-y-auto">
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">History</h1>
 
       {/* Tab bar */}

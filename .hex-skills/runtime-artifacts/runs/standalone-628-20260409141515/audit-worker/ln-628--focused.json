@@ -1,0 +1,70 @@
+{
+  "worker": "ln-628-concurrency-auditor",
+  "identifier": "focused-reaudit",
+  "runId": "standalone-628-20260409141515",
+  "category": "Concurrency",
+  "scope": [
+    "captain-command/captain_command/api.py",
+    "captain-command/captain_command/blocks/b2_gui_data_server.py"
+  ],
+  "score": 7.8,
+  "maxScore": 10,
+  "issues": {
+    "total": 4,
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 1
+  },
+  "findings": [
+    {
+      "id": "TS-01",
+      "check": "thread_safety",
+      "severity": "HIGH",
+      "file": "captain-command/captain_command/api.py",
+      "lines": "135-148, 607-621",
+      "title": "_process_health / _api_connections / _last_signal_time unguarded cross-thread access",
+      "effort": "S",
+      "status": "OPEN"
+    },
+    {
+      "id": "RC-01",
+      "check": "resource_contention",
+      "severity": "MEDIUM",
+      "file": "captain-command/captain_command/api.py",
+      "lines": "197, 247",
+      "title": "_ws_sessions iteration in status()/health() without _ws_lock",
+      "effort": "S",
+      "status": "OPEN"
+    },
+    {
+      "id": "BIO-01",
+      "check": "blocking_io",
+      "severity": "MEDIUM",
+      "file": "captain-command/captain_command/api.py",
+      "lines": "385",
+      "title": "route_command() sync call in async WebSocket handler blocks event loop",
+      "effort": "S",
+      "status": "OPEN"
+    },
+    {
+      "id": "TS-02",
+      "check": "thread_safety",
+      "severity": "LOW",
+      "file": "captain-command/captain_command/api.py",
+      "lines": "419-425, 624-631",
+      "title": "_telegram_bot / _main_loop written without lock (write-once at startup)",
+      "effort": "S",
+      "status": "OPEN"
+    }
+  ],
+  "correctlyImplemented": [
+    "_state_lock atomic snapshot in build_dashboard_snapshot() (b2:112-115)",
+    "set_user_stream/set_account_data/set_pipeline_stage all under _state_lock (b2:52-74)",
+    "_ws_lock in websocket_endpoint connect/disconnect/evict (api:331,362,403)",
+    "_ws_lock in gui_push() snapshot (api:455-456)",
+    "_ws_lock in _safe_ws_send() dead session cleanup (api:479-480)"
+  ],
+  "reportPath": "docs/audit/ln-628--global.md",
+  "timestamp": "2026-04-09T14:15:15Z"
+}

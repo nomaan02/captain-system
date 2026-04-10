@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0",
+  "summary_kind": "pattern-analysis",
+  "run_id": "standalone-641-20260409132418",
+  "identifier": "captain-system-full-pattern-audit",
+  "producer_skill": "ln-641-pattern-analyzer",
+  "produced_at": "2026-04-09T13:45:00Z",
+  "patterns_analyzed": 10,
+  "overall_score": 6.5,
+  "patterns": [
+    {
+      "name": "Circuit Breaker",
+      "score": 7.7,
+      "scores": {"compliance": 78, "completeness": 72, "quality": 82, "implementation": 75},
+      "issues": {"critical": 0, "high": 0, "medium": 2, "low": 3},
+      "report": "ln-641--circuit-breaker.md"
+    },
+    {
+      "name": "Pipeline/Block Processing",
+      "score": 7.2,
+      "scores": {"compliance": 74, "completeness": 68, "quality": 70, "implementation": 76},
+      "issues": {"critical": 0, "high": 1, "medium": 5, "low": 4},
+      "report": "ln-641--pipeline-block-processing.md"
+    },
+    {
+      "name": "Orchestrator",
+      "score": 7.1,
+      "scores": {"compliance": 74, "completeness": 72, "quality": 68, "implementation": 80},
+      "issues": {"critical": 0, "high": 2, "medium": 6, "low": 3},
+      "report": "ln-641--orchestrator.md"
+    },
+    {
+      "name": "Pub/Sub Messaging",
+      "score": 6.6,
+      "scores": {"compliance": 72, "completeness": 68, "quality": 74, "implementation": 70},
+      "issues": {"critical": 1, "high": 3, "medium": 4, "low": 2},
+      "report": "ln-641--pub-sub-messaging.md"
+    },
+    {
+      "name": "State Machine",
+      "score": 6.4,
+      "scores": {"compliance": 72, "completeness": 61, "quality": 74, "implementation": 58},
+      "issues": {"critical": 0, "high": 3, "medium": 4, "low": 3},
+      "report": "ln-641--state-machine.md"
+    },
+    {
+      "name": "Repository/Data Access",
+      "score": 6.4,
+      "scores": {"compliance": 72, "completeness": 58, "quality": 65, "implementation": 70},
+      "issues": {"critical": 0, "high": 2, "medium": 3, "low": 2},
+      "report": "ln-641--data-access.md"
+    },
+    {
+      "name": "Configuration Management",
+      "score": 6.4,
+      "scores": {"compliance": 72, "completeness": 48, "quality": 78, "implementation": 65},
+      "issues": {"critical": 0, "high": 2, "medium": 2, "low": 2},
+      "report": "ln-641--configuration-management.md"
+    },
+    {
+      "name": "Journal/Crash Recovery",
+      "score": 6.3,
+      "scores": {"compliance": 72, "completeness": 60, "quality": 70, "implementation": 65},
+      "issues": {"critical": 1, "high": 0, "medium": 4, "low": 3},
+      "report": "ln-641--journal-crash-recovery.md"
+    },
+    {
+      "name": "Bootstrap/Seeding",
+      "score": 6.1,
+      "scores": {"compliance": 62, "completeness": 74, "quality": 70, "implementation": 68},
+      "issues": {"critical": 0, "high": 5, "medium": 5, "low": 4},
+      "report": "ln-641--bootstrap-seeding.md"
+    },
+    {
+      "name": "Health Check / Heartbeat",
+      "score": 5.1,
+      "scores": {"compliance": 68, "completeness": 52, "quality": 61, "implementation": 65},
+      "issues": {"critical": 4, "high": 2, "medium": 3, "low": 1},
+      "report": "ln-641--health-check.md"
+    }
+  ],
+  "total_issues": {
+    "critical": 6,
+    "high": 18,
+    "medium": 38,
+    "low": 27,
+    "total": 89
+  }
+}

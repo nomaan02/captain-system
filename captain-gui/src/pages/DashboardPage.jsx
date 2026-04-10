@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import TopBar from "../components/layout/TopBar";
 import MarketTicker from "../components/layout/MarketTicker";
 import RiskPanel from "../components/risk/RiskPanel";
 import AimRegistryPanel from "../components/aim/AimRegistryPanel";
@@ -208,11 +207,7 @@ const DashboardPage = () => {
   }, [connected]);
 
   return (
-    <div data-testid="app-shell" className="h-screen w-full bg-surface overflow-hidden flex flex-col">
-      {/* Fixed top sections — always full-width, locked height, outside the panel system */}
-      <div className="shrink-0">
-        <TopBar />
-      </div>
+    <div data-testid="app-shell" className="w-full bg-surface overflow-hidden flex flex-col flex-1 min-h-0">
       {/* Resizable 3-column layout fills remaining height */}
       <Group
         orientation="horizontal"

@@ -114,8 +114,8 @@ def run_capacity_evaluation(
     with get_cursor() as cur:
         cur.execute(
             "SELECT asset_id, locked_strategy FROM p3_d00_asset_universe "
-            "LATEST ON last_updated PARTITION BY asset_id "
-            "WHERE asset_id IN ({})".format(
+            "WHERE asset_id IN ({}) "
+            "LATEST ON last_updated PARTITION BY asset_id".format(
                 ", ".join("'{}'".format(a.replace("'", "''")) for a in active_assets)
             ),
         )
@@ -236,8 +236,8 @@ def _get_strategy_models(active_assets: list[str]) -> set:
     with get_cursor() as cur:
         cur.execute(
             f"SELECT asset_id, locked_strategy FROM p3_d00_asset_universe "
-            f"LATEST ON last_updated PARTITION BY asset_id "
-            f"WHERE asset_id IN ({placeholders})"
+            f"WHERE asset_id IN ({placeholders}) "
+            f"LATEST ON last_updated PARTITION BY asset_id"
         )
         rows = cur.fetchall()
 
@@ -276,8 +276,8 @@ def _load_params_batch(defaults: dict) -> dict:
     with get_cursor() as cur:
         cur.execute(
             f"SELECT param_key, param_value FROM p3_d17_system_monitor_state "
-            f"LATEST ON last_updated PARTITION BY param_key "
-            f"WHERE param_key IN ({placeholders})"
+            f"WHERE param_key IN ({placeholders}) "
+            f"LATEST ON last_updated PARTITION BY param_key"
         )
         rows = cur.fetchall()
     for row in rows:
