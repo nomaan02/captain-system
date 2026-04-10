@@ -110,29 +110,46 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
     if (!toggling && canToggle) onToggle(aimId, isActive);
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClick();
+    }
+  };
+
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`bg-surface-card border ${isDeferred ? "border-dashed border-[#374151]" : "border-border-subtle"} p-2 text-left cursor-pointer hover:border-border-accent transition-colors duration-100 relative ${isDeferred ? "opacity-60" : ""}`}
+      onKeyDown={handleKeyDown}
+      className={`bg-surface-card border ${isDeferred ? "border-dashed border-[#374151]" : "border-border-subtle"} p-3 text-left cursor-pointer hover:border-border-accent transition-colors duration-100 relative ${isDeferred ? "opacity-60" : ""}`}
     >
       {/* Header row */}
       <div className="flex items-center justify-between mb-1">
-        <span className={`text-[10px] font-mono ${isDeferred ? "text-[#64748b]" : "text-white"}`}>
-          AIM-{String(aimId).padStart(2, "0")}
-        </span>
+        <div className="flex items-center gap-1">
+          <span className={`text-[11px] font-mono ${isDeferred ? "text-[#64748b]" : "text-white"}`}>
+            AIM-{String(aimId).padStart(2, "0")}
+          </span>
+          {tier > 0 && tierStyle && (
+            <span className={`text-[10px] font-mono border px-0.5 ${tierStyle}`}>
+              T{tier}
+            </span>
+          )}
+        </div>
         <span className={`px-1.5 py-0 text-[9px] font-mono border border-solid uppercase ${statusStyle.bg} ${statusStyle.border} ${statusStyle.text}`}>
           {agg.status}
         </span>
       </div>
 
       {/* Name */}
-      <div className={`text-[10px] font-mono mb-1.5 ${isDeferred ? "text-[#475569]" : "text-[#94a3b8]"}`}>
+      <div className={`text-[11px] font-mono mb-1.5 ${isDeferred ? "text-[#475569]" : "text-[#94a3b8]"}`}>
         {AIM_NAMES[aimId]}
       </div>
 
       {/* Modifier or SESSION BUDGET for AIM-16 */}
       {isHmm ? (
-        <div className="text-[10px] font-mono text-[#06b6d4] mb-1">SESSION BUDGET</div>
+        <div className="text-[11px] font-mono text-[#06b6d4] mb-1">SESSION BUDGET</div>
       ) : (
         <div className={`text-xs font-mono mb-1 ${modColor(agg.modMin, agg.modMax)}`}>
           {formatModRange(agg.modMin, agg.modMax)}
@@ -141,7 +158,14 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
 
       {/* Weight bar */}
       {agg.weightAvg != null && (
-        <div className="h-[3px] w-full bg-[rgba(226,232,240,0.06)] mb-1">
+        <div
+          role="progressbar"
+          aria-valuenow={Math.round(agg.weightAvg * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="AIM weight"
+          className="h-[3px] w-full bg-[rgba(226,232,240,0.06)] mb-1"
+        >
           <div
             className="h-full bg-captain-green"
             style={{ width: `${Math.min(agg.weightAvg * 100, 100)}%` }}
@@ -151,7 +175,14 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
 
       {/* Warmup indicator */}
       {agg.status === "WARM_UP" && agg.warmupMin != null && (
-        <div className="h-[2px] w-full bg-[rgba(245,158,11,0.15)]">
+        <div
+          role="progressbar"
+          aria-valuenow={Math.round(agg.warmupMin)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="AIM warmup progress"
+          className="h-[2px] w-full bg-[rgba(245,158,11,0.15)]"
+        >
           <div
             className="h-full bg-[#f59e0b]"
             style={{ width: `${Math.min(agg.warmupMin, 100)}%` }}
@@ -167,7 +198,7 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
         <button
           onClick={handleToggle}
           disabled={toggling}
-          className={`mt-1.5 w-full py-0.5 text-[9px] font-mono uppercase tracking-wider border border-solid cursor-pointer transition-colors duration-100 ${
+          className={`mt-1.5 w-full min-h-[32px] py-1 text-[11px] font-mono uppercase tracking-wider border border-solid cursor-pointer transition-colors duration-100 flex items-center justify-center ${
             toggling
               ? "bg-[rgba(100,116,139,0.1)] border-[#374151] text-[#475569] cursor-wait"
               : isActive
@@ -179,12 +210,6 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
         </button>
       )}
 
-      {/* Tier badge */}
-      {tier > 0 && tierStyle && (
-        <span className={`absolute top-1.5 right-1.5 text-[8px] font-mono border px-0.5 ${tierStyle}`}>
-          T{tier}
-        </span>
-      )}
     </div>
   );
 };
@@ -245,7 +270,7 @@ const AimRegistryPanel = () => {
           </span>
         }
       >
-        <div className="grid grid-cols-4 gap-1.5 2xl:grid-cols-4 xl:grid-cols-4 lg:grid-cols-3 md:grid-cols-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3 lg:grid-cols-4">
           {ALL_AIMS.map((id) => (
             <AimCard
               key={id}
