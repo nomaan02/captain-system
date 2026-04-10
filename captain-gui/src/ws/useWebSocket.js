@@ -52,8 +52,25 @@ export default function useWebSocket(userId = "primary_user") {
       wsRef.current = null;
 
       // Don't reconnect if evicted, auth failure, or unmounted
-      if (event.code === EVICTION_CODE) return;
+      if (event.code === EVICTION_CODE) {
+        addNotification({
+          notif_id: `ws-evict-${Date.now()}`,
+          priority: "HIGH",
+          message: "WebSocket disconnected: session evicted",
+          timestamp: new Date().toISOString(),
+          source: "system",
+        });
+        return;
+      }
       if (event.code === AUTH_FAILURE_CODE) {
+        addNotification({
+          notif_id: `ws-auth-${Date.now()}`,
+          priority: "HIGH",
+          message: "WebSocket disconnected: authentication failed",
+          timestamp: new Date().toISOString(),
+          source: "system",
+        });
+
         localStorage.removeItem("captain_jwt");
         window.location.href = "/login";
         return;

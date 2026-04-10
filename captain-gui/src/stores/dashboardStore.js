@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import api from "../api/client";
 
-// Direction normalization: backend sends 1/-1 integers, frontend needs "LONG"/"SHORT" strings
+// Direction normalization: backend sends 1/-1 integers, "BUY"/"SELL" strings, or null
+const DIRECTION_MAP = { BUY: "LONG", SELL: "SHORT", LONG: "LONG", SHORT: "SHORT" };
 const normalizeDirection = (dir) => {
-  if (typeof dir === "string") return dir;
-  return dir > 0 ? "LONG" : dir < 0 ? "SHORT" : "NEUTRAL";
+  if (dir == null) return "UNKNOWN";
+  if (typeof dir === "string") return DIRECTION_MAP[dir.toUpperCase()] || "UNKNOWN";
+  return dir > 0 ? "LONG" : dir < 0 ? "SHORT" : "UNKNOWN";
 };
 
 const normalizePositions = (positions) =>
@@ -112,7 +114,7 @@ const useDashboardStore = create((set, get) => ({
     if (pendingSignals.length === 0) return;
     const cleared_at = new Date().toISOString();
     const archived = pendingSignals.map((s) => ({ ...s, cleared_at }));
-    const updated = [...archived, ...signalHistory];
+    const updated = [...archived, ...signalHistory].slice(0, 500);
     localStorage.setItem("captain:signalHistory", JSON.stringify(updated));
     set({ pendingSignals: [], signalHistory: updated });
   },
