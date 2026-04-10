@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import useReplayStore from "../../stores/replayStore";
 import api from "../../api/client";
 
@@ -40,6 +41,20 @@ const PlaybackControls = () => {
     }
   };
 
+  useEffect(() => {
+    if (!isActive) return;
+    const onKeyDown = (e) => {
+      if (e.code === "Space" && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) {
+        e.preventDefault();
+        const s = useReplayStore.getState().status;
+        if (s === "running") api.replayControl("pause").catch(console.error);
+        else if (s === "paused") api.replayControl("resume").catch(console.error);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isActive]);
+
   if (status === "idle") return null;
 
   return (
@@ -52,7 +67,8 @@ const PlaybackControls = () => {
         data-testid="playback-play-pause"
         onClick={handlePlayPause}
         disabled={!isActive}
-        className={`w-[24px] h-[24px] flex items-center justify-center border border-solid cursor-pointer transition-colors ${
+        aria-label={isRunning ? "Pause" : "Play"}
+        className={`w-[32px] h-[32px] flex items-center justify-center border border-solid cursor-pointer transition-colors ${
           isActive
             ? "bg-[rgba(6,182,212,0.15)] border-[rgba(6,182,212,0.3)] text-[#06b6d4] hover:bg-[rgba(6,182,212,0.25)]"
             : "bg-[#111827] border-[#1e293b] text-[#374151] cursor-not-allowed"
@@ -66,6 +82,7 @@ const PlaybackControls = () => {
         data-testid="playback-skip"
         onClick={handleSkip}
         disabled={!isActive}
+        aria-label="Skip"
         className={`w-[24px] h-[24px] flex items-center justify-center border border-solid cursor-pointer transition-colors ${
           isActive
             ? "bg-[#111827] border-[#1e293b] text-[#64748b] hover:text-[#e2e8f0]"
@@ -82,7 +99,8 @@ const PlaybackControls = () => {
             key={s}
             data-testid={`playback-speed-${s}`}
             onClick={() => handleSpeedChange(s)}
-            className={`px-[5px] py-[2px] text-[8px] font-mono border border-solid cursor-pointer transition-colors ${
+            aria-pressed={speed === s}
+            className={`px-[5px] py-[2px] min-h-[28px] text-[10px] font-mono border border-solid cursor-pointer transition-colors ${
               speed === s
                 ? "bg-[rgba(6,182,212,0.2)] border-[rgba(6,182,212,0.4)] text-[#06b6d4]"
                 : "bg-[#111827] border-[#1e293b] text-[#64748b] hover:text-[#94a3b8]"
@@ -95,7 +113,14 @@ const PlaybackControls = () => {
 
       {/* Progress */}
       <div className="flex-1 flex items-center gap-2">
-        <div className="flex-1 h-[3px] bg-[#1e293b] rounded-full overflow-hidden">
+        <div
+          className="flex-1 h-[6px] bg-[#1e293b] rounded-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={isBatch ? batchProgress : progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Replay progress"
+        >
           <div
             data-testid="playback-progress-bar"
             className="h-full bg-[#06b6d4] transition-all duration-300"
