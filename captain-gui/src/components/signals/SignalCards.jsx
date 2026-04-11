@@ -6,6 +6,8 @@ const SignalCards = ({ className = "" }) => {
   const pendingSignals = useDashboardStore((s) => s.pendingSignals);
   const dailyTradeStats = useDashboardStore((s) => s.dailyTradeStats);
   const clearSignals = useDashboardStore((s) => s.clearSignals);
+  const selectedSignalId = useDashboardStore((s) => s.selectedSignalId);
+  const setSelectedSignalId = useDashboardStore((s) => s.setSelectedSignalId);
 
   return (
     <div
@@ -13,11 +15,26 @@ const SignalCards = ({ className = "" }) => {
       className={`w-full flex flex-col items-start overflow-y-auto text-left text-[10px] text-[#64748b] font-['JetBrains_Mono'] ${className}`}
     >
       {pendingSignals.length > 0 ? (
-        pendingSignals.map((sig, idx) => (
+        pendingSignals.map((sig, idx) => {
+          const isSelected = sig.signal_id != null && sig.signal_id === selectedSignalId;
+          return (
           <div
             data-testid="signal-card"
             key={sig.signal_id ?? idx}
-            className="self-stretch border-[#1e293b] border-solid border-b flex items-center justify-between px-3 py-[5px] gap-2"
+            role="button"
+            tabIndex={0}
+            onClick={() => sig.signal_id && setSelectedSignalId(sig.signal_id)}
+            onKeyDown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && sig.signal_id) {
+                e.preventDefault();
+                setSelectedSignalId(sig.signal_id);
+              }
+            }}
+            className={`self-stretch border-solid border-b flex items-center justify-between px-3 py-[5px] gap-2 cursor-pointer transition-colors duration-100 ${
+              isSelected
+                ? "bg-[rgba(6,182,212,0.06)] border-[rgba(6,182,212,0.25)]"
+                : "border-[#1e293b] hover:bg-[rgba(226,232,240,0.02)]"
+            }`}
           >
             {/* Left: direction + asset + strategy */}
             <div className="flex items-center gap-2 shrink-0">
@@ -81,7 +98,8 @@ const SignalCards = ({ className = "" }) => {
               )}
             </div>
           </div>
-        ))
+          );
+        })
       ) : (
         <div className="self-stretch flex items-center justify-center py-4 text-[10px] text-[#64748b]">
           No pending signals

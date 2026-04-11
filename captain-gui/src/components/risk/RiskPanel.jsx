@@ -35,7 +35,7 @@ const RiskPanel = ({ className = "" }) => {
     >
       {/* Header: green dot + RISK MANAGEMENT + timestamp + LIVE badge */}
       <div className="self-stretch flex items-start pt-0 px-0 pb-1 box-border max-w-full shrink-0 text-sm text-[#fff]">
-        <div className="flex-1 bg-[#0a1614] border-[#1a3038] border-solid border-b box-border flex items-end justify-between pt-1.5 px-3 pb-1.5 gap-5 max-w-full sm:flex-wrap sm:gap-5">
+        <div className="flex-1 bg-[#0a1614] border-[#1a3038] border-solid border-b box-border flex items-end justify-between pt-1.5 px-3 pb-1.5 gap-5 max-w-full flex-nowrap">
           <div className="flex items-start gap-2.5">
             <div className="flex flex-col items-start pt-1.5 px-0 pb-0">
               <div className="size-2.5 relative rounded-full bg-[rgba(15,175,122,0.95)]" />
@@ -61,29 +61,23 @@ const RiskPanel = ({ className = "" }) => {
 
       {/* Capital cards row: CAPITAL | EQUITY | CUMULATIVE P&L */}
       <div className="self-stretch flex items-start justify-end py-0 pl-[13px] pr-3 box-border max-w-full shrink-0 text-[rgba(226,232,240,0.5)]">
-        <div className="flex-1 flex items-start gap-1.5 max-w-full md:flex-wrap">
-          <div className="flex-1 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 pl-2.5 pr-2 min-w-[151px] min-h-[55px]">
-            <div className="relative leading-4">CAPITAL</div>
-            <div className="flex items-start pt-0 px-0 pb-0 text-lg text-[#fff]">
-              <div data-testid="risk-capital-value" className="mt-[-1px] relative leading-7">
-                {formatCurrency(startingBalance)}
-              </div>
+        <div className="flex-1 flex items-start gap-1.5 max-w-full flex-nowrap">
+          <div className="flex-1 min-w-0 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 pl-2.5 pr-2 min-h-[55px]">
+            <div className="leading-4">CAPITAL</div>
+            <div data-testid="risk-capital-value" className="text-lg text-[#fff] leading-7 whitespace-nowrap">
+              {formatCurrency(startingBalance)}
             </div>
           </div>
-          <div className="flex-1 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 pl-2.5 pr-2 min-w-[151px] min-h-[55px]">
-            <div className="relative leading-4">EQUITY</div>
-            <div className="flex items-start pt-0 px-0 pb-0 text-lg text-[#fff]">
-              <div data-testid="risk-equity-value" className="mt-[-1px] relative leading-7">
-                {formatCurrency(currentBalance)}
-              </div>
+          <div className="flex-1 min-w-0 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 pl-2.5 pr-2 min-h-[55px]">
+            <div className="leading-4">EQUITY</div>
+            <div data-testid="risk-equity-value" className="text-lg text-[#fff] leading-7 whitespace-nowrap">
+              {formatCurrency(currentBalance)}
             </div>
           </div>
-          <div className="flex-1 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 px-2.5 min-w-[151px] min-h-[55px]">
-            <div className="relative leading-4">{`CUMULATIVE P&L`}</div>
-            <div className="flex items-start pt-0 px-0 pb-0 text-lg">
-              <div data-testid="risk-cumulative-pnl" className={`mt-[-1px] relative leading-7 ${cumulativePnl >= 0 ? "text-[#0faf7a]" : "text-[#ef4444]"}`}>
-                {formatCurrency(cumulativePnl, { showSign: true })}
-              </div>
+          <div className="flex-1 min-w-0 bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start py-1 px-2.5 min-h-[55px]">
+            <div className="leading-4 whitespace-nowrap">{`CUMULATIVE P&L`}</div>
+            <div data-testid="risk-cumulative-pnl" className={`text-lg leading-7 whitespace-nowrap ${cumulativePnl >= 0 ? "text-[#0faf7a]" : "text-[#ef4444]"}`}>
+              {formatCurrency(cumulativePnl, { showSign: true })}
             </div>
           </div>
         </div>
@@ -97,17 +91,13 @@ const RiskPanel = ({ className = "" }) => {
           </div>
           <div className="self-stretch flex flex-col items-start gap-2 max-w-full shrink-0 text-xs text-[rgba(226,232,240,0.6)]">
             {/* MAX DD bar */}
-            <div className="self-stretch flex flex-col items-end gap-1 max-w-full">
-              <div className="self-stretch flex items-start gap-9 max-w-full md:gap-[18px] md:flex-wrap md:overflow-x-auto">
-                <div className="flex flex-col items-start py-0 pl-0 pr-[5px]">
-                  <div className="relative tracking-[0.31px] leading-[18px]">
-                    MAX DD
-                  </div>
-                </div>
-                <div className="flex-1 flex flex-col items-start pt-px px-0 pb-0 box-border min-w-[445px] max-w-full">
+            <div className="self-stretch flex flex-col items-end gap-1">
+              <div className="self-stretch flex items-center gap-3 flex-nowrap">
+                <div className="shrink-0 w-[60px] tracking-[0.31px] leading-[18px]">MAX DD</div>
+                <div className="flex-1 min-w-0">
                   <div
                     data-testid="risk-mdd-bar"
-                    className="self-stretch flex items-start gap-[3px]"
+                    className="flex items-start gap-[3px]"
                     role="progressbar"
                     aria-valuenow={Math.round(mddUsedPct)}
                     aria-valuemin={0}
@@ -120,36 +110,30 @@ const RiskPanel = ({ className = "" }) => {
                       return (
                         <div
                           key={i}
-                          className={`h-4 flex-1 relative border-solid border box-border ${filled ? "bg-[#ff8800] border-[#ff8800]" : "bg-[rgba(226,232,240,0.08)] border-[rgba(226,232,240,0.12)]"}`}
+                          className={`h-4 flex-1 min-w-0 border-solid border box-border ${filled ? "bg-[#ff8800] border-[#ff8800]" : "bg-[rgba(226,232,240,0.08)] border-[rgba(226,232,240,0.12)]"}`}
                         />
                       );
                     })}
                   </div>
                 </div>
-                <div data-testid="risk-mdd-percent" className="relative leading-[18px] text-[#ff8800] text-center">
+                <div data-testid="risk-mdd-percent" className="shrink-0 w-[48px] text-right leading-[18px] text-[#ff8800]">
                   {formatPercent(mddUsedPct)}
                 </div>
               </div>
-              <div className="max-w-full flex items-start justify-between gap-5 text-[11px] text-[rgba(226,232,240,0.35)] sm:flex-wrap sm:gap-5">
-                <div className="relative leading-4">
-                  {`Used: ${formatCurrency(mddUsed)} / ${formatCurrency(mddLimit)}`}
-                </div>
-                <div className="relative leading-4">
-                  {`Floor: ${formatCurrency(currentBalance - mddLimit)}`}
-                </div>
+              <div className="self-stretch flex items-start justify-between text-[11px] text-[rgba(226,232,240,0.35)]">
+                <div className="leading-4">{`Used: ${formatCurrency(mddUsed)} / ${formatCurrency(mddLimit)}`}</div>
+                <div className="leading-4">{`Floor: ${formatCurrency(currentBalance - mddLimit)}`}</div>
               </div>
             </div>
 
             {/* DAILY DD bar */}
-            <div className="self-stretch flex flex-col items-end gap-1 max-w-full">
-              <div className="self-stretch flex items-start gap-7 max-w-full md:flex-wrap">
-                <div className="relative tracking-[0.31px] leading-[18px] shrink-0">
-                  DAILY DD
-                </div>
-                <div className="flex-1 flex flex-col items-start pt-px pb-0 pl-0 pr-4 box-border min-w-[305px] max-w-full">
+            <div className="self-stretch flex flex-col items-end gap-1">
+              <div className="self-stretch flex items-center gap-3 flex-nowrap">
+                <div className="shrink-0 w-[60px] tracking-[0.31px] leading-[18px]">DAILY DD</div>
+                <div className="flex-1 min-w-0">
                   <div
                     data-testid="risk-daily-dd-bar"
-                    className="self-stretch flex items-start gap-[3px]"
+                    className="flex items-start gap-[3px]"
                     role="progressbar"
                     aria-valuenow={Math.round(dailyDdUsedPct)}
                     aria-valuemin={0}
@@ -162,23 +146,19 @@ const RiskPanel = ({ className = "" }) => {
                       return (
                         <div
                           key={i}
-                          className={`h-4 flex-1 relative border-solid border box-border ${filled ? "bg-[#ff8800] border-[#ff8800]" : "bg-[rgba(226,232,240,0.08)] border-[rgba(226,232,240,0.12)]"}`}
+                          className={`h-4 flex-1 min-w-0 border-solid border box-border ${filled ? "bg-[#ff8800] border-[#ff8800]" : "bg-[rgba(226,232,240,0.08)] border-[rgba(226,232,240,0.12)]"}`}
                         />
                       );
                     })}
                   </div>
                 </div>
-                <div data-testid="risk-daily-dd-percent" className="relative leading-[18px] text-[#3b82f6] text-center">
+                <div data-testid="risk-daily-dd-percent" className="shrink-0 w-[48px] text-right leading-[18px] text-[#3b82f6]">
                   {formatPercent(dailyDdUsedPct)}
                 </div>
               </div>
-              <div className="max-w-full flex items-start justify-between gap-5 text-[11px] text-[rgba(226,232,240,0.35)] sm:flex-wrap sm:gap-5">
-                <div className="relative leading-4">
-                  {`Used: ${formatCurrency(dailyDdUsed)} / ${formatCurrency(dailyDdLimit)}`}
-                </div>
-                <div className="relative leading-4">
-                  {`Floor: ${formatCurrency(currentBalance - dailyDdLimit)}`}
-                </div>
+              <div className="self-stretch flex items-start justify-between text-[11px] text-[rgba(226,232,240,0.35)]">
+                <div className="leading-4">{`Used: ${formatCurrency(dailyDdUsed)} / ${formatCurrency(dailyDdLimit)}`}</div>
+                <div className="leading-4">{`Floor: ${formatCurrency(currentBalance - dailyDdLimit)}`}</div>
               </div>
             </div>
           </div>
@@ -192,14 +172,12 @@ const RiskPanel = ({ className = "" }) => {
             Payout Target
           </div>
           <div className="self-stretch bg-[#08100f] border-[#2e4e59] border-solid border box-border flex flex-col items-start pt-1.5 pb-[5px] pl-2.5 pr-2 gap-1 min-h-[73px] text-xs text-[rgba(226,232,240,0.6)]">
-            <div className="self-stretch flex items-start justify-between gap-5 sm:flex-wrap sm:gap-5">
-              <div className="flex flex-col items-start pt-px px-0 pb-0">
-                <div className="relative leading-[18px]">
-                  <span>{`TARGET: ${formatCurrency(profitTarget)} — REMAINING: `}</span>
-                  <span data-testid="risk-payout-remaining" className="text-[#fbbf24]">{formatCurrency(remaining)}</span>
-                </div>
+            <div className="self-stretch flex items-center justify-between gap-3 flex-nowrap">
+              <div className="leading-[18px] min-w-0 truncate">
+                <span>{`TARGET: ${formatCurrency(profitTarget)} — REMAINING: `}</span>
+                <span data-testid="risk-payout-remaining" className="text-[#fbbf24]">{formatCurrency(remaining)}</span>
               </div>
-              <div className="relative text-sm leading-5 text-[#0faf7a]">
+              <div className="shrink-0 text-sm leading-5 text-[#0faf7a]">
                 {formatPercent(targetPct)}
               </div>
             </div>
@@ -214,14 +192,12 @@ const RiskPanel = ({ className = "" }) => {
             >
               <div className="h-2.5 relative [background:linear-gradient(90deg,_#0faf7a,_#34d399)]" style={{ width: `${targetPct}%` }} />
             </div>
-            <div className="self-stretch flex items-start justify-between gap-5 text-[11px] text-[rgba(226,232,240,0.35)] sm:flex-wrap sm:gap-5">
-              <div className="relative leading-4">
-                $0
-              </div>
-              <div className="relative leading-4 text-[#fbbf24]">
+            <div className="self-stretch flex items-start justify-between text-[11px] text-[rgba(226,232,240,0.35)]">
+              <div className="leading-4">$0</div>
+              <div className="leading-4 text-[#fbbf24]">
                 {remaining > 0 ? `~${formatCurrency(remaining)} to go` : "Target reached!"}
               </div>
-              <div className="relative leading-4">{formatCurrency(profitTarget)}</div>
+              <div className="leading-4">{formatCurrency(profitTarget)}</div>
             </div>
           </div>
         </div>
@@ -230,7 +206,7 @@ const RiskPanel = ({ className = "" }) => {
       {/* Day Stats section */}
       <div className="self-stretch flex items-start justify-end py-0 pl-[13px] pr-3 box-border max-w-full shrink-0 text-[rgba(226,232,240,0.45)]">
         <div className="flex-1 border-[rgba(46,78,89,0.5)] border-solid border-t box-border flex items-start pt-[7px] px-0 pb-0 max-w-full">
-          <div className="w-[580px] flex items-end py-0 pl-0 pr-5 box-border gap-8 max-w-full md:gap-4 md:flex-wrap">
+          <div className="self-stretch flex items-end py-0 pl-0 pr-5 box-border gap-8 max-w-full flex-wrap">
             <div className="flex-1 flex flex-col items-start gap-1.5 min-w-[140px] text-[rgba(15,175,122,0.7)]">
               <div className="relative tracking-[1.61px] leading-4 uppercase">
                 Day Stats
@@ -315,59 +291,35 @@ const RiskPanel = ({ className = "" }) => {
       </div>
 
       {/* Payout Info section */}
-      <div className="flex items-start justify-end py-0 pl-[13px] pr-3 box-border max-w-full shrink-0">
-        <div className="border-[rgba(46,78,89,0.5)] border-solid border-t box-border flex flex-col items-start pt-[7px] px-0 pb-0 gap-1.5 max-w-full">
-          <div className="relative tracking-[1.61px] leading-4 uppercase">
+      <div className="self-stretch flex items-start justify-end py-0 pl-[13px] pr-3 box-border max-w-full shrink-0 text-[rgba(226,232,240,0.45)]">
+        <div className="flex-1 border-[rgba(46,78,89,0.5)] border-solid border-t box-border flex flex-col items-start pt-[7px] px-0 pb-0 gap-1.5 max-w-full">
+          <div className="relative tracking-[1.61px] leading-4 uppercase text-[rgba(15,175,122,0.7)]">
             Payout Info
           </div>
-          <div className="w-full grid grid-cols-2 md:grid-cols-3 gap-x-1.5 gap-y-1 text-[rgba(226,232,240,0.45)]">
+          <div className="self-stretch flex items-start gap-8 flex-wrap text-[rgba(226,232,240,0.45)]">
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Payout ID
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] shrink-0">
-                {payout?.payout_id ?? tsm?.account_id ?? "—"}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Payout ID</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{payout?.payout_id ?? tsm?.account_id ?? "—"}</div>
             </div>
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Status
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] text-center shrink-0">
-                {payout?.status ?? "—"}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Status</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{payout?.status ?? "—"}</div>
             </div>
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Amount
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] text-center shrink-0">
-                {formatCurrency(payout?.amount ?? 0)}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Amount</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{formatCurrency(payout?.amount ?? 0)}</div>
             </div>
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Tier
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] shrink-0">
-                {payout?.tier ?? "Unknown"}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Tier</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{payout?.tier ?? "Unknown"}</div>
             </div>
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Method
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] text-center shrink-0">
-                {payout?.method ?? "Systematic"}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Method</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{payout?.method ?? "Systematic"}</div>
             </div>
             <div className="flex flex-col items-start gap-px">
-              <div className="relative tracking-[0.54px] leading-4 uppercase shrink-0">
-                Next Eligible
-              </div>
-              <div className="relative text-[15px] leading-[23px] text-[#e2e8f0] shrink-0">
-                {payout?.next_eligible_date ?? "TBD"}
-              </div>
+              <div className="tracking-[0.54px] leading-4 uppercase">Next Eligible</div>
+              <div className="text-[15px] leading-[23px] text-[#e2e8f0]">{payout?.next_eligible_date ?? "TBD"}</div>
             </div>
           </div>
         </div>

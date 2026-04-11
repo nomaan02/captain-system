@@ -123,7 +123,7 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
       tabIndex={0}
       onClick={onClick}
       onKeyDown={handleKeyDown}
-      className={`bg-surface-card border ${isDeferred ? "border-dashed border-[#374151]" : "border-border-subtle"} p-3 text-left cursor-pointer hover:border-border-accent transition-colors duration-100 relative ${isDeferred ? "opacity-60" : ""}`}
+      className={`bg-surface-card border ${isDeferred ? "border-dashed border-[#374151]" : "border-border-subtle"} px-2 py-1.5 text-left cursor-pointer hover:border-border-accent transition-colors duration-100 relative ${isDeferred ? "opacity-60" : ""}`}
     >
       {/* Header row */}
       <div className="flex items-center justify-between mb-1">
@@ -137,24 +137,24 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
             </span>
           )}
         </div>
-        <span className={`px-1.5 py-0 text-[9px] font-mono border border-solid uppercase ${statusStyle.bg} ${statusStyle.border} ${statusStyle.text}`}>
+        <span className={`px-1 py-0 text-[9px] font-mono border border-solid uppercase leading-tight ${statusStyle.bg} ${statusStyle.border} ${statusStyle.text}`}>
           {agg.status}
         </span>
       </div>
 
-      {/* Name */}
-      <div className={`text-[11px] font-mono mb-1.5 ${isDeferred ? "text-[#475569]" : "text-[#94a3b8]"}`}>
-        {AIM_NAMES[aimId]}
+      {/* Name + modifier on one line */}
+      <div className="flex items-center justify-between mb-0.5">
+        <span className={`text-[11px] font-mono ${isDeferred ? "text-[#475569]" : "text-[#94a3b8]"}`}>
+          {AIM_NAMES[aimId]}
+        </span>
+        {isHmm ? (
+          <span className="text-[9px] font-mono text-[#06b6d4]">SESSION BUDGET</span>
+        ) : (
+          <span className={`text-[9px] font-mono ${modColor(agg.modMin, agg.modMax)}`}>
+            {formatModRange(agg.modMin, agg.modMax)}
+          </span>
+        )}
       </div>
-
-      {/* Modifier or SESSION BUDGET for AIM-16 */}
-      {isHmm ? (
-        <div className="text-[11px] font-mono text-[#06b6d4] mb-1">SESSION BUDGET</div>
-      ) : (
-        <div className={`text-xs font-mono mb-1 ${modColor(agg.modMin, agg.modMax)}`}>
-          {formatModRange(agg.modMin, agg.modMax)}
-        </div>
-      )}
 
       {/* Weight bar */}
       {agg.weightAvg != null && (
@@ -164,7 +164,7 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="AIM weight"
-          className="h-[3px] w-full bg-[rgba(226,232,240,0.06)] mb-1"
+          className="h-[2px] w-full bg-[rgba(226,232,240,0.06)] mb-0.5"
         >
           <div
             className="h-full bg-captain-green"
@@ -198,7 +198,7 @@ const AimCard = ({ aimId, agg, onClick, onToggle, toggling }) => {
         <button
           onClick={handleToggle}
           disabled={toggling}
-          className={`mt-1.5 w-full min-h-[32px] py-1 text-[11px] font-mono uppercase tracking-wider border border-solid cursor-pointer transition-colors duration-100 flex items-center justify-center ${
+          className={`mt-1 w-full min-h-[24px] py-0.5 text-[10px] font-mono uppercase tracking-wider border border-solid cursor-pointer transition-colors duration-100 flex items-center justify-center ${
             toggling
               ? "bg-[rgba(100,116,139,0.1)] border-[#374151] text-[#475569] cursor-wait"
               : isActive
@@ -270,7 +270,7 @@ const AimRegistryPanel = () => {
           </span>
         }
       >
-        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-1 md:grid-cols-3 lg:grid-cols-4">
           {ALL_AIMS.map((id) => (
             <AimCard
               key={id}

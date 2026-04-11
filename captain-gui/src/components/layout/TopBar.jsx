@@ -5,6 +5,71 @@ import useDashboardStore from "../../stores/dashboardStore";
 import { formatTime, formatTimeSince } from "../../utils/formatting";
 import api from "../../api/client";
 
+/* ── Session countdown helper ───────────────────────────────────────── */
+
+const SESSIONS = [
+  { name: "LON",  hour: 3,  minute: 0  },
+  { name: "NY",   hour: 9,  minute: 30 },
+  { name: "APAC", hour: 18, minute: 0  },
+];
+
+const SESSION_COLORS = { LON: "#3b82f6", NY: "#0faf7a", APAC: "#f59e0b" };
+
+function getNextSession(now) {
+  // Get current ET time components
+  const etStr = now.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  // Parse "MM/DD/YYYY, HH:MM:SS"
+  const [datePart, timePart] = etStr.split(", ");
+  const [month, day, year] = datePart.split("/").map(Number);
+  const [h, m, s] = timePart.split(":").map(Number);
+  const dayOfWeek = new Date(year, month - 1, day).getDay(); // 0=Sun
+
+  // Build candidate dates for each session (today and tomorrow)
+  let best = null;
+  for (let offset = 0; offset <= 7; offset++) {
+    for (const sess of SESSIONS) {
+      // Total seconds from midnight for "now" on day 0, session on day `offset`
+      const nowSecs = h * 3600 + m * 60 + s;
+      const sessSecs = sess.hour * 3600 + sess.minute * 60;
+      const diffSecs = offset * 86400 + sessSecs - nowSecs;
+
+      if (diffSecs <= 0) continue;
+
+      // Check the target day is a weekday (Mon-Fri)
+      const targetDow = (dayOfWeek + offset) % 7;
+      if (targetDow === 0 || targetDow === 6) continue; // skip Sun/Sat
+
+      if (best === null || diffSecs < best.diffSecs) {
+        best = { name: sess.name, diffSecs };
+      }
+    }
+    if (best) break; // found the closest session, no need to look further days
+  }
+
+  if (!best) return null;
+
+  const hrs = Math.floor(best.diffSecs / 3600);
+  const mins = Math.floor((best.diffSecs % 3600) / 60);
+  const secs = best.diffSecs % 60;
+
+  let countdown;
+  if (hrs > 0) {
+    countdown = `${hrs}h ${String(mins).padStart(2, "0")}m`;
+  } else if (mins > 0) {
+    countdown = `${mins}m ${String(secs).padStart(2, "0")}s`;
+  } else {
+    countdown = `${secs}s`;
+  }
+
+  return { name: best.name, countdown, imminent: best.diffSecs <= 300 };
+}
+
+/* ── Nav styling ────────────────────────────────────────────────────── */
+
 const NAV_BASE =
   "px-[10px] py-[6px] text-[10px] leading-[13.7px] font-extralight font-mono cursor-pointer inline-block no-underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#00ad74]";
 
@@ -22,6 +87,26 @@ const TopBar = ({ className = "" }) => {
   const selectedAccount = useDashboardStore((s) => s.selectedAccount);
   const accounts = useDashboardStore((s) => s.accounts);
   const setSelectedAccount = useDashboardStore((s) => s.setSelectedAccount);
+
+  // Live ET clock + next session countdown — ticks every second
+  const [etClock, setEtClock] = useState("");
+  const [nextSession, setNextSession] = useState(null);
+
+  useEffect(() => {
+    function tick() {
+      const now = new Date();
+      setEtClock(
+        now.toLocaleTimeString("en-US", {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour12: false, timeZone: "America/New_York",
+        }),
+      );
+      setNextSession(getNextSession(now));
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [pullState, setPullState] = useState("idle"); // idle | pulling | success | rebuilding | error
@@ -129,10 +214,29 @@ const TopBar = ({ className = "" }) => {
         {/* Clock */}
         <div className="flex items-baseline gap-[4px] shrink-0">
           <div data-testid="topbar-clock" className="relative tracking-[0.91px] leading-[19.2px] text-[12.8px] text-[#e2e8f0] font-[Inter]">
-            {formatTime(timestamp)}
+            {etClock}
           </div>
           <div className="text-[10.1px] text-[#fff] leading-[15.1px]">ET</div>
         </div>
+
+        {/* Next session countdown */}
+        {nextSession && (
+          <div className="flex items-baseline gap-[4px] shrink-0 ml-1 pl-2 border-l border-[#2e4e5a]">
+            <span
+              className="text-[10px] font-semibold font-[Inter]"
+              style={{ color: SESSION_COLORS[nextSession.name] || "#94a3b8" }}
+            >
+              {nextSession.name}
+            </span>
+            <span
+              className={`text-[11px] font-['JetBrains_Mono'] tabular-nums ${
+                nextSession.imminent ? "text-captain-green" : "text-[#94a3b8]"
+              }`}
+            >
+              {nextSession.countdown}
+            </span>
+          </div>
+        )}
 
         {/* Nav tabs */}
         <div className="flex items-center gap-1 ml-2">

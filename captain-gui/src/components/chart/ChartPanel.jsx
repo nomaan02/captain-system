@@ -6,11 +6,12 @@ import TradingViewWidget from "./TradingViewWidget";
 import useChartStore from "../../stores/chartStore";
 
 const ChartPanel = ({ className = "" }) => {
-  const liveMarket = useDashboardStore((s) => s.liveMarket);
+  const allMarket = useDashboardStore((s) => s.liveMarket);
   const orStatus = useDashboardStore((s) => s.orStatus);
   const timestamp = useDashboardStore((s) => s.timestamp);
   const selectedAsset = useChartStore((s) => s.selectedAsset);
   const assetName = ASSET_NAMES[selectedAsset] ?? selectedAsset;
+  const liveMarket = allMarket?.[selectedAsset] ?? null;
 
   return (
     <div
@@ -82,7 +83,7 @@ const ChartPanel = ({ className = "" }) => {
           <div data-testid="chart-change" className={`relative text-sm leading-5 shrink-0 tabular-nums ${liveMarket?.change != null && liveMarket.change >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
             {liveMarket?.change != null ? (
               <span>
-                {liveMarket.change >= 0 ? "▲" : "▼"} {liveMarket.change >= 0 ? "+" : ""}{formatPrice(liveMarket.change)} ({liveMarket.change_pct >= 0 ? "+" : ""}{liveMarket.change_pct?.toFixed(2)}%)
+                {liveMarket.change >= 0 ? "▲" : "▼"} {liveMarket.change >= 0 ? "+" : ""}{formatPrice(liveMarket.change)} ({liveMarket.change_pct >= 0 ? "+" : ""}{liveMarket.change_pct != null ? (liveMarket.change_pct * 100).toFixed(2) : "0.00"}%)
               </span>
             ) : "---"}
           </div>

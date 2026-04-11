@@ -3,8 +3,6 @@ import useDashboardStore from "../../stores/dashboardStore";
 import useChartStore from "../../stores/chartStore";
 import { formatPrice } from "../../utils/formatting";
 
-// TODO: liveMarket store streams one asset at a time (keyed by contract_id).
-// Tickers without a matching feed show "---". Wire multi-asset feed when backend supports it.
 const TICKERS = ["MES", "MNQ", "ES", "NQ", "MYM", "MGC", "NKD", "ZN", "MCL", "6E"];
 
 const MarketTicker = ({ className = "" }) => {
@@ -20,12 +18,13 @@ const MarketTicker = ({ className = "" }) => {
         aria-label="Market tickers"
       >
         {TICKERS.map((symbol) => {
-          const hasData = liveMarket?.contract_id === symbol;
+          const assetData = liveMarket?.[symbol];
+          const hasData = assetData?.connected === true;
           const price =
-            hasData && liveMarket.last_price != null
-              ? formatPrice(liveMarket.last_price)
+            hasData && assetData.last_price != null
+              ? formatPrice(assetData.last_price)
               : "---";
-          const changePct = hasData ? liveMarket.change_pct : null;
+          const changePct = hasData ? assetData.change_pct : null;
           const isSelected = selectedAsset === symbol;
           const changeColor =
             changePct != null
@@ -64,7 +63,7 @@ const MarketTicker = ({ className = "" }) => {
                 </span>
                 <span className={`font-medium leading-[14px] ${changeColor}`}>
                   {changePct != null
-                    ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
+                    ? `${changePct >= 0 ? "+" : ""}${(changePct * 100).toFixed(2)}%`
                     : "---"}
                 </span>
               </span>

@@ -4,6 +4,7 @@ import useNotificationStore from "../stores/notificationStore";
 import useChartStore from "../stores/chartStore";
 import useSystemOverviewStore from "../stores/systemOverviewStore";
 import useReplayStore from "../stores/replayStore";
+import useTerminalStore from "../stores/terminalStore";
 
 const BASE_DELAY = 2000;
 const MAX_DELAY = 30000;
@@ -26,6 +27,7 @@ export default function useWebSocket(userId = "primary_user") {
 
   const { addNotification } = useNotificationStore.getState();
   const { addBar } = useChartStore.getState();
+  const { addEntry: addTerminalEntry } = useTerminalStore.getState();
 
   const getWsUrl = useCallback(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -166,6 +168,16 @@ export default function useWebSocket(userId = "primary_user") {
           useSystemOverviewStore.getState().setOverview(data.data || data);
           break;
 
+        case "process_log":
+          addTerminalEntry({
+            process: data.process,
+            level: data.level,
+            source: data.source,
+            message: data.message,
+            timestamp: data.timestamp,
+          });
+          break;
+
         case "replay_tick":
         case "replay_started":
         case "replay_complete":
@@ -185,7 +197,7 @@ export default function useWebSocket(userId = "primary_user") {
           break;
       }
     };
-  }, [getWsUrl, setConnected, setSnapshot, setLiveMarket, addSignal, setCommandAck, addNotification, addBar]);
+  }, [getWsUrl, setConnected, setSnapshot, setLiveMarket, addSignal, setCommandAck, addNotification, addBar, addTerminalEntry]);
 
   // Send a command via WebSocket
   const sendCommand = useCallback((command) => {

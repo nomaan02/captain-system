@@ -87,6 +87,10 @@ const api = {
   aimActivate: (aimId) => post(`${BASE}/aim/${aimId}/activate`, {}),
   aimDeactivate: (aimId) => post(`${BASE}/aim/${aimId}/deactivate`, {}),
 
+  // Signals
+  clearSignals: (userId, signalIds) =>
+    post(`${BASE}/signals/clear`, { user_id: userId, signal_ids: signalIds }),
+
   // System
   gitPull: () => post(`${BASE}/system/git-pull`, {}),
 };

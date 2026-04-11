@@ -46,9 +46,10 @@ const useDashboardStore = create((set, get) => ({
   regimePanel: null,
   payoutPanel: [],
   scalingDisplay: [],
-  liveMarket: null,
+  liveMarket: {},
   apiStatus: null,
   lastAck: null,
+  selectedSignalId: null,
 
   // Actions
   setConnected: (connected) => set({ connected }),
@@ -73,8 +74,10 @@ const useDashboardStore = create((set, get) => ({
       regimePanel: snapshot.regime_panel ?? state.regimePanel,
       payoutPanel: snapshot.payout_panel ?? state.payoutPanel,
       scalingDisplay: snapshot.scaling_display ?? state.scalingDisplay,
-      // Preserve newer liveMarket if snapshot's is stale
-      liveMarket: snapshot.live_market ?? state.liveMarket,
+      // Merge live_market assets from snapshot
+      liveMarket: snapshot.live_market
+        ? { ...state.liveMarket, ...snapshot.live_market }
+        : state.liveMarket,
       apiStatus: snapshot.api_status ?? state.apiStatus,
       pipelineStage: snapshot.pipeline_stage ?? state.pipelineStage,
       autoExecute: snapshot.auto_execute ?? state.autoExecute,
@@ -84,17 +87,14 @@ const useDashboardStore = create((set, get) => ({
   },
 
   setLiveMarket: (lm) => {
-    const current = get().liveMarket;
-    // Incremental merge — only non-null fields overwrite
-    if (!current) {
-      set({ liveMarket: lm });
-    } else {
-      const merged = { ...current };
-      for (const [key, val] of Object.entries(lm)) {
-        if (val != null) merged[key] = val;
-      }
-      set({ liveMarket: merged });
+    // lm.assets is a dict keyed by symbol: { ES: {...}, MES: {...} }
+    const assets = lm.assets || lm;
+    const current = get().liveMarket || {};
+    const merged = { ...current };
+    for (const [symbol, data] of Object.entries(assets)) {
+      if (data != null) merged[symbol] = data;
     }
+    set({ liveMarket: merged });
   },
 
   addSignal: (signal) => {
@@ -104,19 +104,30 @@ const useDashboardStore = create((set, get) => ({
     }));
   },
 
+  setSelectedSignalId: (id) =>
+    set((state) => ({ selectedSignalId: state.selectedSignalId === id ? null : id })),
+
   removeSignal: (signalId) =>
     set((state) => ({
       pendingSignals: state.pendingSignals.filter((s) => s.signal_id !== signalId),
+      ...(state.selectedSignalId === signalId ? { selectedSignalId: null } : {}),
     })),
 
   clearSignals: () => {
     const { pendingSignals, signalHistory } = get();
     if (pendingSignals.length === 0) return;
+    const signalIds = pendingSignals.map((s) => s.signal_id).filter(Boolean);
     const cleared_at = new Date().toISOString();
     const archived = pendingSignals.map((s) => ({ ...s, cleared_at }));
     const updated = [...archived, ...signalHistory].slice(0, 500);
     localStorage.setItem("captain:signalHistory", JSON.stringify(updated));
-    set({ pendingSignals: [], signalHistory: updated });
+    set({ pendingSignals: [], signalHistory: updated, selectedSignalId: null });
+    // Tell backend so they don't return on refresh
+    if (signalIds.length > 0) {
+      api.clearSignals("primary_user", signalIds).catch((err) => {
+        console.warn("Failed to clear signals on backend:", err);
+      });
+    }
   },
 
   setClosedTrades: (trades) => set({ closedTrades: normalizePositions(trades) }),

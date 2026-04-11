@@ -34,6 +34,17 @@ const CheckIcon = ({ ok }) => (
   </span>
 );
 
+const PendingIcon = () => (
+  <span
+    role="img"
+    aria-label="Pending"
+    className="font-mono text-[11px] text-[#f59e0b]"
+    title="Pending — awaiting first live session"
+  >
+    ⏳
+  </span>
+);
+
 const AimDetailModal = ({ aimId, aimName, onClose }) => {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -169,22 +180,22 @@ const AimDetailModal = ({ aimId, aimName, onClose }) => {
                                 <StatusBadge status={row.d01_status || "UNKNOWN"} />
                               </td>
                               <td className={`py-1.5 pr-2 text-right ${modColor}`}>
-                                {mod != null ? mod.toFixed(2) : <CheckIcon ok={false} />}
+                                {mod != null ? mod.toFixed(2) : <PendingIcon />}
                               </td>
                               <td className="py-1.5 pr-2 text-right text-[#94a3b8]">
                                 {row.d02_inclusion_probability != null
                                   ? row.d02_inclusion_probability.toFixed(3)
-                                  : <CheckIcon ok={false} />}
+                                  : <PendingIcon />}
                               </td>
                               <td className="py-1.5 pr-2 text-right text-[#94a3b8]">
                                 {row.d01_warmup_progress != null
                                   ? `${Math.round(row.d01_warmup_progress)}%`
-                                  : <CheckIcon ok={false} />}
+                                  : <PendingIcon />}
                               </td>
                               <td className="py-1.5 text-right text-[#64748b]">
                                 {row.d01_last_retrained
                                   ? new Date(row.d01_last_retrained).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-                                  : <CheckIcon ok={false} />}
+                                  : <PendingIcon />}
                               </td>
                             </tr>
                           );
