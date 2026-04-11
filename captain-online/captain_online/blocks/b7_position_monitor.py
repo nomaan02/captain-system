@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, STREAM_TRADE_OUTCOMES
-from shared.constants import TRADE_OUTCOME_VALUES
+from shared.constants import TRADE_OUTCOME_VALUES, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
@@ -384,7 +384,7 @@ def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commissi
         "aim_breakdown_at_entry": pos.get("aim_breakdown"),
         "session": pos.get("session"),
         "account": pos.get("account"),
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
     }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
@@ -416,7 +416,7 @@ def _notify(user_id: str, priority: str, message: str):
             "priority": priority,
             "message": message,
             "source": "ONLINE_B7",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
         })
         client.publish(CH_ALERTS, payload)
     except Exception as e:

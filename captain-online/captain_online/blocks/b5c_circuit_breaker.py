@@ -485,16 +485,12 @@ def _load_intraday_state(accounts: list[str]) -> dict:
         cur.execute(
             """SELECT account_id, l_t, n_t, l_b, n_b
                FROM p3_d23_circuit_breaker_intraday
-               ORDER BY last_updated DESC"""
+               LATEST ON last_updated PARTITION BY account_id"""
         )
         rows = cur.fetchall()
 
-    seen = set()
     result = {}
     for r in rows:
-        if r[0] in seen:
-            continue
-        seen.add(r[0])
         result[r[0]] = {
             "l_t": r[1] or 0.0,
             "n_t": r[2] or 0,

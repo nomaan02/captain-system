@@ -36,6 +36,7 @@ from typing import Optional
 
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def run_kelly_sizing(
                     "priority": "CRITICAL",
                     "message": f"CRITICAL: Silo drawdown at {silo_drawdown_pct:.1%}. All trading halted for user {user_id}.",
                     "silo_drawdown_pct": silo_drawdown_pct,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": now_et().isoformat(),
                 }))
             except Exception as e:
                 logger.error("Failed to publish silo drawdown alert: %s", e)
@@ -319,7 +320,7 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
             try:
                 if isinstance(eval_end, str):
                     eval_end = datetime.fromisoformat(eval_end)
-                remaining_days = max((eval_end.date() - datetime.now().date()).days, 1)
+                remaining_days = max((eval_end.date() - now_et().date()).days, 1)
                 budget_divisor = remaining_days
             except (ValueError, TypeError):
                 pass

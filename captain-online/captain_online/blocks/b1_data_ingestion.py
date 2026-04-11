@@ -747,7 +747,7 @@ def _assert_system_timezone():
     # If TZ not set, check Python's local timezone
     try:
         import zoneinfo
-        local_tz = datetime.now().astimezone().tzinfo
+        local_tz = now_et().tzinfo
         logger.info("ON-B1: System timezone check passed (local: %s)", local_tz)
     except Exception:
         logger.warning("ON-B1: Could not verify system timezone — proceeding")

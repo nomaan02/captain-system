@@ -25,6 +25,7 @@ Subscribes to Redis: captain:commands (for manual halt, pause, etc.)
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -37,7 +38,7 @@ from shared.redis_client import (
     CH_STATUS, REDIS_KEY_QUOTES,
 )
 from shared.journal import write_checkpoint
-from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE
+from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE, now_et
 from shared.process_logger import ProcessLogger
 from captain_online.blocks.b9_session_controller import (
     get_session_open_times,
@@ -67,6 +68,7 @@ class OnlineOrchestrator:
         # Pending Phase A results awaiting OR breakout for Phase B (B6)
         # {session_id: {"data", "regime", "aim", "user_results", "resolved_assets"}}
         self._pending_sessions = {}
+        self._last_heartbeat_time = 0
 
     def start(self):
         """Start the orchestrator."""
@@ -98,6 +100,23 @@ class OnlineOrchestrator:
             }))
         except Exception as e:
             logger.error("Failed to publish pipeline stage %s: %s", stage, e)
+
+    def _publish_heartbeat(self):
+        """Publish Online process heartbeat to Redis."""
+        try:
+            client = get_redis_client()
+            client.publish(CH_STATUS, json.dumps({
+                "role": "ONLINE",
+                "status": "ok",
+                "timestamp": now_et().isoformat(),
+                "details": {
+                    "open_positions": len(self.open_positions),
+                    "shadow_positions": len(self.shadow_positions),
+                    "pending_sessions": len(self._pending_sessions),
+                },
+            }))
+        except Exception as exc:
+            logger.error("Heartbeat publish failed: %s", exc)
 
     def _session_loop(self):
         """Main 24/7 loop — check sessions, monitor positions, resolve OR."""
@@ -132,7 +151,12 @@ class OnlineOrchestrator:
             # Publish live quotes to Redis for captain-command GUI
             self._publish_quotes_to_redis()
 
-            # Heartbeat
+            # Heartbeat every 30s
+            current_time = time.monotonic()
+            if current_time - self._last_heartbeat_time >= 30:
+                self._publish_heartbeat()
+                self._last_heartbeat_time = current_time
+
             time.sleep(1)
 
     def _publish_quotes_to_redis(self):
@@ -726,7 +750,7 @@ class OnlineOrchestrator:
                 continue
             seen.add(r[0])
             users.append({"user_id": r[0], "role": r[1]})
-        return users if users else [{"user_id": "primary_user", "role": "ADMIN"}]
+        return users if users else [{"user_id": os.environ.get("BOOTSTRAP_USER_ID", "primary_user"), "role": "ADMIN"}]
 
     def _load_user_silo(self, user_id: str) -> dict | None:
         """Load user capital silo from P3-D16."""

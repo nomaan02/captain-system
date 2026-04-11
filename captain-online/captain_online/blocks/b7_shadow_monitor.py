@@ -30,6 +30,7 @@ from shared.questdb_client import get_cursor
 from shared.redis_client import publish_to_stream, STREAM_SIGNAL_OUTCOMES
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,8 @@ def register_shadow_position(signal: dict, session_id: int) -> dict:
         "regime_state": signal.get("_context", {}).get("regime_state"),
         "combined_modifier": signal.get("_context", {}).get("combined_modifier", 1.0),
         "aim_breakdown": signal.get("_context", {}).get("aim_breakdown"),
-        "user_id": signal.get("user_id", "primary_user"),
-        "created_at": datetime.now(),
+        "user_id": signal["user_id"],
+        "created_at": now_et(),
         "resolved": False,
     }
 
@@ -85,7 +86,7 @@ def monitor_shadow_positions(shadow_positions: list[dict]) -> list[dict]:
             continue
 
         # Expire stale shadows — publish TIMEOUT outcome for Offline learning
-        age = (datetime.now() - shadow["created_at"]).total_seconds()
+        age = (now_et() - shadow["created_at"]).total_seconds()
         if age > SHADOW_MAX_AGE_SECONDS:
             exit_price = _get_live_price(shadow["asset"]) or shadow.get("entry_price", 0)
             _resolve_shadow(shadow, "TIMEOUT", exit_price)
@@ -144,7 +145,7 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
     theoretical_outcome = {
         "trade_id": f"SHADOW-{uuid.uuid4().hex[:12].upper()}",
         "signal_id": shadow["signal_id"],
-        "user_id": shadow.get("user_id", "primary_user"),
+        "user_id": shadow["user_id"],
         "asset": shadow["asset"],
         "direction": direction,
         "entry_price": entry_price,
@@ -159,7 +160,7 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
         "aim_breakdown_at_entry": shadow.get("aim_breakdown"),
         "session": shadow.get("session"),
         "theoretical": True,  # Category B blocks (CB params) must ignore this
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
     }
 
     import time
