@@ -55,9 +55,9 @@ def register_shadow_position(signal: dict, session_id: int) -> dict:
         "point_value": _get_point_value(signal.get("asset")),
         "contracts": _get_shadow_contracts(signal),
         "session": session_id,
-        "regime_state": signal.get("regime_state"),
-        "combined_modifier": signal.get("combined_modifier", 1.0),
-        "aim_breakdown": signal.get("aim_breakdown"),
+        "regime_state": signal.get("_context", {}).get("regime_state"),
+        "combined_modifier": signal.get("_context", {}).get("combined_modifier", 1.0),
+        "aim_breakdown": signal.get("_context", {}).get("aim_breakdown"),
         "user_id": signal.get("user_id", "primary_user"),
         "created_at": datetime.now(),
         "resolved": False,
@@ -162,12 +162,24 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
         "timestamp": datetime.now().isoformat(),
     }
 
-    try:
-        publish_to_stream(STREAM_SIGNAL_OUTCOMES, theoretical_outcome)
-        logger.info("Shadow resolved: %s %s %s pnl=%.2f (theoretical)",
-                     shadow["asset"], outcome, shadow["signal_id"], gross_pnl)
-    except Exception as e:
-        logger.error("Failed to publish shadow outcome %s: %s", shadow["signal_id"], e)
+    import time
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            publish_to_stream(STREAM_SIGNAL_OUTCOMES, theoretical_outcome)
+            logger.info("Shadow resolved: %s %s %s pnl=%.2f (theoretical)",
+                         shadow["asset"], outcome, shadow["signal_id"], gross_pnl)
+            return
+        except Exception as e:
+            if attempt < max_attempts:
+                delay = 0.5 * (2 ** (attempt - 1))
+                logger.warning("Shadow retry %d/%d for %s: %s (backoff %.1fs)",
+                               attempt, max_attempts, shadow["signal_id"], e, delay)
+                time.sleep(delay)
+            else:
+                logger.error("FAILED to publish shadow outcome %s after %d attempts: %s",
+                             shadow["signal_id"], max_attempts, e)
 
 
 # ---------------------------------------------------------------------------

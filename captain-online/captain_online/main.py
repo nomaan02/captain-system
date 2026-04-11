@@ -106,8 +106,14 @@ def main():
 
     last = get_last_checkpoint(ROLE)
     if last:
-        logger.info("Resuming from: %s — next: %s",
-                     last["checkpoint"], last["next_action"])
+        next_action = last.get("next_action", "")
+        if next_action not in ("shutdown", "initialization", ""):
+            logger.warning("CRASH RECOVERY: last checkpoint=%s next=%s — "
+                           "previous session did not shut down cleanly",
+                           last["checkpoint"], next_action)
+            write_checkpoint(ROLE, "CRASH_RECOVERY", next_action, "restarting")
+        else:
+            logger.info("Clean restart — last checkpoint: %s", last["checkpoint"])
 
     write_checkpoint(ROLE, "STARTUP", "initialization", "starting_streams")
 

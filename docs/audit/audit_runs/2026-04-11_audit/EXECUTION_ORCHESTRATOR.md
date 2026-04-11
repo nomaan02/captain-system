@@ -897,7 +897,7 @@ Run unit tests. Verify sizing pipeline layer order and formula correctness.
 
 ---
 
-### Session 6.2 — Online Circuit Breaker + Signal Output Fixes
+### Session 6.2 — Online Circuit Breaker + Signal Output Fixes ✅ COMPLETE
 
 ````
 ## Execution Session 6.2 — Online Circuit Breaker + Signal Output HIGH Fixes
@@ -1166,7 +1166,7 @@ Phase 0 ────────────────────────
     │                          Phase 4 ─┴────┘ (session 4.2 needs Phase 1)
     │
     ├── Phase 5 (offline HIGH) ─── COMPLETE
-    ├── Phase 6 (online HIGH) ─── can start after Phase 0
+    ├── Phase 6 (online HIGH) ─── COMPLETE
     ├── Phase 7 (command HIGH) ── can start after Phase 2
     │
     ├── Phase 8 (cross-cutting) ── can start anytime, ideally after 5-7

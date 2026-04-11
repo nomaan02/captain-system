@@ -67,8 +67,8 @@ def _mock_load_intraday_l1_breach(accounts):
 
 
 def _mock_load_intraday_l2_breach(accounts):
-    """Intraday state with many trades to exceed budget N."""
-    return {ac: {"l_t": -100.0, "n_t": 200, "l_b": {}, "n_b": {}} for ac in accounts}
+    """Intraday state with large losses to exhaust dollar budget."""
+    return {ac: {"l_t": -1400.0, "n_t": 5, "l_b": {}, "n_b": {}} for ac in accounts}
 
 
 def _mock_load_intraday_l3_breach(accounts):
@@ -102,12 +102,13 @@ def _make_topstep_tsm(accounts, **overrides):
 class TestAllLayersPass:
     """Scenario 18: All CB layers pass -> no blocks."""
 
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
     @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
     @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_clean)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
     @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
-    def test_no_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb):
+    def test_no_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
         tsm = _make_topstep_tsm(["acc_eval_1"])
         result = run_circuit_breaker_screen(
             recommended_trades=["ES"],
@@ -193,12 +194,13 @@ class TestL1PreemptiveHalt:
         reason = _layer1_preemptive_halt(intraday, tsm, rho_j)
         assert reason is None
 
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
     @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
     @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_l1_breach)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
     @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
-    def test_l1_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb):
+    def test_l1_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
         """Integration: L_t=-600, 3 contracts * (4*50+0) = 600, total=1200 >= 750."""
         tsm = _make_topstep_tsm(["acc_eval_1"])
         result = run_circuit_breaker_screen(
@@ -225,48 +227,51 @@ class TestL1PreemptiveHalt:
 # ---------------------------------------------------------------------------
 
 class TestL2Budget:
-    """Layer 2: n_t >= N -> BLOCKED (total trades today, NOT consecutive losses)."""
+    """Layer 2: remaining_budget = E - |L_t|; IF remaining < rho_j -> BLOCKED."""
 
     def test_budget_exhausted(self):
-        """n_t = 200 far exceeds N for any reasonable params."""
+        """Large losses consumed the dollar budget."""
         tsm = {
             "current_balance": 150_000.0,
-            "topstep_params": json.dumps({"p": 0.005, "e": 0.01}),
+            "topstep_params": json.dumps({"e": 0.01}),
         }
-        intraday = {"n_t": 200}
-        reason = _layer2_budget(intraday, tsm, fee_per_trade=2.80)
+        # E = 0.01 * 150000 = 1500, |L_t| = 1400, remaining = 100 < rho_j=200
+        intraday = {"l_t": -1400.0}
+        reason = _layer2_budget(intraday, tsm, rho_j=200.0)
         assert reason is not None
         assert "L2" in reason
         assert "budget" in reason
 
     def test_budget_available(self):
-        """n_t = 0, plenty of budget."""
+        """No losses, plenty of dollar budget remaining."""
         tsm = {
             "current_balance": 150_000.0,
-            "topstep_params": json.dumps({"p": 0.005, "e": 0.01}),
+            "topstep_params": json.dumps({"e": 0.01}),
         }
-        intraday = {"n_t": 0}
-        reason = _layer2_budget(intraday, tsm, fee_per_trade=2.80)
+        # E = 1500, |L_t| = 0, remaining = 1500 > rho_j=200
+        intraday = {"l_t": 0.0}
+        reason = _layer2_budget(intraday, tsm, rho_j=200.0)
         assert reason is None
 
     def test_budget_exact_boundary(self):
-        """n_t exactly at N -> BLOCKED (n_t >= N)."""
-        # N = floor((0.01 * 150000) / (4500 * 0.005 + 2.80)) = floor(1500/25.30) = 59
+        """rho_j exceeds remaining by $1 -> BLOCKED."""
         tsm = {
             "current_balance": 150_000.0,
-            "topstep_params": json.dumps({"p": 0.005, "e": 0.01}),
+            "topstep_params": json.dumps({"e": 0.01}),
         }
-        intraday = {"n_t": 59}
-        reason = _layer2_budget(intraday, tsm, fee_per_trade=2.80)
+        # E = 1500, |L_t| = 1301, remaining = 199 < rho_j=200
+        intraday = {"l_t": -1301.0}
+        reason = _layer2_budget(intraday, tsm, rho_j=200.0)
         assert reason is not None
         assert "L2" in reason
 
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
     @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
     @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_l2_breach)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
     @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
-    def test_l2_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb):
+    def test_l2_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
         tsm = _make_topstep_tsm(["acc_eval_1"])
         result = run_circuit_breaker_screen(
             recommended_trades=["ES"],
@@ -319,12 +324,13 @@ class TestL3BasketExpectancy:
         reason = _layer3_basket_expectancy(None, {"l_b": {}}, model_m="4")
         assert reason is None
 
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
     @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_l3_breach)
     @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_l3_breach)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
     @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
-    def test_l3_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb):
+    def test_l3_integration_blocks(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
         tsm = _make_topstep_tsm(["acc_eval_1"])
         result = run_circuit_breaker_screen(
             recommended_trades=["ES"],
@@ -348,41 +354,33 @@ class TestL3BasketExpectancy:
 # ---------------------------------------------------------------------------
 
 class TestL4CorrelationSharpe:
-    """Layer 4: S = mu_b / (sigma * sqrt(1 + 2*n_t*rho_bar)) <= lambda -> BLOCKED."""
+    """Layer 4: rolling_basket_sharpe(lookback=60d) <= lambda -> BLOCKED."""
 
-    def test_sharpe_below_threshold_blocks(self):
-        """With lambda=0.5, many trades, and high correlation -> S drops below threshold."""
-        cb = {
-            "r_bar": 10.0, "beta_b": 0.0, "sigma": 100.0,
-            "rho_bar": 0.3, "p_value": 0.5, "n_observations": 200,
-        }
-        # mu_b = 10 (beta_b zeroed by insignificance)
-        # denominator = 100 * sqrt(1 + 2*50*0.3) = 100 * sqrt(31) = 556.8
-        # S = 10 / 556.8 = 0.018 < 0.5
-        intraday = {"l_b": {}, "n_t": 50}
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns")
+    def test_sharpe_below_threshold_blocks(self, mock_returns):
+        """Rolling Sharpe from trade history below lambda -> BLOCKED."""
+        # mean ~= 1, sigma ~= 7.3 -> S ~= 0.14 < 0.5
+        mock_returns.return_value = [1, -9, 11, 1, -9, 11, 1, -9, 11, 1]
         tsm = {"topstep_params": json.dumps({"lambda": 0.5})}
-        reason = _layer4_correlation_sharpe(cb, intraday, tsm, model_m=None)
+        reason = _layer4_correlation_sharpe(None, {}, tsm, model_m=None)
         assert reason is not None
         assert "L4" in reason
         assert "Sharpe" in reason
 
-    def test_sharpe_above_threshold_passes(self):
-        """With lambda=0 (default) and mu_b > 0 -> passes."""
-        cb = {
-            "r_bar": 50.0, "beta_b": 0.0, "sigma": 100.0,
-            "rho_bar": 0.0, "p_value": 0.5, "n_observations": 200,
-        }
-        # mu_b = 50, denominator = 100 * sqrt(1) = 100
-        # S = 50/100 = 0.5 > 0
-        intraday = {"l_b": {}, "n_t": 0}
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns")
+    def test_sharpe_above_threshold_passes(self, mock_returns):
+        """Positive Sharpe above lambda=0 -> passes."""
+        mock_returns.return_value = [10, 12, 8, 11, 9, 10, 12, 8, 11, 9]
         tsm = {"topstep_params": json.dumps({"lambda": 0})}
-        reason = _layer4_correlation_sharpe(cb, intraday, tsm, model_m=None)
+        reason = _layer4_correlation_sharpe(None, {}, tsm, model_m=None)
         assert reason is None
 
-    def test_cold_start_passes(self):
-        """No CB params -> skip."""
-        tsm = {"topstep_params": json.dumps({"lambda": 0})}
-        reason = _layer4_correlation_sharpe(None, {"l_b": {}, "n_t": 0}, tsm, model_m=None)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns")
+    def test_cold_start_passes(self, mock_returns):
+        """Fewer than 10 trades -> skip (insufficient data)."""
+        mock_returns.return_value = [10, 12, 8]
+        tsm = {"topstep_params": json.dumps({"lambda": 0.5})}
+        reason = _layer4_correlation_sharpe(None, {}, tsm, model_m=None)
         assert reason is None
 
 
@@ -393,12 +391,13 @@ class TestL4CorrelationSharpe:
 class TestNonTopstepBypass:
     """Non-Topstep accounts should bypass CB entirely."""
 
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
     @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
     @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_l1_breach)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
     @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
     @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
-    def test_non_topstep_bypasses(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb):
+    def test_non_topstep_bypasses(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
         """Account without topstep_optimisation should not be blocked."""
         tsm = make_tsm_configs(["acc_1"], topstep_optimisation=False)
         result = run_circuit_breaker_screen(

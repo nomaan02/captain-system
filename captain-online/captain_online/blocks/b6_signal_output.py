@@ -20,8 +20,10 @@ Writes: Redis signals channel, P3-D17 (session_log)
 
 import json
 import logging
+import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS
 from shared.questdb_client import get_cursor
@@ -91,46 +93,49 @@ def run_signal_output(
         tp_level = _compute_tp(strategy, asset_features, direction)
         sl_level = _compute_sl(strategy, asset_features, direction)
 
+        # Aggregate size across accounts for this asset
+        total_size = sum(
+            final_contracts.get(u, {}).get(ac, 0) for ac in accounts
+        )
+
         signal = {
+            # 6 spec fields (PG-26)
             "signal_id": f"SIG-{uuid.uuid4().hex[:12].upper()}",
-            "user_id": user_id,
             "asset": u,
-            "session": session_id,
-            "timestamp": datetime.now().isoformat(),
             "direction": direction,
-            "entry_price": asset_features.get("entry_price"),
+            "size": total_size,
             "tp_level": tp_level,
             "sl_level": sl_level,
-            "sl_method": strategy.get("sl_method", "OR_RANGE"),
-            "entry_conditions": strategy.get("entry_conditions", {}),
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
 
-            # Per-account breakdown
+            # Routing (required by Command B1)
+            "user_id": user_id,
+            "session": session_id,
             "per_account": _build_per_account(u, accounts, final_contracts, account_recommendation,
                                                account_skip_reason, tsm_configs),
 
-            # Context for GUI
-            "aim_breakdown": aim_breakdown.get(u, {}),
-            "combined_modifier": combined_modifier.get(u, 1.0),
-            "regime_state": regime,
-            "regime_probs": r_probs,
-            "expected_edge": expected_edge.get(u, 0.0),
-            "win_rate": win_rate,
-            "payoff_ratio": payoff_ratio,
-
-            # User capital context
-            "user_total_capital": total_capital,
-            "user_daily_pnl": _get_daily_pnl(user_id),
-
-            # Signal quality
-            "quality_score": qr.get("quality_score", 0.0),
-            "quality_multiplier": qr.get("quality_multiplier", 1.0),
-            "data_maturity": qr.get("data_maturity", 0.0),
-
-            # Confidence tier
-            "confidence_tier": _classify_confidence(
-                expected_edge.get(u, 0.0), combined_modifier.get(u, 1.0),
-                quality_ceiling, hard_floor
-            ),
+            # Internal context (separated per PG-26 spec)
+            "_context": {
+                "entry_price": asset_features.get("entry_price"),
+                "sl_method": strategy.get("sl_method", "OR_RANGE"),
+                "entry_conditions": strategy.get("entry_conditions", {}),
+                "aim_breakdown": aim_breakdown.get(u, {}),
+                "combined_modifier": combined_modifier.get(u, 1.0),
+                "regime_state": regime,
+                "regime_probs": r_probs,
+                "expected_edge": expected_edge.get(u, 0.0),
+                "win_rate": win_rate,
+                "payoff_ratio": payoff_ratio,
+                "user_total_capital": total_capital,
+                "user_daily_pnl": _get_daily_pnl(user_id),
+                "quality_score": qr.get("quality_score", 0.0),
+                "quality_multiplier": qr.get("quality_multiplier", 1.0),
+                "data_maturity": qr.get("data_maturity", 0.0),
+                "confidence_tier": _classify_confidence(
+                    expected_edge.get(u, 0.0), combined_modifier.get(u, 1.0),
+                    quality_ceiling, hard_floor
+                ),
+            },
         }
 
         signals.append(signal)
@@ -260,14 +265,37 @@ def _classify_confidence(edge: float, modifier: float, high_threshold: float, lo
 # Publishers / Writers
 # ---------------------------------------------------------------------------
 
+def _apply_jitter(signal: dict) -> dict:
+    """Apply anti-copy jitter for multi-instance divergence.
+
+    Spec PG-26: time_jitter = random_uniform(-30, +30) seconds
+                size_jitter = random_choice([-1, 0, +1]) micros
+    """
+    jittered = signal.copy()
+
+    jitter_s = random.uniform(-30, 30)
+    ts = datetime.fromisoformat(jittered["timestamp"])
+    jittered["timestamp"] = (ts + timedelta(seconds=jitter_s)).isoformat()
+
+    size_delta = random.choice([-1, 0, 1])
+    if size_delta != 0 and jittered.get("size", 0) > 1:
+        jittered["size"] = jittered["size"] + size_delta
+
+    return jittered
+
+
 def _publish_signals(user_id: str, signals: list, below_threshold: list, session_id: int):
-    """Publish signals to Redis stream:signals (durable delivery)."""
+    """Publish signals to Redis stream:signals (durable delivery).
+
+    Anti-copy jitter applied to published copies; internal signals unchanged.
+    """
+    jittered = [_apply_jitter(s) for s in signals]
     try:
         publish_to_stream(STREAM_SIGNALS, {
             "user_id": user_id,
             "session_id": session_id,
-            "timestamp": datetime.now().isoformat(),
-            "signals": signals,
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "signals": jittered,
             "below_threshold": below_threshold,
         })
         logger.debug("ON-B6: Published %d signals to %s", len(signals), STREAM_SIGNALS)

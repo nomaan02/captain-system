@@ -31,6 +31,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, STREAM_TRADE_OUTCOMES
@@ -131,7 +132,7 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
             close_time = _parse_close_time(trading_hours)
             if close_time:
                 buffer_time = close_time - timedelta(minutes=5)
-                if datetime.now() >= buffer_time:
+                if datetime.now(ZoneInfo("America/New_York")) >= buffer_time:
                     _notify(pos["user_id"], "CRITICAL",
                             f"TIME EXIT: {pos['asset']} closing — account does not allow overnight")
                     resolve_position(pos, "TIME_EXIT", current_price, tsm_configs)
@@ -508,7 +509,7 @@ def _parse_close_time(trading_hours: str) -> datetime | None:
     try:
         close_str = trading_hours.split("-")[1].strip()
         h, m = close_str.split(":")
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("America/New_York"))
         return now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
     except (ValueError, IndexError):
         return None
