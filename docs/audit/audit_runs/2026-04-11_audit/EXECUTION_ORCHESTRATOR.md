@@ -174,7 +174,7 @@ written directly with no validation.
 
 ---
 
-### Session 1.2 — Signal Replay Integration
+### Session 1.2 — Signal Replay Integration [COMPLETE]
 
 ````
 ## Execution Session 1.2 — Pseudotrader Signal Replay Integration [USER PRIORITY]
@@ -1188,7 +1188,7 @@ Phase 0 ────────────────────────
 | 1 | G-ONL-017 (Kelly L4 formula) | 0 | 0.1 | RESOLVED |
 | 2 | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0 | 0.1 | RESOLVED |
 | 3 | G-OFF-015 (pseudotrader unwired) | 1 | 1.1 | PENDING |
-| 4 | G-OFF-016 (no pipeline replay) | 1 | 1.2 | PENDING |
+| 4 | G-OFF-016 (no pipeline replay) | 1 | 1.2 | RESOLVED |
 | 5 | G-ONL-042 (fill slippage) | 2 | 2.1 | PENDING |
 | 6 | G-CMD-003 (data feed monitoring) | 2 | 2.2 | PENDING |
 | 7 | G-CMD-004 (balance incident) | 2 | 2.2 | PENDING |

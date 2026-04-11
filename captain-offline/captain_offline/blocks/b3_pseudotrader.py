@@ -438,21 +438,192 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     return result
 
 
+# ---------------------------------------------------------------------------
+# D03 data source + full pipeline replay (G-OFF-016, G-OFF-024)
+# ---------------------------------------------------------------------------
+
+def fetch_d03_trade_outcomes(user_id: str, asset_id: str,
+                              limit: int = 60) -> list[dict]:
+    """Fetch historical trade outcomes from P3-D03 (trade_outcome_log).
+
+    Spec: Doc 32 PG-09 — actual_trade_outcome(d) data source.
+
+    Args:
+        user_id: User identifier (e.g. "primary_user")
+        asset_id: Asset symbol (e.g. "ES")
+        limit: Maximum rows to return
+
+    Returns:
+        List of trade outcome dicts ordered by timestamp descending.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT trade_id, user_id, account_id, asset, direction,
+                      entry_price, exit_price, contracts, pnl, slippage,
+                      outcome, entry_time, exit_time, regime_at_entry,
+                      aim_modifier_at_entry, session, ts
+               FROM p3_d03_trade_outcome_log
+               WHERE user_id = %s AND asset = %s
+               ORDER BY ts DESC
+               LIMIT %s""",
+            (user_id, asset_id, limit),
+        )
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def captain_online_replay(target_date, asset_id: str,
+                           params: dict | None = None,
+                           cached_bars: dict | None = None,
+                           baseline_result: dict | None = None) -> dict:
+    """Replay B1-B6 online pipeline for a single day with optional param overrides.
+
+    Spec: Doc 32 PG-09 §1-2 — captain_online_replay(d, using=params).
+    Uses shared/replay_engine for full pipeline replay. When cached_bars
+    and baseline_result are provided, uses run_whatif() for zero API calls.
+
+    Args:
+        target_date: date object for the day to replay
+        asset_id: Asset to extract results for
+        params: Optional config overrides for load_replay_config()
+        cached_bars: Pre-fetched bars from a prior run_replay() call
+        baseline_result: Full result dict from a prior run_replay() call
+
+    Returns:
+        Dict with signal details and theoretical P&L for the target asset,
+        plus cached_bars and _full_result for efficient whatif chaining.
+    """
+    from shared.replay_engine import load_replay_config, run_replay, run_whatif
+
+    config = load_replay_config(overrides=params)
+
+    if cached_bars is not None and baseline_result is not None:
+        full = run_whatif(config, cached_bars, baseline_result,
+                          target_date=target_date)
+        results_list = full.get("whatif_results", [])
+    else:
+        full = run_replay(config, target_date=target_date)
+        results_list = full.get("results", [])
+
+    for r in results_list:
+        if r.get("asset") == asset_id:
+            return {
+                "asset": asset_id,
+                "date": str(target_date),
+                "direction": r.get("direction", 0),
+                "contracts": r.get("contracts", 0),
+                "pnl": r.get("total_pnl", 0.0),
+                "pnl_per_contract": r.get("pnl_per_contract", 0.0),
+                "exit_reason": r.get("exit_reason", ""),
+                "aim_modifier": r.get("aim_modifier"),
+                "quality_score": r.get("quality_score"),
+                "sizing": r.get("sizing"),
+                "cached_bars": full.get("cached_bars"),
+                "_full_result": full,
+            }
+
+    return {
+        "asset": asset_id,
+        "date": str(target_date),
+        "direction": 0,
+        "contracts": 0,
+        "pnl": 0.0,
+        "exit_reason": "NO_BREAKOUT",
+        "cached_bars": full.get("cached_bars"),
+        "_full_result": full,
+    }
+
+
 def run_pseudotrader(asset_id: str, update_type: str,
-                      baseline_pnl: list[float],
-                      proposed_pnl: list[float]) -> dict:
+                      baseline_pnl: list[float] | None = None,
+                      proposed_pnl: list[float] | None = None,
+                      *,
+                      current_params: dict | None = None,
+                      proposed_params: dict | None = None,
+                      user_id: str = "primary_user",
+                      lookback_days: int = 30) -> dict:
     """Execute P3-PG-09: counterfactual replay comparison.
+
+    PRIMARY PATH (spec Doc 32 PG-09 §1-2): When baseline_pnl/proposed_pnl
+    are not provided, replays B1-B6 via captain_online_replay() for each
+    day in the historical window from D03, then compares outcomes.
+
+    FAST FALLBACK: When baseline_pnl/proposed_pnl are provided directly,
+    skips replay and computes comparison metrics from pre-computed P&L.
 
     Args:
         asset_id: Asset being evaluated
         update_type: "AIM_WEIGHT_CHANGE" | "MODEL_RETRAIN" | "STRATEGY_INJECTION"
-        baseline_pnl: Daily P&L under current parameters
-        proposed_pnl: Daily P&L under proposed parameters
+        baseline_pnl: [FALLBACK] Daily P&L under current parameters
+        proposed_pnl: [FALLBACK] Daily P&L under proposed parameters
+        current_params: [PRIMARY] Config overrides for baseline replay
+        proposed_params: [PRIMARY] Config overrides for proposed replay
+        user_id: User ID for D03 queries (default: "primary_user")
+        lookback_days: Number of trading days to replay (default: 30)
 
     Returns:
         Comparison dict with recommendation
     """
-    # Compute metrics
+    # ── PRIMARY PATH: Full B1-B6 pipeline replay (G-OFF-016) ─────────
+    if baseline_pnl is None and proposed_pnl is None:
+        from datetime import date as _date_cls
+
+        d03_outcomes = fetch_d03_trade_outcomes(user_id, asset_id, lookback_days)
+
+        if not d03_outcomes:
+            logger.warning("No D03 outcomes for %s/%s; cannot run replay path",
+                          asset_id, user_id)
+            return {
+                "update_type": update_type,
+                "sharpe_improvement": 0.0,
+                "drawdown_change": 0.0,
+                "winrate_delta": 0.0,
+                "pbo": 1.0,
+                "dsr": 0.0,
+                "recommendation": "REJECT",
+                "reason": "NO_HISTORICAL_DATA",
+            }
+
+        # Determine unique trading days from D03 timestamps
+        trading_days = sorted({
+            outcome["ts"].date() if hasattr(outcome["ts"], "date")
+            else _date_cls.fromisoformat(str(outcome["ts"])[:10])
+            for outcome in d03_outcomes
+        })
+
+        logger.info("Pseudotrader replay %s [%s]: %d trading days from D03",
+                    asset_id, update_type, len(trading_days))
+
+        # Phase 1: Baseline replay (CURRENT parameters) — fetches bars
+        baseline_pnl = []
+        cached_bars_by_day = {}
+        baseline_results_by_day = {}
+
+        for day in trading_days:
+            result = captain_online_replay(day, asset_id, params=current_params)
+            baseline_pnl.append(result["pnl"])
+            cached_bars_by_day[str(day)] = result.get("cached_bars")
+            baseline_results_by_day[str(day)] = result.get("_full_result")
+
+        # Phase 2: Proposed replay (reuses cached bars — zero API calls)
+        proposed_pnl = []
+        for day in trading_days:
+            day_key = str(day)
+            result = captain_online_replay(
+                day, asset_id,
+                params=proposed_params,
+                cached_bars=cached_bars_by_day.get(day_key),
+                baseline_result=baseline_results_by_day.get(day_key),
+            )
+            proposed_pnl.append(result["pnl"])
+
+        logger.info("Replay complete %s: baseline_total=%.2f, proposed_total=%.2f",
+                    asset_id, sum(baseline_pnl), sum(proposed_pnl))
+    else:
+        # ── FAST FALLBACK: Pre-computed P&L (not the default path) ───
+        logger.debug("Pseudotrader %s: using pre-computed P&L fallback", asset_id)
+
+    # ── Phase 3-5: Comparison metrics (shared by both paths) ─────────
     sharpe_base = _compute_sharpe(baseline_pnl)
     sharpe_prop = _compute_sharpe(proposed_pnl)
     sharpe_improvement = sharpe_prop - sharpe_base

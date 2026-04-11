@@ -69,7 +69,7 @@
 | G-OFF-013 | B2-Escalation | b2_level_escalation.py:13 | Doc 32 PG-05 | `[GAP]` | MEDIUM | L3 "5 consecutive days" checked per-trade (cp_history), not per calendar day |
 | G-OFF-014 | B2-Escalation | b2_level_escalation.py:209 | Doc 32 PG-06:274 | `[GAP]` | MEDIUM | CUSUM breach severity hardcoded as 0.85 float; spec passes string label |
 | G-OFF-015 | B3 | orchestrator.py (entire) | Doc 32 PG-09 | `[GAP]` | CRITICAL | B3 pseudotrader ZERO references in orchestrator; never triggered by any event |
-| G-OFF-016 | B3 | b3_pseudotrader.py:441-512 | Doc 32 PG-09 §1-2 | `[GAP]` | CRITICAL | Spec requires captain_online_replay(); code accepts pre-computed P&L lists instead |
+| G-OFF-016 | B3 | b3_pseudotrader.py:441-512 | Doc 32 PG-09 §1-2 | `[RESOLVED]` | CRITICAL | Spec requires captain_online_replay(); code accepts pre-computed P&L lists instead |
 | G-OFF-017 | B3 | b3_pseudotrader.py (entire) | Doc 28 §7 | `[GAP]` | HIGH | No SHA256 deterministic tick stream generator for synthetic replay |
 | G-OFF-018 | B3 | b3_pseudotrader.py (entire) | Doc 28 §8 | `[GAP]` | HIGH | No LEGACY vs IDEAL mode parameter; no mode-labelled results |
 | G-OFF-019 | B3 | b3_pseudotrader.py:169-438 | Doc 28 §5 | `[GAP]` | HIGH | No per-account-type replay iteration; single account_config only |
@@ -77,7 +77,7 @@
 | G-OFF-021 | B3 | b3_pseudotrader.py:619-755 | Doc 32 PG-09B | `[GAP]` | HIGH | G-025 UNRESOLVED: CB pseudotrader ignores DLL/MDD/scaling/hours account constraints |
 | G-OFF-022 | B3 | b3_pseudotrader.py:475 | Doc 32 PG-09 §4 | `[GAP]` | MEDIUM | DSR n_trials hardcoded to 1; defeats multiple-testing correction purpose |
 | G-OFF-023 | B3 | b3_pseudotrader.py:619-755 | Doc 32 PG-09B | `[GAP]` | MEDIUM | CB pseudotrader computes PBO but hardcodes dsr=0.0 |
-| G-OFF-024 | B3 | b3_pseudotrader.py (entire) | Doc 32 PG-09 | `[GAP]` | MEDIUM | P3-D03 (trade_outcome_log) never queried; uses pre-computed data or JSON files |
+| G-OFF-024 | B3 | b3_pseudotrader.py (entire) | Doc 32 PG-09 | `[RESOLVED]` | MEDIUM | P3-D03 (trade_outcome_log) never queried; uses pre-computed data or JSON files |
 | G-OFF-025 | B4 | b4_injection.py:142-149 | Doc 32 PG-10 §4 | `[GAP]` | HIGH | PARALLEL_TRACK missing upper bound (ratio ≤ 1.2); high-ratio high-PBO candidates enter parallel |
 | G-OFF-026 | B4 | b4_injection.py:46-65 | Doc 32 PG-10 §1 | `[GAP]` | MEDIUM | Simplified retroactive AIM analysis; no per-AIM replay over candidate's historical window |
 | G-OFF-027 | B4 | b4_injection.py:109-169 | Doc 32 PG-10 §5 | `[GAP]` | MEDIUM | No RPT-05 report generation or GUI notification on injection result |
