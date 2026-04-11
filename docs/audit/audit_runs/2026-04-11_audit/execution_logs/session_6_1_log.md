@@ -7,7 +7,7 @@
             | **CRITICALs** | None |
             | **Git HEAD (before)** | `b238041` |
             | **Worktree** | `/home/nomaan/captain-system` |
-            | **Status** | COMPLETE |
+            | **Status** | RUNNING |
 
             ---
 
@@ -63,3 +63,30 @@ Run unit tests. Verify sizing pipeline layer order and formula correctness.
             ## Execution Output
 
             ```
+Session 6.1 complete. Commit `39b50f3`. Here's the summary of all 7 fixes:
+
+| # | Finding | Fix Applied |
+|---|---------|-------------|
+| 1 | **G-ONL-004** | `_get_overnight_range` now computes `abs(open/prior_close - 1)` from TopstepX daily bars — AIM-01 vrp_overnight is live |
+| 2 | **G-ONL-005** | Options stubs (`_get_options_volume`, `_get_put_iv`, `_get_option_chain`) documented as DATA_UNAVAILABLE with one-time session log; AIM-02/03 degrade gracefully to neutral |
+| 3 | **G-ONL-006** | `_get_trailing_pcr` documented as DATA_UNAVAILABLE (requires options volume); AIM-02 uses skew_z alone at 0.4 weight |
+| 4 | **G-ONL-018** | Sizing override moved from Step 8 (post-TSM, on contracts) to Step 5b (pre-TSM, on Kelly fraction) — matches spec L6→L7 position |
+| 5 | **G-ONL-019** | `risk_per_contract` now uses spec formula `strategy_sl * point_value + expected_fee` instead of EWMA avg_loss |
+| 6 | **G-ONL-021** | Quality gate computes `dollar_per_contract = quality_score / total_contracts` with floor/ceiling check; `final_contracts` parameter added and wired from orchestrator |
+| 7 | **G-ONL-013** | `run_aim_aggregation()` now loads session_budget_weights from D26 and includes in return dict |
+
+All 95 unit tests pass. All 7 GAP_ANALYSIS entries updated to `[RESOLVED]`.
+
+```
+
+---
+
+## Post-Execution State
+
+| Field | Value |
+|-------|-------|
+| **Status** | **COMPLETED** |
+| **Completed** | 2026-04-11 12:46:15 ET |
+| **Duration** | 10m 40s |
+| **Git HEAD (after)** | `39b50f3` |
+| **Commit** | `39b50f3` |

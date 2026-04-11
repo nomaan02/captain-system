@@ -7,7 +7,7 @@
             | **CRITICALs** | None |
             | **Git HEAD (before)** | `6e44a7c` |
             | **Worktree** | `/home/nomaan/captain-system` |
-            | **Status** | COMPLETE |
+            | **Status** | RUNNING |
 
             ---
 
@@ -56,22 +56,30 @@ Run unit tests. Verify BOCPD state persists to D04 and restores on startup.
 
             ## Execution Output
 
-            ### G-OFF-009: BOCPD Full State Persistence — RESOLVED
-            - `b2_bocpd.py:to_dict()`: Now serializes `run_length_posterior` (sparse) and NIG priors
-            - `b2_bocpd.py:from_dict()`: Restores both posterior array and NIG priors from JSON
-            - `b2_bocpd.py:run_bocpd_update()`: Writes full state JSON to `bocpd_run_length_posterior` column
+            ```
+Session 5.2 complete. Here's the summary:
 
-            ### G-OFF-010: CUSUM Init-Time Calibration — RESOLVED
-            - `orchestrator.py:_init_cusum_calibration()`: Called during `start()` after detector restoration
-            - Loads trade history from D03 and runs bootstrap calibration for assets with empty limits
+**Session 5.2 — Offline B2 Decay Detection HIGH Fixes**
 
-            ### G-OFF-011: Detector State Restoration on Startup — RESOLVED
-            - `orchestrator.py:_restore_detectors()`: Queries D04 `LATEST ON`, calls `from_dict()` for BOCPD and CUSUM
+| Finding | Status | What Changed |
+|---------|--------|-------------|
+| **G-OFF-009** | RESOLVED | `b2_bocpd.py` — `to_dict()` now serializes `run_length_posterior` (sparse) + NIG priors; `from_dict()` restores both; `run_bocpd_update()` writes full state JSON to `bocpd_run_length_posterior` column in D04 |
+| **G-OFF-010** | RESOLVED | `orchestrator.py` — New `_init_cusum_calibration()` method runs bootstrap calibration at startup for any detector with empty `sequential_limits`, using trade history from D03 |
+| **G-OFF-011** | RESOLVED | `orchestrator.py` — New `_restore_detectors()` method queries D04 `LATEST ON last_updated PARTITION BY asset_id` and calls `from_dict()` for both BOCPD and CUSUM detectors |
+| **G-OFF-049** | RESOLVED | Already fixed — Phase 3 (`phase3_seed_aim_weights`) in `bootstrap_production.py` seeds D02 with 60 rows (10 assets x 6 AIMs). Gap was filed against an earlier version. |
 
-            ### G-OFF-049: D02 Bootstrap — ALREADY RESOLVED
-            - Phase 3 in `bootstrap_production.py` already seeds D02 with 60 rows
+All 95 unit tests pass. Commit: `0b233ac`.
 
-            ### Verification
-            - All 95 unit tests pass
-            - GAP_ANALYSIS.md: All 4 findings marked `[RESOLVED]`
-            - EXECUTION_ORCHESTRATOR.md: Session 5.2 marked COMPLETE
+```
+
+---
+
+## Post-Execution State
+
+| Field | Value |
+|-------|-------|
+| **Status** | **COMPLETED** |
+| **Completed** | 2026-04-11 12:18:14 ET |
+| **Duration** | 7m 37s |
+| **Git HEAD (after)** | `0b233ac` |
+| **Commit** | `0b233ac` |

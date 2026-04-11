@@ -7,7 +7,7 @@
             | **CRITICALs** | None |
             | **Git HEAD (before)** | `39b50f3` |
             | **Worktree** | `/home/nomaan/captain-system` |
-            | **Status** | COMPLETE |
+            | **Status** | RUNNING |
 
             ---
 
@@ -64,47 +64,35 @@ Run unit tests. Verify CB uses dollar budget, signal has 6 fields, time-exit is 
 
             ## Execution Output
 
-### G-ONL-024 (HIGH) — CB L2 Dollar Budget
-- **File:** `b5c_circuit_breaker.py` — replaced `_layer2_budget` function
-- **Before:** Trade-count ceiling `n_t >= N` where `N = floor((e*A)/(MDD*p+phi))`
-- **After:** Dollar-budget check `remaining = E - |L_t|; IF remaining < rho_j → BLOCK`
-- Updated call site to pass `rho_j` instead of `fee_per_trade`
-
-### G-ONL-025 (HIGH) — CB L4 Rolling Basket Sharpe
-- **File:** `b5c_circuit_breaker.py` — replaced `_layer4_correlation_sharpe`
-- **Before:** Analytical Sharpe from D25 CB params `S = mu_b/(sigma*sqrt(1+2*n_t*rho_bar))`
-- **After:** `rolling_basket_sharpe(lookback=60d)` querying per-trade P&L from D03
-- Added `_get_rolling_trade_returns()` helper; cold start < 10 trades → skip
-
-### G-ONL-029 (HIGH) — Signal Blob Reduction
-- **File:** `b6_signal_output.py` — restructured signal dict
-- **Before:** ~30 fields flat in signal dict
-- **After:** 6 spec fields at top level (asset, direction, size, tp_level, sl_level, timestamp) + routing (user_id, session, per_account) + `_context` sub-dict for internal fields
-- Updated shadow monitor `register_shadow_position` to read from `_context`
-
-### G-ONL-030 (HIGH) — Anti-Copy Jitter
-- **File:** `b6_signal_output.py` — added `_apply_jitter()` function
-- Time jitter: `random.uniform(-30, 30)` seconds on timestamp
-- Size jitter: `random.choice([-1, 0, 1])` on contract size (floor at 1)
-- Applied to published copies only; internal signals unchanged
-
-### G-ONL-032 (HIGH) — Timezone-Aware Time-Exit
-- **File:** `b7_position_monitor.py` — two changes
-- `monitor_positions` line 134: `datetime.now()` → `datetime.now(ZoneInfo("America/New_York"))`
-- `_parse_close_time`: `datetime.now()` → `datetime.now(ZoneInfo("America/New_York"))`
-
-### G-ONL-036 (HIGH) — Shadow Monitor Retry
-- **File:** `b7_shadow_monitor.py` — `_resolve_shadow` publish block
-- Added 3-attempt exponential backoff (0.5s, 1s, 2s) matching B7 real publish pattern
-
-### G-ONL-048 (HIGH) — Crash Recovery Checkpoint Branching
-- **File:** `main.py` — checkpoint logic after `get_last_checkpoint()`
-- Detects mid-session crash (next_action not in shutdown/initialization)
-- Writes CRASH_RECOVERY checkpoint, logs warning with prior state
-
-### Tests
-- All 95 unit tests pass (0.54s)
-- Updated `test_b5c_circuit.py`: L2 tests use dollar-budget semantics, L4 tests mock `_get_rolling_trade_returns`, all integration tests include rolling returns mock
-- Updated `test_b6_signal.py`: `REQUIRED_SIGNAL_FIELDS` updated to match new 6-field + routing + _context structure
-
             ```
+Session 6.2 is complete. Here's a summary:
+
+**Commit `9bdc2e2`** — 7 HIGH-severity fixes across 5 Online process files:
+
+| # | Finding | What Changed |
+|---|---------|-------------|
+| 1 | G-ONL-024 | CB L2 now checks dollar budget (`remaining = E - |L_t|` vs `rho_j`) instead of trade-count ceiling |
+| 2 | G-ONL-025 | CB L4 now computes `rolling_basket_sharpe(lookback=60d)` from D03 trade history instead of analytical formula |
+| 3 | G-ONL-029 | Signal blob reduced to 6 spec fields at top level; intelligence context moved to `_context` sub-dict |
+| 4 | G-ONL-030 | Anti-copy jitter: +/-30s timestamp, +/-1 micro size applied to published signals (internal unchanged) |
+| 5 | G-ONL-032 | Time-exit and `_parse_close_time` use `datetime.now(ZoneInfo("America/New_York"))` |
+| 6 | G-ONL-036 | Shadow monitor publish now has 3-attempt exponential backoff (0.5s, 1s, 2s) |
+| 7 | G-ONL-048 | Crash recovery branching detects mid-session crashes and writes CRASH_RECOVERY checkpoint |
+
+**Tests:** 95/95 passing. Tests updated for new L2 dollar-budget semantics, L4 rolling Sharpe mocking, and signal structure.
+
+**Phase 6 is now COMPLETE** in the execution orchestrator.
+
+```
+
+---
+
+## Post-Execution State
+
+| Field | Value |
+|-------|-------|
+| **Status** | **COMPLETED** |
+| **Completed** | 2026-04-11 13:02:15 ET |
+| **Duration** | 15m 54s |
+| **Git HEAD (after)** | `9bdc2e2` |
+| **Commit** | `9bdc2e2` |

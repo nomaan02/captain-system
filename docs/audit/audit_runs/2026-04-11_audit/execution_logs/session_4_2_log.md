@@ -7,7 +7,7 @@
             | **CRITICALs** | G-OFF-046 |
             | **Git HEAD (before)** | `4a7e258` |
             | **Worktree** | `/home/nomaan/captain-system` |
-            | **Status** | COMPLETE |
+            | **Status** | RUNNING |
 
             ---
 
@@ -90,3 +90,36 @@ Implement `get_current_state(component_id)`:
             ## Execution Output
 
             ```
+Session 4.2 complete. Commit `c4572c1`. Here's what was implemented:
+
+### G-OFF-046 (CRITICAL) — `rollback_to_version()`
+Full rollback flow per Doc 32 spec:
+1. Loads target version from D18
+2. Loads current live state via `get_current_state()`
+3. Runs pseudotrader comparison per asset (via `run_signal_replay_comparison`)
+4. If REJECT: aborts, logs, publishes HIGH alert
+5. If ADOPT: snapshots current state for undo, restores target to live tables
+6. Runs regression tests (row count + domain invariants); reverts if failed
+7. Publishes HIGH notification to `captain:alerts` for audit trail
+
+### G-OFF-047 (HIGH) — MAX_VERSIONS enforcement
+`_enforce_max_versions()` called after every snapshot write. Prunes oldest versions beyond the 50-version limit with cold-storage migration logging.
+
+### G-OFF-048 (HIGH) — `get_current_state()` helper
+Loads live state from the correct backing table (`D01`/`D02`/`D05`/`D12`/`D17`) based on component_id. `snapshot_before_update` now accepts `state=None` (auto-loads) while remaining backward-compatible with existing callers that pass state explicitly.
+
+**CRITICAL #11 (G-OFF-046) is now RESOLVED. All 11 CRITICALs in the tracker are RESOLVED. Phase 4 is COMPLETE.**
+
+```
+
+---
+
+## Post-Execution State
+
+| Field | Value |
+|-------|-------|
+| **Status** | **COMPLETED** |
+| **Completed** | 2026-04-11 12:03:00 ET |
+| **Duration** | 10m 25s |
+| **Git HEAD (after)** | `c4572c1` |
+| **Commit** | `c4572c1` |

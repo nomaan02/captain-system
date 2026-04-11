@@ -10,12 +10,14 @@
 ## How to Use This Document
 
 Each session below contains a **Passover Prompt** — a self-contained block you paste into a fresh Claude Code context. The prompt tells Claude:
+
 1. What files to read first (spec + code)
 2. What the goal is and what to change
 3. How to verify the work
 4. How to mark completion (update this doc + GAP_ANALYSIS.md + commit)
 
 **Workflow per session:**
+
 1. Open a fresh Claude Code context in `~/captain-system`
 2. Copy the passover prompt block for the session
 3. Paste it as your first message
@@ -28,19 +30,21 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 
 ## Phase Summary
 
-| Phase | Title | Scope | Sessions | CRITICALs Resolved | Status |
-|-------|-------|-------|----------|---------------------|--------|
-| 0 | Quick Wins | Kelly L4 formula + GUI WebSocket sanitize | 1 | 2 | COMPLETE |
-| 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | COMPLETE |
-| 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | COMPLETE |
-| 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | COMPLETE |
-| 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | COMPLETE |
-| 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 3 | COMPLETE |
-| 6 | Online HIGH Fixes | B1-B7 HIGH gaps (14 findings) | 2 | 0 | PENDING |
-| 7 | Command HIGH Fixes | Notifications, compliance, api.py (15 findings) | 2 | 0 | PENDING |
-| 8 | Cross-Cutting Sweeps | datetime, primary_user, heartbeat, LATEST ON | 2 | 0 | PENDING |
-| 9 | MEDIUM/LOW Polish | Remaining 93 MEDIUM + 40 LOW | Ongoing | 0 | PENDING |
-| **TOTAL** | | | **~19 sessions** | **11** + 1 overlap | |
+
+| Phase     | Title                                            | Scope                                           | Sessions         | CRITICALs Resolved | Status   |
+| --------- | ------------------------------------------------ | ----------------------------------------------- | ---------------- | ------------------ | -------- |
+| 0         | Quick Wins                                       | Kelly L4 formula + GUI WebSocket sanitize       | 1                | 2                  | COMPLETE |
+| 1         | Pseudotrader Wiring [USER PRIORITY]              | Wire B3 into orchestrator, implement replay     | 3                | 2                  | COMPLETE |
+| 2         | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents   | 2                | 3                  | COMPLETE |
+| 3         | Crash Recovery + Shared Infra                    | Journal branching, Redis recovery, QuestDB pool | 2                | 1                  | COMPLETE |
+| 4         | Remaining CRITICALs                              | Sensitivity fix, RPT-12, version rollback       | 2                | 3                  | COMPLETE |
+| 5         | Offline HIGH Fixes                               | B1-B9 HIGH gaps (20 findings)                   | 3                | 3                  | COMPLETE |
+| 6         | Online HIGH Fixes                                | B1-B7 HIGH gaps (14 findings)                   | 2                | 0                  | COMPLETE |
+| 7         | Command HIGH Fixes                               | Notifications, compliance, api.py (15 findings) | 2                | 0                  | COMPLETE |
+| 8         | Cross-Cutting Sweeps                             | datetime, primary_user, heartbeat, LATEST ON    | 2                | 0                  | COMPLETE |
+| 9         | MEDIUM/LOW Polish                                | Remaining 93 MEDIUM + 40 LOW                    | Ongoing          | 0                  | PENDING  |
+| **TOTAL** |                                                  |                                                 | **~19 sessions** | **11** + 1 overlap |          |
+
 
 **Note:** 12th CRITICAL (G-XCT-015) overlaps with G-ONL-028 resolved in Phase 0.
 
@@ -52,7 +56,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 
 ### Session 0.1 — Kelly L4 Formula Fix + GUI WebSocket Sanitization
 
-````
+```
 ## Execution Session 0.1 — Quick Wins: Kelly L4 + GUI Sanitization
 
 You are executing Session 0.1 of the Captain System gap analysis fix plan.
@@ -106,7 +110,7 @@ The spec defines PROHIBITED_FIELDS that must be stripped before GUI transmission
    - Change Phase 0 status from PENDING to COMPLETE
    - Change Session 0.1 CRITICALs 1 and 2 in the tracker from PENDING to RESOLVED
 3. Commit: `fix(online+command): Kelly L4 robust formula + GUI WebSocket sanitization — resolves G-ONL-017, G-ONL-028, G-XCT-015`
-````
+```
 
 **CRITICALs resolved:** G-ONL-017, G-ONL-028/G-XCT-015 (2 unique)
 
@@ -114,7 +118,7 @@ The spec defines PROHIBITED_FIELDS that must be stripped before GUI transmission
 
 ### Session 1.1 — Pseudotrader Orchestrator Integration
 
-````
+```
 ## Execution Session 1.1 — Pseudotrader Orchestrator Integration [USER PRIORITY]
 
 You are executing Session 1.1 of the Captain System gap analysis fix plan.
@@ -168,7 +172,7 @@ written directly with no validation.
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 1.1 as COMPLETE in Phase Summary
 3. In EXECUTION_ORCHESTRATOR.md: Mark CRITICAL #3 (G-OFF-015) as RESOLVED in tracker
 4. Commit: `fix(offline): wire pseudotrader into orchestrator as pre-commit gate — resolves G-OFF-015`
-````
+```
 
 **CRITICALs resolved:** G-OFF-015 (1)
 
@@ -176,7 +180,7 @@ written directly with no validation.
 
 ### Session 1.2 — Signal Replay Integration [COMPLETE]
 
-````
+```
 ## Execution Session 1.2 — Pseudotrader Signal Replay Integration [USER PRIORITY]
 
 You are executing Session 1.2 of the Captain System gap analysis fix plan.
@@ -229,7 +233,7 @@ pre-computed data or JSON files.
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 1.2 as COMPLETE
 3. In EXECUTION_ORCHESTRATOR.md: Mark CRITICAL #4 (G-OFF-016) as RESOLVED in tracker
 4. Commit: `fix(offline): pseudotrader signal replay via SignalReplayEngine + D03 data source — resolves G-OFF-016, G-OFF-024`
-````
+```
 
 **CRITICALs resolved:** G-OFF-016 (1)
 
@@ -237,7 +241,7 @@ pre-computed data or JSON files.
 
 ### Session 1.3 — Account-Aware Replay + Depth Fixes [COMPLETE]
 
-````
+```
 ## Execution Session 1.3 — Pseudotrader Account-Aware Replay + Depth Fixes
 
 You are executing Session 1.3 of the Captain System gap analysis fix plan.
@@ -304,7 +308,7 @@ computation. This defeats the multiple-testing correction purpose.
 3. Commit: `fix(offline): account-aware pseudotrader replay + bankruptcy + DSR — resolves G-OFF-019 to G-OFF-023`
 
 **Note:** G-OFF-017 (SHA256 tick stream) and G-OFF-018 (LEGACY/IDEAL modes) are deferred to Phase 5 — they are HIGH, not CRITICAL.
-````
+```
 
 **CRITICALs resolved (Phase 1 total):** G-OFF-015, G-OFF-016 (2)
 
@@ -312,7 +316,7 @@ computation. This defeats the multiple-testing correction purpose.
 
 ### Session 2.1 — Fill Slippage Monitor
 
-````
+```
 ## Execution Session 2.1 — Fill Slippage Monitoring [USER PRIORITY]
 
 You are executing Session 2.1 of the Captain System gap analysis fix plan.
@@ -375,7 +379,7 @@ Both should be called at session end.
 1. In GAP_ANALYSIS.md: Change G-ONL-042, G-ONL-043, G-ONL-044 from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 2.1 as COMPLETE, CRITICAL #5 as RESOLVED
 3. Commit: `fix(online): fill slippage monitoring with 5 spec metrics + alert — resolves G-ONL-042, G-ONL-043, G-ONL-044`
-````
+```
 
 **CRITICALs resolved:** G-ONL-042 (1)
 
@@ -383,7 +387,7 @@ Both should be called at session end.
 
 ### Session 2.2 — Data Feed Monitoring + Balance Incident
 
-````
+```
 ## Execution Session 2.2 — Data Feed Monitoring + Balance Reconciliation Incident
 
 You are executing Session 2.2 of the Captain System gap analysis fix plan.
@@ -442,7 +446,7 @@ but doesn't create a formal incident with audit trail.
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 2.2 and Phase 2 as COMPLETE
 3. Mark CRITICALs #6 (G-CMD-003) and #7 (G-CMD-004) as RESOLVED in tracker
 4. Commit: `fix(command): data feed monitoring + balance incident creation — resolves G-CMD-003, G-CMD-004, G-CMD-016, G-CMD-017, G-CMD-043`
-````
+```
 
 **CRITICALs resolved (Phase 2 total):** G-ONL-042, G-CMD-003, G-CMD-004 (3)
 
@@ -450,7 +454,7 @@ but doesn't create a formal incident with audit trail.
 
 ### Session 3.1 — Crash Recovery Branching
 
-````
+```
 ## Execution Session 3.1 — Crash Recovery Branching
 
 You are executing Session 3.1 of the Captain System gap analysis fix plan.
@@ -505,7 +509,7 @@ fixing the consumers). The fix is entirely in the 3 main.py files.
 1. In GAP_ANALYSIS.md: Change G-XCT-012 from `[GAP]` to `[RESOLVED]`, G-SHR-018 from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 3.1 as COMPLETE, CRITICAL #8 as RESOLVED
 3. Commit: `fix(all): crash recovery checkpoint branching in all 3 processes — resolves G-XCT-012, G-SHR-018`
-````
+```
 
 **CRITICALs resolved:** G-XCT-012 (1)
 
@@ -513,7 +517,7 @@ fixing the consumers). The fix is entirely in the 3 main.py files.
 
 ### Session 3.2 — Shared Module Reliability
 
-````
+```
 ## Execution Session 3.2 — Shared Module Reliability
 
 You are executing Session 3.2 of the Captain System gap analysis fix plan.
@@ -583,7 +587,7 @@ calls can lose data.
 1. In GAP_ANALYSIS.md: Change G-SHR-002, G-SHR-003, G-SHR-004, G-SHR-012, G-SHR-015, G-SHR-019, G-SHR-020 from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 3.2 and Phase 3 as COMPLETE
 3. Commit: `fix(shared): Redis recovery, QuestDB pooling, vault threading, journal cleanup — resolves G-SHR-002 to G-SHR-020`
-````
+```
 
 **CRITICALs resolved (Phase 3 total):** G-XCT-012 (1)
 
@@ -591,7 +595,7 @@ calls can lose data.
 
 ### Session 4.1 — Sensitivity Fix + RPT-12 ✅ COMPLETE
 
-````
+```
 ## Execution Session 4.1 — Sensitivity Per-Parameter Perturbation + RPT-12 Alpha Decomposition
 
 You are executing Session 4.1 of the Captain System gap analysis fix plan.
@@ -654,7 +658,7 @@ returns to individual strategy components.
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 4.1 as COMPLETE
 3. Mark CRITICALs #9 (G-OFF-029) and #10 (G-CMD-002) as RESOLVED in tracker
 4. Commit: `fix(offline+command): per-param sensitivity grid + RPT-12 alpha decomposition — resolves G-OFF-029, G-OFF-030, G-CMD-002`
-````
+```
 
 **CRITICALs resolved:** G-OFF-029, G-CMD-002 (2)
 
@@ -662,7 +666,7 @@ returns to individual strategy components.
 
 ### Session 4.2 — Version Rollback
 
-````
+```
 ## Execution Session 4.2 — Version Rollback Implementation
 
 You are executing Session 4.2 of the Captain System gap analysis fix plan.
@@ -727,7 +731,7 @@ Implement `get_current_state(component_id)`:
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 4.2 and Phase 4 as COMPLETE
 3. Mark CRITICAL #11 (G-OFF-046) as RESOLVED in tracker — ALL CRITICALs NOW RESOLVED
 4. Commit: `fix(offline): version rollback with pseudotrader comparison + MAX_VERSIONS enforcement — resolves G-OFF-046, G-OFF-047, G-OFF-048`
-````
+```
 
 **CRITICALs resolved (Phase 4 total):** G-OFF-029, G-CMD-002, G-OFF-046 (3)
 
@@ -735,7 +739,7 @@ Implement `get_current_state(component_id)`:
 
 ### Session 5.1 — Offline B1 AIM Block Fixes [COMPLETE]
 
-````
+```
 ## Execution Session 5.1 — Offline B1 AIM Block HIGH Fixes
 
 You are executing Session 5.1 of the Captain System gap analysis fix plan.
@@ -770,13 +774,13 @@ Run unit tests. Verify each fix matches the spec reference listed.
 1. In GAP_ANALYSIS.md: Change all 5 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 5.1 as COMPLETE
 3. Commit: `fix(offline): B1 AIM block HIGH fixes — HMM obs min, smoothing, drift retrain, injection bound, walk-forward — resolves G-OFF-002 to G-OFF-032`
-````
+```
 
 ---
 
 ### Session 5.2 — Offline B2 Decay Detection Fixes [COMPLETE]
 
-````
+```
 ## Execution Session 5.2 — Offline B2 Decay Detection HIGH Fixes
 
 You are executing Session 5.2 of the Captain System gap analysis fix plan.
@@ -808,13 +812,13 @@ Run unit tests. Verify BOCPD state persists to D04 and restores on startup.
 1. In GAP_ANALYSIS.md: Change all 4 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 5.2 as COMPLETE
 3. Commit: `fix(offline): B2 decay detection — BOCPD persistence, CUSUM init calibration, state restore — resolves G-OFF-009 to G-OFF-049`
-````
+```
 
 ---
 
 ### Session 5.3 — Offline B7-B9 Kelly/CB/Diagnostic Fixes ✅ COMPLETE
 
-````
+```
 ## Execution Session 5.3 — Offline B7-B9 Kelly/CB/Diagnostic + Remaining B3 HIGH Fixes
 
 You are executing Session 5.3 of the Captain System gap analysis fix plan.
@@ -849,13 +853,13 @@ Run unit tests. Focus on Kelly update and CB params tests.
 1. In GAP_ANALYSIS.md: Change all 6 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 5.3 and Phase 5 as COMPLETE
 3. Commit: `fix(offline): Kelly variance, CB L_star/cold_start, PBO OOS, pseudotrader SHA256+modes — resolves G-OFF-017 to G-OFF-041`
-````
+```
 
 ---
 
 ### Session 6.1 — Online Sizing Pipeline Fixes ✅ COMPLETE
 
-````
+```
 ## Execution Session 6.1 — Online Sizing Pipeline HIGH Fixes
 
 You are executing Session 6.1 of the Captain System gap analysis fix plan.
@@ -893,13 +897,13 @@ Run unit tests. Verify sizing pipeline layer order and formula correctness.
 1. In GAP_ANALYSIS.md: Change all 7 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 6.1 as COMPLETE
 3. Commit: `fix(online): sizing pipeline — features data, Kelly override/formula, quality gate, AIM budget — resolves G-ONL-004 to G-ONL-021`
-````
+```
 
 ---
 
 ### Session 6.2 — Online Circuit Breaker + Signal Output Fixes ✅ COMPLETE
 
-````
+```
 ## Execution Session 6.2 — Online Circuit Breaker + Signal Output HIGH Fixes
 
 You are executing Session 6.2 of the Captain System gap analysis fix plan.
@@ -939,13 +943,13 @@ Run unit tests. Verify CB uses dollar budget, signal has 6 fields, time-exit is 
 1. In GAP_ANALYSIS.md: Change all 7 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 6.2 and Phase 6 as COMPLETE
 3. Commit: `fix(online): CB dollar-budget, signal reduction, anti-copy jitter, tz-fix, retry — resolves G-ONL-024 to G-ONL-048`
-````
+```
 
 ---
 
-### Session 7.1 — Command Notifications + Incidents Fixes
+### Session 7.1 — Command Notifications + Incidents Fixes [COMPLETE]
 
-````
+```
 ## Execution Session 7.1 — Command Notifications + Incidents HIGH Fixes
 
 You are executing Session 7.1 of the Captain System gap analysis fix plan.
@@ -982,13 +986,13 @@ Run unit tests. Verify notification routing and escalation logic.
 1. In GAP_ANALYSIS.md: Change all 7 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 7.1 as COMPLETE
 3. Commit: `fix(command): notification routing, escalation timers, incident creation, recon gate — resolves G-CMD-008 to G-CMD-015`
-````
+```
 
 ---
 
-### Session 7.2 — Command Compliance + API Fixes
+### Session 7.2 — Command Compliance + API Fixes [COMPLETE]
 
-````
+```
 ## Execution Session 7.2 — Command Compliance + API HIGH Fixes
 
 You are executing Session 7.2 of the Captain System gap analysis fix plan.
@@ -1027,13 +1031,15 @@ Run unit tests. Verify no "primary_user" hardcodes remain in api.py.
 1. In GAP_ANALYSIS.md: Change all 8 findings from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 7.2 and Phase 7 as COMPLETE
 3. Commit: `fix(command): compliance checks, API user_id, audit log, JWT refresh — resolves G-CMD-005 to G-CMD-019`
-````
+```
 
 ---
 
 ### Session 8.1 — Timezone + Heartbeat Cross-Cutting Sweep
 
-````
+**Status: COMPLETE** — 75+ datetime.now() replaced with now_et() across 23 files (captain-online: 6 files, captain-command: 13 files, shared: 4 files). Heartbeat publishers added to Offline (30s via scheduler) and Online (30s throttled in session loop). G-XCT-001 through G-XCT-004 resolved. G-XCT-005/006 (hardcoded user) deferred to Session 8.2. 95 tests passing.
+
+```
 ## Execution Session 8.1 — datetime.now() Sweep + Heartbeat Fix
 
 You are executing Session 8.1 of the Captain System gap analysis fix plan.
@@ -1078,13 +1084,15 @@ Publish on: idle intervals between sessions, alongside stage transitions.
 1. In GAP_ANALYSIS.md: Change G-XCT-001 through G-XCT-006 from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 8.1 as COMPLETE
 3. Commit: `fix(all): replace 68+ datetime.now() with now_et() + add heartbeats to offline/online — resolves G-XCT-001 to G-XCT-006`
-````
+```
 
 ---
 
 ### Session 8.2 — Primary User + LATEST ON Cross-Cutting Sweep
 
-````
+**Status: COMPLETE** — All hardcoded "primary_user" replaced: shadow monitor uses signal["user_id"], command orchestrator uses sanitised_order user_id, pseudotrader/online orchestrator/api use BOOTSTRAP_USER_ID env var fallback. Scripts/seeds unchanged. LATEST ON added to D23 CB query (removed _seen set) and two D08 GUI queries. G-XCT-007/008/013/014 resolved. 95 tests passing.
+
+```
 ## Execution Session 8.2 — primary_user Sweep + LATEST ON Fix
 
 You are executing Session 8.2 of the Captain System gap analysis fix plan.
@@ -1123,13 +1131,14 @@ legitimate default for single-instance deployment.
 1. In GAP_ANALYSIS.md: Change G-XCT-007 through G-XCT-011 from `[GAP]` to `[RESOLVED]`
 2. In EXECUTION_ORCHESTRATOR.md: Mark Session 8.2 and Phase 8 as COMPLETE
 3. Commit: `fix(all): replace 29 hardcoded primary_user + add LATEST ON to CB/GUI queries — resolves G-XCT-007 to G-XCT-011`
-````
+```
 
 ---
 
 ### Phase 9 — MEDIUM/LOW Polish (No Passover Prompts)
 
 Phase 9 covers 93 MEDIUM + 40 LOW findings. These are not session-structured because:
+
 - They have no blocking dependencies
 - They can be done in any order
 - They can be picked up opportunistically alongside live operation
@@ -1137,17 +1146,20 @@ Phase 9 covers 93 MEDIUM + 40 LOW findings. These are not session-structured bec
 **Grouping by effort:**
 
 **Quick MEDIUM fixes (< 30 min each):**
+
 - G-OFF-005, 006, 007, 012, 013, 014 — AIM lifecycle/CUSUM minor fixes
 - G-ONL-001, 002, 003, 007, 012, 014, 015, 016 — Data ingestion/AIM minor
 - G-CMD-020, 022, 032, 033, 037, 039, 045, 047 — Field names, caching, naming
 
 **Medium MEDIUM fixes (1-2 hours each):**
+
 - G-OFF-026, 027, 028, 030, 031, 034, 035 — Injection/sensitivity/expansion
 - G-OFF-036, 037, 038, 042, 043, 044, 050 — TSM/CB/diagnostic
 - G-ONL-020, 022, 023, 026, 027, 031, 033, 034, 037, 039, 044-047 — Various
 - G-CMD-021-031, 034-036, 038-050 — Various command blocks
 
 **LOW findings (defer indefinitely or fix opportunistically):**
+
 - 40 findings across all programs — polish, optimization, non-essential
 
 ---
@@ -1167,13 +1179,14 @@ Phase 0 ────────────────────────
     │
     ├── Phase 5 (offline HIGH) ─── COMPLETE
     ├── Phase 6 (online HIGH) ─── COMPLETE
-    ├── Phase 7 (command HIGH) ── can start after Phase 2
+    ├── Phase 7 (command HIGH) ─── COMPLETE
     │
-    ├── Phase 8 (cross-cutting) ── can start anytime, ideally after 5-7
+    ├── Phase 8 (cross-cutting) ─── COMPLETE
     └── Phase 9 (MEDIUM/LOW) ──── ongoing, no blocking deps
 ```
 
 **Parallelization opportunities:**
+
 - Phases 1, 2, 3 can run in parallel (different processes, no file overlap)
 - Phases 5, 6, 7 can run in parallel (different processes)
 - Phase 8 should run after 5-7 to avoid merge conflicts on shared files
@@ -1183,21 +1196,24 @@ Phase 0 ────────────────────────
 
 ## CRITICAL Resolution Tracker
 
-| # | Finding | Phase | Session | Status |
-|---|---------|-------|---------|--------|
-| 1 | G-ONL-017 (Kelly L4 formula) | 0 | 0.1 | RESOLVED |
-| 2 | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0 | 0.1 | RESOLVED |
-| 3 | G-OFF-015 (pseudotrader unwired) | 1 | 1.1 | RESOLVED |
-| 4 | G-OFF-016 (no pipeline replay) | 1 | 1.2 | RESOLVED |
-| 5 | G-ONL-042 (fill slippage) | 2 | 2.1 | RESOLVED |
-| 6 | G-CMD-003 (data feed monitoring) | 2 | 2.2 | RESOLVED |
-| 7 | G-CMD-004 (balance incident) | 2 | 2.2 | RESOLVED |
-| 8 | G-XCT-012 (crash recovery) | 3 | 3.1 | RESOLVED |
-| 9 | G-OFF-029 (sensitivity per-param) | 4 | 4.1 | RESOLVED |
-| 10 | G-CMD-002 (RPT-12) | 4 | 4.1 | RESOLVED |
-| 11 | G-OFF-046 (version rollback) | 4 | 4.2 | RESOLVED |
+
+| #   | Finding                               | Phase | Session | Status   |
+| --- | ------------------------------------- | ----- | ------- | -------- |
+| 1   | G-ONL-017 (Kelly L4 formula)          | 0     | 0.1     | RESOLVED |
+| 2   | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0     | 0.1     | RESOLVED |
+| 3   | G-OFF-015 (pseudotrader unwired)      | 1     | 1.1     | RESOLVED |
+| 4   | G-OFF-016 (no pipeline replay)        | 1     | 1.2     | RESOLVED |
+| 5   | G-ONL-042 (fill slippage)             | 2     | 2.1     | RESOLVED |
+| 6   | G-CMD-003 (data feed monitoring)      | 2     | 2.2     | RESOLVED |
+| 7   | G-CMD-004 (balance incident)          | 2     | 2.2     | RESOLVED |
+| 8   | G-XCT-012 (crash recovery)            | 3     | 3.1     | RESOLVED |
+| 9   | G-OFF-029 (sensitivity per-param)     | 4     | 4.1     | RESOLVED |
+| 10  | G-CMD-002 (RPT-12)                    | 4     | 4.1     | RESOLVED |
+| 11  | G-OFF-046 (version rollback)          | 4     | 4.2     | RESOLVED |
+
 
 **Deferred (not in tracker):**
+
 - DEC-11: G-OFF-001 (HMM TVTP) — V2
 - DEC-12: G-CMD-001 (RBAC) — V2 multi-user
 
@@ -1206,12 +1222,14 @@ Phase 0 ────────────────────────
 ## Execution Protocol
 
 **Before each session:**
+
 1. Open a fresh Claude Code context in `~/captain-system`
 2. Copy-paste the session's passover prompt
 3. Claude reads the listed specs and code files
 4. Claude implements the changes per the task list
 
 **After each session (automated by the passover prompt):**
+
 1. Run unit tests: `PYTHONPATH=./:./captain-online:./captain-offline:./captain-command python3 -B -m pytest tests/ --ignore=tests/test_integration_e2e.py --ignore=tests/test_pipeline_e2e.py --ignore=tests/test_pseudotrader_account.py --ignore=tests/test_offline_feedback.py --ignore=tests/test_stress.py --ignore=tests/test_account_lifecycle.py -v`
 2. Update this document: mark session COMPLETE, note any scope changes
 3. Update GAP_ANALYSIS.md: mark resolved findings as `[RESOLVED]`

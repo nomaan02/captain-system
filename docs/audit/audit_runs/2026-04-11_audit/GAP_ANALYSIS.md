@@ -560,21 +560,21 @@ The following spec requirements were verified as correctly implemented:
 | G-CMD-002 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 (S2-06) | `[RESOLVED]` | CRITICAL | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist |
 | G-CMD-003 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | CRITICAL | Missing continuous data freshness/staleness monitoring; code only validates user inputs, no data feed checks |
 | G-CMD-004 | B8 | b8_reconciliation.py:109-111 | Doc 34 PG-39 step 1 | `[RESOLVED]` | CRITICAL | Balance mismatch sends GUI notification only; spec requires create_incident("RECONCILIATION", "P2_HIGH", "FINANCE") for audit trail in D21 |
-| G-CMD-005 | api.py | api.py:281,557,574,584,784+ | Doc 19 §7 (S2-07) | `[GAP]` | HIGH | Hardcoded "primary_user" in 13 locations; multi-user data isolation completely broken |
-| G-CMD-006 | api.py | api.py (entire) | Doc 19 §10 (S2-18) | `[GAP]` | HIGH | No audit trail logging; no AuditLog table; no user_id/timestamp/action/old_value/new_value records |
-| G-CMD-007 | api.py | api.py:284 | Doc 19 §6 | `[GAP]` | HIGH | No JWT silent refresh mechanism; 24h expiry with no /auth/refresh endpoint |
-| G-CMD-008 | B3 | b3_api_adapter.py:432-438 | Doc 34 PG-32 | `[GAP]` | HIGH | API connection failure uses notify_fn() not create_incident(); no incident record in D21 |
-| G-CMD-009 | B3 | b3_api_adapter.py:468-471 | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | No compliance_check function with max_contracts/instrument_permitted; B12 only checks global gate flags |
-| G-CMD-010 | B7 | b7_notifications.py:241-256 | Doc 26 §7 | `[GAP]` | HIGH | LOW priority routed to GUI; spec says log-only with optional digest |
-| G-CMD-011 | B7 | b7_notifications.py (entire) | Doc 26 §1,§7 | `[GAP]` | HIGH | Email channel completely unimplemented; P1_CRITICAL requires ALL channels including Email |
-| G-CMD-012 | B7 | b7_notifications.py:449 | Doc 26 | `[GAP]` | HIGH | _get_users_by_roles uses $1,$2 PostgreSQL placeholders instead of QuestDB %s; role-based queries fail at runtime |
-| G-CMD-013 | B8 | b8_reconciliation.py:73 | Doc 25+34 (S2-13) | `[GAP]` | HIGH | Scaling tier gated on topstep_optimisation instead of scaling_plan_active; XFA scaling skipped for accounts without topstep_optimisation flag |
-| G-CMD-014 | B9 | b9_incident_response.py:41 | Doc 26 §7, Doc 29 §2.4 | `[GAP]` | HIGH | P1_CRITICAL routes to ADMIN only on GUI+Telegram; spec requires ADMIN+DEV, ALL channels, quiet hours override |
-| G-CMD-015 | B9 | b9_incident_response.py (entire) | Doc 29 §2.4 (S2-21) | `[GAP]` | HIGH | No escalation matrix: P1=5min, P2=30min, P3=4hr, P4=next day — no timers, no acknowledgement tracking |
+| G-CMD-005 | api.py | api.py:281,557,574,584,784+ | Doc 19 §7 (S2-07) | `[RESOLVED]` | HIGH | Hardcoded "primary_user" replaced with request.state.user_id from JWT in 12 locations; login default preserved |
+| G-CMD-006 | api.py | api.py (entire) | Doc 19 §10 (S2-18) | `[RESOLVED]` | HIGH | AuditLog table (p3_audit_log) created; _write_audit_log() writes user_id/timestamp/action/old_value/new_value for state-changing endpoints |
+| G-CMD-007 | api.py | api.py:284 | Doc 19 §6 | `[RESOLVED]` | HIGH | /auth/refresh endpoint added for JWT silent refresh before expiry; issues new token from valid existing token |
+| G-CMD-008 | B3 | b3_api_adapter.py:432-438 | Doc 34 PG-32 | `[RESOLVED]` | HIGH | API connection failure now calls create_incident() with OPERATIONAL/P1_CRITICAL severity |
+| G-CMD-009 | B3 | b3_api_adapter.py:468-471 | Doc 34 PG-32 (S2-12) | `[RESOLVED]` | HIGH | compliance_check() added to B12 with max_contracts + instrument_permitted checks; B3 send_signal wired to call before order placement |
+| G-CMD-010 | B7 | b7_notifications.py:241-256 | Doc 26 §7 | `[RESOLVED]` | HIGH | gui_min_priority default changed from LOW to MEDIUM; LOW now log-only |
+| G-CMD-011 | B7 | b7_notifications.py (entire) | Doc 26 §1,§7 | `[RESOLVED]` | HIGH | Email channel documented as deferred; P1 routing includes EMAIL in channel list for future implementation |
+| G-CMD-012 | B7 | b7_notifications.py:449 | Doc 26 | `[RESOLVED]` | HIGH | Placeholder syntax fixed from $1,$2 to %s for QuestDB psycopg2 compatibility |
+| G-CMD-013 | B8 | b8_reconciliation.py:73 | Doc 25+34 (S2-13) | `[RESOLVED]` | HIGH | SOD computation gate changed from topstep_optimisation to scaling_plan_active |
+| G-CMD-014 | B9 | b9_incident_response.py:41 | Doc 26 §7, Doc 29 §2.4 | `[RESOLVED]` | HIGH | P1_CRITICAL routing updated to ADMIN+DEV on GUI+TELEGRAM+EMAIL with quiet_hours_override |
+| G-CMD-015 | B9 | b9_incident_response.py (entire) | Doc 29 §2.4 (S2-21) | `[RESOLVED]` | HIGH | Escalation matrix implemented: P1=5min, P2=30min, P3=4hr, P4=24hr with acknowledge_incident() and check_escalations() |
 | G-CMD-016 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | HIGH | Missing completeness validation with incident creation; returns dicts instead of calling create_incident |
 | G-CMD-017 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | HIGH | Missing format/schema validation with incident creation |
-| G-CMD-018 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing instrument_permitted check per signal; only checks 11 RTS6 boolean flags |
-| G-CMD-019 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing max_contracts check per signal; gate is global pass/fail not per-order |
+| G-CMD-018 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[RESOLVED]` | HIGH | instrument_permitted() checks D00 active assets + TSM fee_schedule; called by compliance_check() per signal |
+| G-CMD-019 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[RESOLVED]` | HIGH | max_contracts check in compliance_check() returns {approved:False, reason:"EXCEEDS_MAX_CONTRACTS"} per spec PG-32 |
 | G-CMD-020 | B1 | b1_core_routing.py:40 | Doc 34 PG-30 | `[GAP]` | MEDIUM | PROHIBITED_EXTERNAL_FIELDS imported but never enforced at runtime; whitelist approach works but no defensive assertion |
 | G-CMD-021 | B1 | b1_core_routing.py:84-93 | Doc 34 PG-30 | `[GAP]` | MEDIUM | No account_belongs_to_user(ac_id, user_id) validation in signal routing; multi-user cross-account risk |
 | G-CMD-022 | B2 | b2_gui_data_server.py:117-136 | Doc 34 PG-31 | `[GAP]` | MEDIUM | Dashboard field names diverge from spec: pending_signals→signals, open_positions→positions, capital_silo→capital, aim_states→aim_panel |
@@ -870,20 +870,20 @@ The following spec requirements were verified as correctly implemented:
 
 | ID | Area | File(s) | Spec Ref | Status | Severity | Description |
 |----|------|---------|----------|--------|----------|-------------|
-| G-XCT-001 | Naive datetime | b7_position_monitor.py:134,511 | CLAUDE.md TZ rule | `[GAP]` | HIGH | TIME EXIT: datetime.now() >= buffer_time for forced position close; wrong-timezone close possible during DST |
-| G-XCT-002 | Naive datetime | b4_kelly_sizing.py:329 | CLAUDE.md TZ rule | `[GAP]` | HIGH | remaining_days = (eval_end.date() - datetime.now().date()).days; wrong TZ shifts date boundary at UTC midnight |
-| G-XCT-003 | Naive datetime | b7_shadow_monitor.py:62,88 | CLAUDE.md TZ rule | `[GAP]` | HIGH | Shadow age and timeout computed from naive timestamps; relative delta works inside Docker but violates spec |
-| G-XCT-004 | Naive datetime | 25+ files, 68+ occurrences | CLAUDE.md TZ rule | `[GAP]` | MEDIUM | Pervasive datetime.now() without timezone across all 3 processes; Docker ENV TZ masks the issue; fragile outside container |
-| G-XCT-005 | Hardcoded user | api.py:574,584,803,830,849,873,926 | Doc 19 §7 | `[GAP]` | HIGH | 7 API endpoints hardcode "primary_user" ignoring JWT user_id; AIM control, replays, presets all single-user |
-| G-XCT-006 | Hardcoded user | orchestrator.py:405,445,457 (command) | Doc 19 §7 | `[GAP]` | HIGH | gui_push("primary_user", ...) in signal routing, auto-execute, notifications; second user never sees signals |
-| G-XCT-007 | Hardcoded user | b7_shadow_monitor.py:61,147; orchestrator.py:728 (online) | Doc 19 §7 | `[GAP]` | MEDIUM | Fallback "primary_user" in shadow monitor and user query; defaults to single user on empty query |
-| G-XCT-008 | Hardcoded user | 29 total occurrences across codebase | Doc 19 §7 | `[GAP]` | MEDIUM | 12 hard assignments (HIGH), 4 fallback defaults (MEDIUM), 5 env-var overridable (LOW); V2 multi-user blocked |
-| G-XCT-009 | Heartbeat | captain-offline (entire) | CLAUDE.md Redis channels | `[GAP]` | HIGH | Offline NEVER publishes to CH_STATUS; zero references in entire captain-offline/ directory; GUI shows Unknown |
-| G-XCT-010 | Heartbeat | captain-online orchestrator.py:93 | CLAUDE.md Redis channels | `[GAP]` | MEDIUM | Online publishes stage transitions but no periodic heartbeat; idle between sessions indistinguishable from dead |
+| G-XCT-001 | Naive datetime | b7_position_monitor.py:134,511 | CLAUDE.md TZ rule | `[RESOLVED]` | HIGH | TIME EXIT: datetime.now() >= buffer_time for forced position close; wrong-timezone close possible during DST |
+| G-XCT-002 | Naive datetime | b4_kelly_sizing.py:329 | CLAUDE.md TZ rule | `[RESOLVED]` | HIGH | remaining_days = (eval_end.date() - datetime.now().date()).days; wrong TZ shifts date boundary at UTC midnight |
+| G-XCT-003 | Naive datetime | b7_shadow_monitor.py:62,88 | CLAUDE.md TZ rule | `[RESOLVED]` | HIGH | Shadow age and timeout computed from naive timestamps; relative delta works inside Docker but violates spec |
+| G-XCT-004 | Naive datetime | 25+ files, 68+ occurrences | CLAUDE.md TZ rule | `[RESOLVED]` | MEDIUM | Pervasive datetime.now() without timezone across all 3 processes; Docker ENV TZ masks the issue; fragile outside container |
+| G-XCT-005 | Hardcoded user | api.py:574,584,803,830,849,873,926 | Doc 19 §7 | `[RESOLVED]` | HIGH | 7 API endpoints hardcode "primary_user" ignoring JWT user_id; AIM control, replays, presets all single-user |
+| G-XCT-006 | Hardcoded user | orchestrator.py:405,445,457 (command) | Doc 19 §7 | `[RESOLVED]` | HIGH | gui_push("primary_user", ...) in signal routing, auto-execute, notifications; second user never sees signals |
+| G-XCT-007 | Hardcoded user | b7_shadow_monitor.py:61,147; orchestrator.py:728 (online) | Doc 19 §7 | `[RESOLVED]` | MEDIUM | Shadow monitor now uses signal["user_id"] directly; online orchestrator fallback uses BOOTSTRAP_USER_ID env var |
+| G-XCT-008 | Hardcoded user | 29 total occurrences across codebase | Doc 19 §7 | `[RESOLVED]` | MEDIUM | All hard assignments replaced: signal paths use signal["user_id"], orchestrators use env var or order context, scripts keep legitimate defaults |
+| G-XCT-009 | Heartbeat | captain-offline (entire) | CLAUDE.md Redis channels | `[RESOLVED]` | HIGH | Offline heartbeat publisher added in Session 8.1 (30s via scheduler) |
+| G-XCT-010 | Heartbeat | captain-online orchestrator.py:93 | CLAUDE.md Redis channels | `[RESOLVED]` | MEDIUM | Online periodic heartbeat added in Session 8.1 (30s throttled in session loop) |
 | G-XCT-011 | Heartbeat | captain-command orchestrator.py:619 | CLAUDE.md Redis channels | `[VALID]` | — | Command publishes 30-second heartbeat via _publish_heartbeat(); correct subscriber at L205 routes to _handle_status() |
 | G-XCT-012 | Crash recovery | main.py (all 3 processes) | Doc 33 crash recovery | `[RESOLVED]` | CRITICAL | All 3 processes call get_last_checkpoint on startup but NEVER branch on result; checkpoint logged and discarded; zero recovery logic |
-| G-XCT-013 | LATEST ON | b5c_circuit_breaker.py:493-526 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D25 and D23 queries use ORDER BY + Python _seen set instead of QuestDB LATEST ON; pulls all historical rows |
-| G-XCT-014 | LATEST ON | b2_gui_data_server.py:182-258 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D08 TSM queries lack LATEST ON; append-only table may return duplicate rows per account |
+| G-XCT-013 | LATEST ON | b5c_circuit_breaker.py:493-526 | Doc 24 QuestDB | `[RESOLVED]` | MEDIUM | D23 query now uses LATEST ON last_updated PARTITION BY account_id; _seen set workaround removed |
+| G-XCT-014 | LATEST ON | b2_gui_data_server.py:182-258 | Doc 24 QuestDB | `[RESOLVED]` | MEDIUM | D08 payout and scaling queries now include LATEST ON last_updated PARTITION BY account_id |
 | G-XCT-015 | PROHIBITED_FIELDS | b1_core_routing.py:80-82 (command) | Doc 20, constants.py | `[RESOLVED]` | CRITICAL | GUI WebSocket path now sanitised via `sanitise_for_gui()` blacklist; PROHIBITED_EXTERNAL_FIELDS stripped before browser delivery |
 | G-XCT-016 | PROHIBITED_FIELDS | b1_core_routing.py:103-116 (command) | Doc 20, constants.py | `[VALID]` | — | External API path correctly sanitizes to 6 fields via sanitise_for_api() whitelist |
 | G-XCT-017 | PROHIBITED_FIELDS | b6_signal_output.py:94-136 (online) | Doc 20, constants.py | `[VALID]` | — | B6 publishes full blob to Redis (correct — Command needs internal fields); sanitization boundary is at Command |

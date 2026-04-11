@@ -7,7 +7,7 @@
             | **CRITICALs** | None |
             | **Git HEAD (before)** | `c4572c1` |
             | **Worktree** | `/home/nomaan/captain-system` |
-            | **Status** | COMPLETE |
+            | **Status** | RUNNING |
 
             ---
 
@@ -60,3 +60,28 @@ Run unit tests. Verify each fix matches the spec reference listed.
             ## Execution Output
 
             ```
+Session 5.1 complete. Commit `6e44a7c`. Here's the summary of all 5 fixes:
+
+| # | Finding | File | Fix |
+|---|---------|------|-----|
+| 1 | **G-OFF-002** | `b1_aim16_hmm.py` | Added `MIN_OBSERVATIONS = 240` constant (from `TRAINING_WINDOW_DAYS * SESSIONS_PER_DAY`). Returns cold-start output if `T < 240`, preventing HMM training on insufficient data. |
+| 2 | **G-OFF-003** | `b1_aim16_hmm.py` | Added `"smoothing_alpha": SMOOTHING_ALPHA` to all 3 return paths (cold-start disabled, insufficient obs, normal). Online inference can now read α=0.3 from the stored state. |
+| 3 | **G-OFF-004** | `b1_drift_detection.py` | After weight reduction, now INSERTs a D01 row with `model_object = {"needs_retrain": true, "reason": "concept_drift"}`, flagging the AIM for retraining in the next scheduled cycle. |
+| 4 | **G-OFF-025** | `b4_injection.py` | Changed PARALLEL_TRACK condition from `ratio > 0.9` to `ratio > 0.9 and ratio <= 1.2`. High-ratio candidates with PBO >= 0.5 now correctly get REJECT instead of PARALLEL_TRACK. |
+| 5 | **G-OFF-032** | `b6_auto_expansion.py` | Added `WALK_FORWARD_TRAIN_RATIO = 0.7`. GA fitness now evaluates candidates on the validation 30% only, preventing overfitting to the full historical window. |
+
+All 95 unit tests pass. All 5 findings marked `[RESOLVED]` in GAP_ANALYSIS.md. Session 5.1 marked COMPLETE in EXECUTION_ORCHESTRATOR.md.
+
+```
+
+---
+
+## Post-Execution State
+
+| Field | Value |
+|-------|-------|
+| **Status** | **COMPLETED** |
+| **Completed** | 2026-04-11 12:10:31 ET |
+| **Duration** | 7m 26s |
+| **Git HEAD (after)** | `6e44a7c` |
+| **Commit** | `6e44a7c` |
