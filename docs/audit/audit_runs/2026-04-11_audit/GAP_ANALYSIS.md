@@ -62,9 +62,9 @@
 | G-OFF-006 | B1-Lifecycle | b1_aim_lifecycle.py:286-305 | Doc 32 PG-01:64-68 | `[GAP]` | MEDIUM | Suppression and recovery events not logged to P3-D06 as spec requires |
 | G-OFF-007 | B1-Lifecycle | b1_aim_lifecycle.py:375-392 | Doc 32 PG-01:64-67 | `[GAP]` | MEDIUM | Consecutive weight tracking hardcodes recovery count=10 instead of actual tracking |
 | G-OFF-008 | B1-Lifecycle | b1_aim_lifecycle.py:244-262 | Doc 32 PG-01:55-57 | `[GAP]` | LOW | No NOTIFY on WARM_UP→ELIGIBLE transition as spec requires |
-| G-OFF-009 | B2-BOCPD | b2_bocpd.py:142-156,177-184 | Doc 32 PG-05 | `[GAP]` | HIGH | run_length_posterior and NIG priors not persisted to P3-D04; full BOCPD state lost on restart |
-| G-OFF-010 | B2-CUSUM | b2_cusum.py + orchestrator.py | Doc 32 PG-07 | `[GAP]` | HIGH | S2-19: Bootstrap calibration not run at init; only quarterly. Sequential limits empty until first quarterly boundary |
-| G-OFF-011 | B2-BOCPD/CUSUM | orchestrator.py:51,154-166 | Doc 32 PG-05+PG-06 | `[GAP]` | HIGH | Detectors cached in memory only; from_dict deserializers exist but never called on startup |
+| G-OFF-009 | B2-BOCPD | b2_bocpd.py:142-156,177-184 | Doc 32 PG-05 | `[RESOLVED]` | HIGH | to_dict() now serializes run_length_posterior + NIG priors; run_bocpd_update() persists full state to bocpd_run_length_posterior column in D04 |
+| G-OFF-010 | B2-CUSUM | b2_cusum.py + orchestrator.py | Doc 32 PG-07 | `[RESOLVED]` | HIGH | _init_cusum_calibration() added to orchestrator start(); runs bootstrap calibration for detectors with empty sequential_limits at init |
+| G-OFF-011 | B2-BOCPD/CUSUM | orchestrator.py:51,154-166 | Doc 32 PG-05+PG-06 | `[RESOLVED]` | HIGH | _restore_detectors() added to orchestrator start(); queries D04 LATEST ON and calls from_dict() for both BOCPD and CUSUM |
 | G-OFF-012 | B2-CUSUM | b2_cusum.py:38,44 | Doc 32 PG-06 | `[GAP]` | MEDIUM | Fresh CUSUM detector defaults to allowance=0.0 instead of loading calibrated value from D04 |
 | G-OFF-013 | B2-Escalation | b2_level_escalation.py:13 | Doc 32 PG-05 | `[GAP]` | MEDIUM | L3 "5 consecutive days" checked per-trade (cp_history), not per calendar day |
 | G-OFF-014 | B2-Escalation | b2_level_escalation.py:209 | Doc 32 PG-06:274 | `[GAP]` | MEDIUM | CUSUM breach severity hardcoded as 0.85 float; spec passes string label |
@@ -102,7 +102,7 @@
 | G-OFF-046 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[RESOLVED]` | CRITICAL | rollback_to_version() implemented with pseudotrader comparison, undo snapshot, regression tests, and HIGH alert |
 | G-OFF-047 | Support | version_snapshot.py:23 | Doc 32 Version Snapshot | `[RESOLVED]` | HIGH | MAX_VERSIONS enforced via _enforce_max_versions() on each snapshot write; cold-storage migration logged |
 | G-OFF-048 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[RESOLVED]` | HIGH | get_current_state() loads live state from backing table; snapshot_before_update state param now optional |
-| G-OFF-049 | Support | bootstrap.py:80-211 | Doc 32 PG-02 | `[GAP]` | HIGH | D02 (aim_meta_weights) not initialized by bootstrap; first DMA update will fail to find rows |
+| G-OFF-049 | Support | bootstrap.py:80-211 | Doc 32 PG-02 | `[RESOLVED]` | HIGH | Phase 3 (phase3_seed_aim_weights) already seeds D02 with 60 rows (10 assets x 6 AIMs); DMA update finds rows correctly |
 | G-OFF-050 | Support | orchestrator.py:128-192 | Doc 32 | `[GAP]` | MEDIUM | Single try/except wraps all 7 trade outcome steps; one failure skips all subsequent steps |
 | G-OFF-051 | Support | orchestrator.py + main.py | CLAUDE.md Redis channels | `[GAP]` | LOW | No heartbeat published to captain:status channel; GUI will show Offline as Unknown |
 | G-OFF-052 | Support | main.py:128-132 | Doc 32 | `[GAP]` | LOW | Crash recovery journal read on startup but never acted upon |
@@ -193,19 +193,21 @@
 
 ---
 
-#### G-OFF-009/011 — BOCPD/CUSUM State Not Persisted; Lost on Restart
+#### G-OFF-009/011 — BOCPD/CUSUM State Not Persisted; Lost on Restart — RESOLVED
 
 **Block:** B2 | **Files:** `b2_bocpd.py:142-156`, `orchestrator.py:51` | **Spec:** Doc 32 PG-05
+
+**Fix:** `to_dict()` now serializes `run_length_posterior` and NIG priors (sparse, up to effective length). `from_dict()` restores both. `run_bocpd_update()` writes full state JSON to `bocpd_run_length_posterior` column. `_restore_detectors()` in orchestrator `start()` queries D04 `LATEST ON` and calls `from_dict()` for both BOCPD and CUSUM detectors.
 
 The BOCPD `to_dict()` only stores `cp_probability` and `cp_history` — not the full `run_length_posterior` or per-run-length NIG sufficient statistics. The QuestDB schema has a `bocpd_run_length_posterior` column that is never written. On process restart, all BOCPD/CUSUM detectors start fresh with default priors. The `from_dict()` deserializers exist but are never called by the orchestrator's startup. This means changepoint detection accuracy degrades after every restart until the detector re-converges.
 
 ---
 
-#### G-OFF-010 — S2-19: CUSUM Bootstrap Calibration Missing at Init
+#### G-OFF-010 — S2-19: CUSUM Bootstrap Calibration Missing at Init — RESOLVED
 
 **Block:** B2 | **File:** `b2_cusum.py`, `orchestrator.py` | **Spec:** Doc 32 PG-07
 
-Spec requires calibration at init AND quarterly. Quarterly is implemented (`_run_quarterly`). Init-time calibration is NOT implemented. After fresh bootstrap, `sequential_limits` is empty and the CUSUM detector falls back to `default_limit=5.0` for all sprint lengths. This hardcoded limit may be too loose or too tight depending on the asset's volatility.
+**Fix:** `_init_cusum_calibration()` added to orchestrator `start()`, called after `_restore_detectors()`. For each active asset, if the CUSUM detector has empty `sequential_limits`, loads trade history from D03 and runs `calibrate_and_persist()` + `calibrate_cusum_limits()`. Updates both D04 persistence and in-memory detector. Quarterly recalibration continues to work as before.
 
 ---
 
@@ -233,11 +235,11 @@ L_star = -r̄/β_b (breakeven loss level) is not computed or stored. This is the
 
 ---
 
-#### G-OFF-049 — Bootstrap Does Not Initialize D02 (aim_meta_weights)
+#### G-OFF-049 — Bootstrap Does Not Initialize D02 (aim_meta_weights) — RESOLVED
 
-**Block:** Support | **File:** `bootstrap.py:80-211` | **Spec:** Doc 32 PG-02
+**Block:** Support | **File:** `bootstrap_production.py:218-251` | **Spec:** Doc 32 PG-02
 
-The bootstrap initializes D05 (EWMA), D04 (decay), D12 (Kelly), D01 (AIM statuses) but NOT D02 (aim_meta_weights / inclusion probabilities). The DMA update (PG-02) requires existing D02 rows to apply the forgetting factor. Without D02 seeding, the first DMA update after bootstrap will either fail or produce undefined behavior.
+**Fix:** Phase 3 (`phase3_seed_aim_weights`) already seeds D02 with 60 rows (10 assets x 6 Tier 1 AIMs) with equal `inclusion_probability`, `inclusion_flag=true`, `recent_effectiveness=0.0`, `days_below_threshold=0`. The DMA update `_load_active_aims()` query (`LATEST ON last_updated PARTITION BY aim_id, asset_id`) finds these rows correctly. Gap was filed against an earlier version before Phase 3 existed.
 
 ---
 

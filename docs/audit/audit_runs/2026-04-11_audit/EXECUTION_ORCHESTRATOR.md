@@ -35,7 +35,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 | 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | COMPLETE |
 | 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | COMPLETE |
 | 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | COMPLETE |
-| 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 0 | PENDING |
+| 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 2 | IN PROGRESS |
 | 6 | Online HIGH Fixes | B1-B7 HIGH gaps (14 findings) | 2 | 0 | PENDING |
 | 7 | Command HIGH Fixes | Notifications, compliance, api.py (15 findings) | 2 | 0 | PENDING |
 | 8 | Cross-Cutting Sweeps | datetime, primary_user, heartbeat, LATEST ON | 2 | 0 | PENDING |
@@ -774,7 +774,7 @@ Run unit tests. Verify each fix matches the spec reference listed.
 
 ---
 
-### Session 5.2 — Offline B2 Decay Detection Fixes
+### Session 5.2 — Offline B2 Decay Detection Fixes [COMPLETE]
 
 ````
 ## Execution Session 5.2 — Offline B2 Decay Detection HIGH Fixes

@@ -62,6 +62,12 @@ class OfflineOrchestrator:
         # Resume any active transitions from persistence
         self._resume_transitions()
 
+        # G-OFF-011: Restore BOCPD/CUSUM detector state from D04
+        self._restore_detectors()
+
+        # G-OFF-010: Run init-time CUSUM calibration for detectors with empty limits
+        self._init_cusum_calibration()
+
         # Start Redis subscriber in background thread
         self._redis_thread = threading.Thread(target=self._redis_listener, daemon=True)
         self._redis_thread.start()
@@ -363,6 +369,122 @@ class OfflineOrchestrator:
                              len(active), [p.asset_id for p in active])
         except Exception as e:
             logger.error("Failed to resume transitions: %s", e)
+
+    def _restore_detectors(self):
+        """G-OFF-011: Restore BOCPD and CUSUM detector state from P3-D04 on startup.
+
+        Calls from_dict() deserializers so accumulated detector state survives restarts.
+        """
+        try:
+            from captain_offline.blocks.b2_bocpd import BOCPDDetector
+            from captain_offline.blocks.b2_cusum import CUSUMDetector
+            from shared.questdb_client import get_cursor
+
+            with get_cursor() as cur:
+                cur.execute(
+                    """SELECT asset_id, bocpd_run_length_posterior,
+                              cusum_c_up_prev, cusum_c_down_prev,
+                              cusum_sprint_length, cusum_allowance,
+                              cusum_sequential_limits
+                       FROM p3_d04_decay_detector_states
+                       LATEST ON last_updated PARTITION BY asset_id"""
+                )
+                rows = cur.fetchall()
+
+            for row in rows:
+                asset_id = row[0]
+
+                # Restore BOCPD from full serialized state
+                bocpd_det = None
+                if row[1]:
+                    try:
+                        bocpd_state = json.loads(row[1])
+                        bocpd_det = BOCPDDetector.from_dict(bocpd_state)
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        logger.warning("BOCPD restore failed for %s: %s", asset_id, exc)
+
+                # Restore CUSUM from individual columns
+                cusum_det = None
+                cusum_state = {
+                    "c_up": row[2] if row[2] is not None else 0.0,
+                    "c_down": row[3] if row[3] is not None else 0.0,
+                    "sprint_length": row[4] if row[4] is not None else 0,
+                    "allowance": row[5] if row[5] is not None else 0.0,
+                    "sequential_limits": {},
+                }
+                if row[6]:
+                    try:
+                        cusum_state["sequential_limits"] = json.loads(row[6])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                cusum_det = CUSUMDetector.from_dict(cusum_state)
+
+                self._detectors[asset_id] = (bocpd_det, cusum_det)
+
+            if self._detectors:
+                logger.info("Restored detector state for %d assets: %s",
+                            len(self._detectors), list(self._detectors.keys()))
+        except Exception as e:
+            logger.error("Failed to restore detector states: %s", e)
+
+    def _init_cusum_calibration(self):
+        """G-OFF-010: Run bootstrap calibration for CUSUM detectors with empty limits at init.
+
+        Spec requires calibration at init AND quarterly. This fills the gap
+        where sequential_limits would otherwise be empty until the first
+        quarterly boundary, forcing fallback to the hardcoded default_limit.
+        """
+        try:
+            from captain_offline.blocks.b2_cusum import (
+                calibrate_cusum_limits, calibrate_and_persist, CUSUMDetector,
+            )
+            from shared.questdb_client import get_cursor
+
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT asset_id FROM p3_d00_asset_universe "
+                    "WHERE captain_status = 'ACTIVE'"
+                )
+                assets = [r[0] for r in cur.fetchall()]
+
+            calibrated = 0
+            for asset_id in assets:
+                # Skip if detector already has calibrated limits
+                bocpd_det, cusum_det = self._detectors.get(asset_id, (None, None))
+                if cusum_det and cusum_det.sequential_limits:
+                    continue
+
+                # Load trade history for calibration
+                with get_cursor() as cur:
+                    cur.execute(
+                        "SELECT pnl, contracts FROM p3_d03_trade_outcome_log "
+                        "WHERE asset = %s",
+                        (asset_id,),
+                    )
+                    rows = cur.fetchall()
+
+                returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
+                if len(returns) < 20:
+                    continue
+
+                # Calibrate and persist to D04
+                calibrate_and_persist(asset_id, returns)
+
+                # Update in-memory detector
+                limits = calibrate_cusum_limits(returns)
+                if cusum_det is None:
+                    cusum_det = CUSUMDetector()
+                cusum_det.sequential_limits = limits
+                cusum_det.initialize(returns)
+                self._detectors[asset_id] = (bocpd_det, cusum_det)
+                calibrated += 1
+                logger.info("Init-time CUSUM calibration for %s: %d sprint lengths",
+                            asset_id, len(limits))
+
+            if calibrated:
+                logger.info("Init CUSUM calibration complete: %d assets calibrated", calibrated)
+        except Exception as e:
+            logger.error("Init CUSUM calibration error: %s", e)
 
     def _advance_transitions(self):
         """Advance all active transitions by one day. Called from daily schedule."""

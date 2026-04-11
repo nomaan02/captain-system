@@ -140,19 +140,62 @@ class BOCPDDetector:
         return self.cp_probability
 
     def to_dict(self) -> dict:
-        """Serialize state for storage."""
+        """Serialize full state for storage (G-OFF-009).
+
+        Persists run_length_posterior and NIG priors so BOCPD state
+        survives restarts. Only stores entries up to the last index
+        with significant posterior mass to keep payload compact.
+        """
+        # Find effective length — last index with meaningful mass
+        eff_len = 1  # always keep at least index 0
+        for i in range(len(self.run_length_posterior) - 1, -1, -1):
+            if self.run_length_posterior[i] > 1e-300:
+                eff_len = i + 1
+                break
+
         return {
             "cp_probability": self.cp_probability,
-            "cp_history": self.cp_history[-100:],  # keep last 100
+            "cp_history": self.cp_history[-100:],
             "hazard_rate": self.hazard_rate,
+            "max_run_length": self.max_run_length,
+            "run_length_posterior": self.run_length_posterior[:eff_len].tolist(),
+            "priors": [
+                {"mu": p.mu, "kappa": p.kappa, "alpha": p.alpha, "beta": p.beta}
+                for p in self.priors[:eff_len]
+            ],
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "BOCPDDetector":
-        """Deserialize from stored state."""
-        det = cls(hazard_rate=data.get("hazard_rate", DEFAULT_HAZARD_RATE))
+        """Deserialize from stored state (G-OFF-009).
+
+        Restores run_length_posterior and NIG priors from persisted D04 data.
+        """
+        det = cls(
+            hazard_rate=data.get("hazard_rate", DEFAULT_HAZARD_RATE),
+            max_run_length=data.get("max_run_length", MAX_RUN_LENGTH),
+        )
         det.cp_probability = data.get("cp_probability", 0.0)
         det.cp_history = data.get("cp_history", [])
+
+        # Restore run_length_posterior
+        posterior = data.get("run_length_posterior")
+        if posterior:
+            arr = np.array(posterior, dtype=float)
+            det.run_length_posterior = np.zeros(det.max_run_length + 1)
+            n = min(len(arr), det.max_run_length + 1)
+            det.run_length_posterior[:n] = arr[:n]
+
+        # Restore NIG priors
+        priors_data = data.get("priors")
+        if priors_data:
+            for i, p in enumerate(priors_data):
+                if i < len(det.priors):
+                    det.priors[i] = NIGPrior(
+                        mu=p["mu"], kappa=p["kappa"],
+                        alpha=p["alpha"], beta=p["beta"],
+                    )
+
         return det
 
 
@@ -173,14 +216,16 @@ def run_bocpd_update(asset_id: str, pnl_per_contract: float,
 
     cp_prob = detector.update(pnl_per_contract)
 
-    # Store to P3-D04
+    # Store full state to P3-D04 (G-OFF-009: includes posterior + NIG priors)
+    state = detector.to_dict()
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d04_decay_detector_states
-               (asset_id, bocpd_cp_probability, bocpd_cp_history,
-                current_changepoint_probability, last_updated)
-               VALUES (%s, %s, %s, %s, now())""",
-            (asset_id, cp_prob, json.dumps(detector.cp_history[-100:]), cp_prob),
+               (asset_id, bocpd_run_length_posterior, bocpd_cp_probability,
+                bocpd_cp_history, current_changepoint_probability, last_updated)
+               VALUES (%s, %s, %s, %s, %s, now())""",
+            (asset_id, json.dumps(state), cp_prob,
+             json.dumps(detector.cp_history[-100:]), cp_prob),
         )
 
     logger.debug("BOCPD %s: cp_prob=%.4f", asset_id, cp_prob)
