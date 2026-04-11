@@ -119,6 +119,42 @@ DEPENDENCIES = {
     "8.2": [],
 }
 
+# Findings resolved per session (from each passover prompt's "When Done" section)
+SESSION_FINDINGS = {
+    "0.1": ["G-ONL-017", "G-ONL-028", "G-XCT-015"],
+    "1.1": ["G-OFF-015"],
+    "1.2": ["G-OFF-016", "G-OFF-024"],
+    "1.3": ["G-OFF-019", "G-OFF-020", "G-OFF-021", "G-OFF-022", "G-OFF-023"],
+    "2.1": ["G-ONL-042", "G-ONL-043", "G-ONL-044"],
+    "2.2": ["G-CMD-003", "G-CMD-004", "G-CMD-016", "G-CMD-017", "G-CMD-043"],
+    "3.1": ["G-XCT-012", "G-SHR-018"],
+    "3.2": ["G-SHR-002", "G-SHR-003", "G-SHR-004", "G-SHR-012", "G-SHR-015", "G-SHR-019", "G-SHR-020"],
+    "4.1": ["G-OFF-029", "G-OFF-030", "G-CMD-002"],
+    "4.2": ["G-OFF-046", "G-OFF-047", "G-OFF-048"],
+    "5.1": ["G-OFF-002", "G-OFF-003", "G-OFF-004", "G-OFF-025", "G-OFF-032"],
+    "5.2": ["G-OFF-009", "G-OFF-010", "G-OFF-011", "G-OFF-049"],
+    "5.3": ["G-OFF-039", "G-OFF-040", "G-OFF-041", "G-OFF-033", "G-OFF-017", "G-OFF-018"],
+    "6.1": ["G-ONL-004", "G-ONL-005", "G-ONL-006", "G-ONL-018", "G-ONL-019", "G-ONL-021", "G-ONL-013"],
+    "6.2": ["G-ONL-024", "G-ONL-025", "G-ONL-029", "G-ONL-030", "G-ONL-032", "G-ONL-036", "G-ONL-048"],
+    "7.1": ["G-CMD-010", "G-CMD-011", "G-CMD-012", "G-CMD-014", "G-CMD-015", "G-CMD-008", "G-CMD-013"],
+    "7.2": ["G-CMD-009", "G-CMD-018", "G-CMD-019", "G-CMD-005", "G-CMD-006", "G-CMD-007", "G-CMD-016", "G-CMD-017"],
+    "8.1": ["G-XCT-001", "G-XCT-002", "G-XCT-003", "G-XCT-004", "G-XCT-005", "G-XCT-006"],
+    "8.2": ["G-XCT-007", "G-XCT-008", "G-XCT-009", "G-XCT-010", "G-XCT-011"],
+}
+
+# CRITICAL tracker row numbers (1-indexed) → finding ID
+CRITICAL_TRACKER = {
+    1: "G-ONL-017", 2: "G-ONL-028", 3: "G-OFF-015", 4: "G-OFF-016",
+    5: "G-ONL-042", 6: "G-CMD-003", 7: "G-CMD-004", 8: "G-XCT-012",
+    9: "G-OFF-029", 10: "G-CMD-002", 11: "G-OFF-046",
+}
+
+# Which session is the final one in each phase (triggers phase → COMPLETE)
+PHASE_FINAL_SESSION = {
+    0: "0.1", 1: "1.3", 2: "2.2", 3: "3.2", 4: "4.2",
+    5: "5.3", 6: "6.2", 7: "7.2", 8: "8.2",
+}
+
 # ── Parallel Execution Waves ────────────────────────────────────────────────
 #
 # Wave 1:  [0.1]                                                   1 session
@@ -416,6 +452,94 @@ class SessionLog:
             self.path.write_text("".join(self._lines))
 
 
+# ── Post-session tracking doc reconciliation ────────────────────────────────
+
+GAP_ANALYSIS = AUDIT_DIR / "GAP_ANALYSIS.md"
+
+
+def reconcile_tracking_docs(sid: str, state: dict, *, cwd: Path = None) -> int:
+    """
+    Programmatically update GAP_ANALYSIS.md and EXECUTION_ORCHESTRATOR.md
+    after a session completes. Returns number of changes made.
+
+    This runs regardless of whether Claude remembered to do it, making the
+    tracking tables reliable.
+    """
+    changes = 0
+
+    # ── 1. GAP_ANALYSIS.md: mark session's findings as [RESOLVED] ──
+    gap_path = GAP_ANALYSIS
+    if cwd and cwd != ROOT:
+        gap_path = cwd / GAP_ANALYSIS.relative_to(ROOT)
+
+    if gap_path.exists():
+        content = gap_path.read_text()
+        findings = SESSION_FINDINGS.get(sid, [])
+        for fid in findings:
+            # Match table rows: | G-XXX-NNN | ... | `[GAP]` | ...
+            pattern = rf"(\| {re.escape(fid)} \|[^|]*\|[^|]*\|[^|]*\| )`\[GAP\]`"
+            replacement = rf"\1`[RESOLVED]`"
+            new_content, n = re.subn(pattern, replacement, content)
+            if n > 0:
+                content = new_content
+                changes += n
+        if changes > 0:
+            gap_path.write_text(content)
+            print(f"  [reconcile] GAP_ANALYSIS.md: marked {changes} findings as [RESOLVED]")
+
+    # ── 2. EXECUTION_ORCHESTRATOR.md: update phase status + CRITICAL tracker ──
+    orch_path = ORCHESTRATOR
+    if cwd and cwd != ROOT:
+        orch_path = cwd / ORCHESTRATOR.relative_to(ROOT)
+
+    if orch_path.exists():
+        content = orch_path.read_text()
+        orch_changes = 0
+
+        # 2a. CRITICAL Resolution Tracker: PENDING → RESOLVED for this session's criticals
+        criticals = SESSION_META.get(sid, {}).get("criticals", [])
+        for crit_num, crit_fid in CRITICAL_TRACKER.items():
+            if crit_fid in criticals:
+                old = f"| {crit_num} | {crit_fid}"
+                # Find the row and replace PENDING with RESOLVED
+                pattern = rf"(\| {crit_num} \| {re.escape(crit_fid)}[^|]*\|[^|]*\|[^|]*\| )PENDING"
+                replacement = rf"\1RESOLVED"
+                content, n = re.subn(pattern, replacement, content)
+                orch_changes += n
+
+        # 2b. Phase Summary: mark phase COMPLETE if this is the final session
+        phase = SESSION_META.get(sid, {}).get("phase")
+        if phase is not None and PHASE_FINAL_SESSION.get(phase) == sid:
+            # Check all sessions in this phase are completed
+            phase_sessions = [s for s in SESSION_ORDER if SESSION_META[s]["phase"] == phase]
+            all_done = all(get_session_state(state, s) == "COMPLETED" for s in phase_sessions)
+            if all_done:
+                # Match: | N | Title | ... | PENDING |
+                pattern = rf"(\| {phase} \|[^|]*\|[^|]*\|[^|]*\|[^|]*\| )PENDING"
+                replacement = rf"\1COMPLETE"
+                content, n = re.subn(pattern, replacement, content)
+                orch_changes += n
+                if n > 0:
+                    print(f"  [reconcile] Phase {phase} marked COMPLETE")
+
+        if orch_changes > 0:
+            orch_path.write_text(content)
+            print(f"  [reconcile] EXECUTION_ORCHESTRATOR.md: {orch_changes} updates")
+            changes += orch_changes
+
+    return changes
+
+
+def reconcile_all_completed(state: dict) -> int:
+    """Run reconciliation for ALL completed sessions. For retroactive fix-up."""
+    total = 0
+    for sid in SESSION_ORDER:
+        if get_session_state(state, sid) == "COMPLETED":
+            n = reconcile_tracking_docs(sid, state)
+            total += n
+    return total
+
+
 # ── Session runner ───────────────────────────────────────────────────────────
 
 def build_claude_command(prompt: str, *, unattended: bool = False, model: str = "opus") -> list[str]:
@@ -524,6 +648,8 @@ def run_session(
                 print(f"{prefix}  {line}")
         else:
             print(f"{prefix}WARNING: No new commits detected")
+        # Reconcile tracking docs (programmatic, not reliant on Claude)
+        reconcile_tracking_docs(sid, state, cwd=cwd)
         return True
     else:
         err = f"Exit code {exit_code}"
@@ -910,6 +1036,8 @@ def main():
                         help="Auto-approve all tool calls (--dangerously-skip-permissions)")
     parser.add_argument("--reset", metavar="SID",
                         help="Reset a session to PENDING for re-run")
+    parser.add_argument("--reconcile", action="store_true",
+                        help="Update tracking docs for all completed sessions (retroactive fix)")
     parser.add_argument("--cleanup-worktrees", action="store_true",
                         help="Remove all audit worktrees and exit")
     parser.add_argument("--model", default=os.environ.get("CLAUDE_MODEL", "opus"),
@@ -935,6 +1063,15 @@ def main():
         set_session_state(state, args.reset, "PENDING")
         save_state(state)
         print(f"  Session {args.reset} reset to PENDING"); return
+
+    if args.reconcile:
+        print(f"  Reconciling tracking docs for all completed sessions...")
+        n = reconcile_all_completed(state)
+        if n > 0:
+            print(f"  Total: {n} updates applied")
+        else:
+            print(f"  Tracking docs already up to date")
+        return
 
     if args.cleanup_worktrees:
         print(f"  Cleaning up worktrees...")
