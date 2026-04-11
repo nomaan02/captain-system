@@ -55,9 +55,9 @@
 | ID | Block | File | Spec Ref | Status | Severity | Description |
 |----|-------|------|----------|--------|----------|-------------|
 | G-OFF-001 | B1-HMM | b1_aim16_hmm.py:104-115 | Doc 22 §2 TVTP | `[AMENDED]` | — | DEC-11: AIM-16 uses hmmlearn GaussianHMM with static transition matrix; TVTP deferred to V2 (library change required) |
-| G-OFF-002 | B1-HMM | b1_aim16_hmm.py:40 | Doc 22 §6 | `[GAP]` | HIGH | 240 minimum observation count not enforced; SESSIONS_PER_DAY=4 defined but never used |
-| G-OFF-003 | B1-HMM | b1_aim16_hmm.py:43 | Doc 22 §7 | `[GAP]` | HIGH | SMOOTHING_ALPHA=0.3 defined but never used or included in output state for online inference |
-| G-OFF-004 | B1-Drift | b1_drift_detection.py:269-319 | Doc 32 PG-04:207-208 | `[GAP]` | HIGH | On drift: weight*=0.5 applied but no retrain flag set in P3-D01 as spec requires |
+| G-OFF-002 | B1-HMM | b1_aim16_hmm.py:40 | Doc 22 §6 | `[RESOLVED]` | HIGH | 240 minimum observation count not enforced; SESSIONS_PER_DAY=4 defined but never used |
+| G-OFF-003 | B1-HMM | b1_aim16_hmm.py:43 | Doc 22 §7 | `[RESOLVED]` | HIGH | SMOOTHING_ALPHA=0.3 defined but never used or included in output state for online inference |
+| G-OFF-004 | B1-Drift | b1_drift_detection.py:269-319 | Doc 32 PG-04:207-208 | `[RESOLVED]` | HIGH | On drift: weight*=0.5 applied but no retrain flag set in P3-D01 as spec requires |
 | G-OFF-005 | B1-DMA | b1_dma_update.py:40-62 | Doc 32 PG-02:100 | `[GAP]` | MEDIUM | DMA iterates ALL AIMs from D02, not filtered to ACTIVE status from D01 |
 | G-OFF-006 | B1-Lifecycle | b1_aim_lifecycle.py:286-305 | Doc 32 PG-01:64-68 | `[GAP]` | MEDIUM | Suppression and recovery events not logged to P3-D06 as spec requires |
 | G-OFF-007 | B1-Lifecycle | b1_aim_lifecycle.py:375-392 | Doc 32 PG-01:64-67 | `[GAP]` | MEDIUM | Consecutive weight tracking hardcodes recovery count=10 instead of actual tracking |
@@ -78,14 +78,14 @@
 | G-OFF-022 | B3 | b3_pseudotrader.py:475 | Doc 32 PG-09 §4 | `[RESOLVED]` | MEDIUM | DSR n_trials hardcoded to 1; defeats multiple-testing correction purpose |
 | G-OFF-023 | B3 | b3_pseudotrader.py:619-755 | Doc 32 PG-09B | `[RESOLVED]` | MEDIUM | CB pseudotrader computes PBO but hardcodes dsr=0.0 |
 | G-OFF-024 | B3 | b3_pseudotrader.py (entire) | Doc 32 PG-09 | `[RESOLVED]` | MEDIUM | P3-D03 (trade_outcome_log) never queried; uses pre-computed data or JSON files |
-| G-OFF-025 | B4 | b4_injection.py:142-149 | Doc 32 PG-10 §4 | `[GAP]` | HIGH | PARALLEL_TRACK missing upper bound (ratio ≤ 1.2); high-ratio high-PBO candidates enter parallel |
+| G-OFF-025 | B4 | b4_injection.py:142-149 | Doc 32 PG-10 §4 | `[RESOLVED]` | HIGH | PARALLEL_TRACK missing upper bound (ratio ≤ 1.2); high-ratio high-PBO candidates enter parallel |
 | G-OFF-026 | B4 | b4_injection.py:46-65 | Doc 32 PG-10 §1 | `[GAP]` | MEDIUM | Simplified retroactive AIM analysis; no per-AIM replay over candidate's historical window |
 | G-OFF-027 | B4 | b4_injection.py:109-169 | Doc 32 PG-10 §5 | `[GAP]` | MEDIUM | No RPT-05 report generation or GUI notification on injection result |
 | G-OFF-028 | B4 | b4_injection.py:109-169 | Doc 32 PG-11 | `[GAP]` | MEDIUM | REJECT does not reset P3-D00.captain_status to ACTIVE as spec requires |
 | G-OFF-029 | B5 | b5_sensitivity.py:169-177 | Doc 32 PG-12 | `[RESOLVED]` | CRITICAL | Perturbation deltas applied uniformly to ALL params; spec requires per-parameter grid (7 vs N×7) |
 | G-OFF-030 | B5 | b5_sensitivity.py:59-62 | Doc 32 PG-12 | `[RESOLVED]` | MEDIUM | PBO computed on base_returns instead of perturbation grid results |
 | G-OFF-031 | B5 | b5_sensitivity.py:231-246 | Doc 32 PG-12 | `[GAP]` | MEDIUM | No GUI notification or RPT-03 section on FRAGILE detection |
-| G-OFF-032 | B6 | b6_auto_expansion.py:234-263 | Doc 32 PG-13 §2 | `[GAP]` | HIGH | GA fitness evaluated on full window; no walk-forward train/validate split |
+| G-OFF-032 | B6 | b6_auto_expansion.py:234-263 | Doc 32 PG-13 §2 | `[RESOLVED]` | HIGH | GA fitness evaluated on full window; no walk-forward train/validate split |
 | G-OFF-033 | B6 | b6_auto_expansion.py:269-275 | Doc 32 PG-13 §4 | `[GAP]` | HIGH | PBO computed on raw holdout_returns identically for all candidates; should use per-candidate OOS |
 | G-OFF-034 | B6 | b6_auto_expansion.py:211-214 | Doc 32 PG-13 §4 | `[GAP]` | MEDIUM | DSR uses hardcoded Gaussian (skew=0, kurt=3) instead of actual distributional parameters |
 | G-OFF-035 | B6 | b6_auto_expansion.py:296-297 | Doc 32 PG-13 §5 | `[GAP]` | MEDIUM | No CRITICAL notification when no viable replacement candidates found |

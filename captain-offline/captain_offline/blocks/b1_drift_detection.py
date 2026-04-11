@@ -312,6 +312,16 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
                         (aim_id, asset_id, new_prob, new_prob > 0.02),
                     )
 
+            # Flag AIM for retraining in P3-D01 (Doc 32 PG-04)
+            with get_cursor() as cur:
+                cur.execute(
+                    """INSERT INTO p3_d01_aim_model_states
+                       (aim_id, asset_id, status, model_object, last_updated)
+                       VALUES (%s, %s, 'ACTIVE', %s, now())""",
+                    (aim_id, asset_id,
+                     json.dumps({"needs_retrain": True, "reason": "concept_drift"})),
+                )
+
     if drifted_aims:
         # Renormalise all weights after drift reductions
         _renormalise_weights(asset_id)

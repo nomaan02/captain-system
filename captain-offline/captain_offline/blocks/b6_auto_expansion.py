@@ -53,6 +53,9 @@ SEARCH_SPACE = {
 PBO_THRESHOLD = 0.5
 DSR_THRESHOLD = 0.5
 
+# Walk-forward split (Doc 32 PG-13 §2: train/validate split for GA fitness)
+WALK_FORWARD_TRAIN_RATIO = 0.7  # 70% train, 30% validate
+
 
 
 @dataclass
@@ -228,14 +231,18 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
     """
     # No fixed seed — GA must explore different candidates each run
 
+    # Walk-forward split: train on first 70%, validate on last 30% (Doc 32 PG-13 §2)
+    split_idx = max(1, int(len(historical_returns) * WALK_FORWARD_TRAIN_RATIO))
+    wf_validation_returns = historical_returns[split_idx:]
+
     # Initialize population
     population = [_random_candidate() for _ in range(POPULATION_SIZE)]
 
     # Evolve
     for gen in range(GENERATIONS):
-        # Evaluate
+        # Evaluate on validation window only
         for candidate in population:
-            candidate.fitness = _evaluate_candidate(candidate, historical_returns, asset_id)
+            candidate.fitness = _evaluate_candidate(candidate, wf_validation_returns, asset_id)
 
         # Select + breed next generation
         new_population = []
@@ -258,9 +265,9 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
 
         population = new_population
 
-    # Final evaluation
+    # Final evaluation (on validation window, consistent with GA selection)
     for c in population:
-        c.fitness = _evaluate_candidate(c, historical_returns, asset_id)
+        c.fitness = _evaluate_candidate(c, wf_validation_returns, asset_id)
 
     # Select top K
     population.sort(key=lambda c: c.fitness, reverse=True)

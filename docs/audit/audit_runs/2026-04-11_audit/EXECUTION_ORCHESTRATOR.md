@@ -34,7 +34,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 | 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | COMPLETE |
 | 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | COMPLETE |
 | 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | COMPLETE |
-| 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | PENDING |
+| 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | COMPLETE |
 | 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 0 | PENDING |
 | 6 | Online HIGH Fixes | B1-B7 HIGH gaps (14 findings) | 2 | 0 | PENDING |
 | 7 | Command HIGH Fixes | Notifications, compliance, api.py (15 findings) | 2 | 0 | PENDING |
@@ -733,7 +733,7 @@ Implement `get_current_state(component_id)`:
 
 ---
 
-### Session 5.1 — Offline B1 AIM Block Fixes
+### Session 5.1 — Offline B1 AIM Block Fixes [COMPLETE]
 
 ````
 ## Execution Session 5.1 — Offline B1 AIM Block HIGH Fixes

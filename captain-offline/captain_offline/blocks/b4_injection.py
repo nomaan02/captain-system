@@ -142,7 +142,7 @@ def run_injection_comparison(asset_id: str, new_candidate: dict,
     if ratio > ADOPT_RATIO and pseudo_results["pbo"] < PBO_THRESHOLD:
         recommendation = "ADOPT"
         transition_days = DEFAULT_TRANSITION_DAYS
-    elif ratio > PARALLEL_RATIO:
+    elif ratio > PARALLEL_RATIO and ratio <= ADOPT_RATIO:
         recommendation = "PARALLEL_TRACK"
         transition_days = DEFAULT_TRACKING_DAYS
     else:
