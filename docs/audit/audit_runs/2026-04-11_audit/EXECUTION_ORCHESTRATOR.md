@@ -35,7 +35,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 | 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | COMPLETE |
 | 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | COMPLETE |
 | 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | COMPLETE |
-| 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 2 | IN PROGRESS |
+| 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 3 | COMPLETE |
 | 6 | Online HIGH Fixes | B1-B7 HIGH gaps (14 findings) | 2 | 0 | PENDING |
 | 7 | Command HIGH Fixes | Notifications, compliance, api.py (15 findings) | 2 | 0 | PENDING |
 | 8 | Cross-Cutting Sweeps | datetime, primary_user, heartbeat, LATEST ON | 2 | 0 | PENDING |
@@ -812,7 +812,7 @@ Run unit tests. Verify BOCPD state persists to D04 and restores on startup.
 
 ---
 
-### Session 5.3 — Offline B7-B9 Kelly/CB/Diagnostic Fixes
+### Session 5.3 — Offline B7-B9 Kelly/CB/Diagnostic Fixes ✅ COMPLETE
 
 ````
 ## Execution Session 5.3 — Offline B7-B9 Kelly/CB/Diagnostic + Remaining B3 HIGH Fixes
@@ -1165,7 +1165,7 @@ Phase 0 ────────────────────────
     │                                   │    │
     │                          Phase 4 ─┴────┘ (session 4.2 needs Phase 1)
     │
-    ├── Phase 5 (offline HIGH) ─── can start after Phase 1
+    ├── Phase 5 (offline HIGH) ─── COMPLETE
     ├── Phase 6 (online HIGH) ─── can start after Phase 0
     ├── Phase 7 (command HIGH) ── can start after Phase 2
     │

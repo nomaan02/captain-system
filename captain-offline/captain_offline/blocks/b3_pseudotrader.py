@@ -19,9 +19,11 @@ Reads: P3-D03 (trade outcomes), P3-D25 (CB params)
 Writes: P3-D11 (pseudotrader results)
 """
 
+import hashlib
 import json
 import math
 import logging
+import struct
 import uuid
 from collections import defaultdict
 
@@ -81,6 +83,95 @@ def _compute_dsr(sharpe: float, n_trials: int, skew: float,
     """DSR (Paper 150). Delegates to shared.statistics."""
     from shared.statistics import compute_dsr
     return compute_dsr(sharpe, n_trials, skew, kurtosis, T)
+
+
+# ---------------------------------------------------------------------------
+# Replay modes (Doc 28 §8)
+# ---------------------------------------------------------------------------
+
+REPLAY_MODE_IDEAL = "IDEAL"     # Full account-aware: DLL, scaling, hours, consistency
+REPLAY_MODE_LEGACY = "LEGACY"   # Fixed MDD only; results labelled non-production
+
+
+# ---------------------------------------------------------------------------
+# SHA256 deterministic tick stream (Doc 28 §7)
+# ---------------------------------------------------------------------------
+
+class SHA256TickStream:
+    """Deterministic tick stream generator seeded by SHA256.
+
+    Given the same seed inputs, produces bitwise-identical tick sequences
+    for synthetic regression testing. Uses log-price GBM for mid-price
+    with a bid/ask spread overlay.
+    """
+
+    def __init__(self, seed: str):
+        self._seed = seed
+        self._counter = 0
+
+    def _next_uniform(self) -> float:
+        """Generate next deterministic uniform [0, 1) from SHA256 chain."""
+        data = f"{self._seed}:{self._counter}".encode()
+        h = hashlib.sha256(data).digest()
+        self._counter += 1
+        # Use first 8 bytes as uint64, normalise to [0, 1)
+        val = struct.unpack(">Q", h[:8])[0]
+        return val / (2**64)
+
+    def _next_normal(self) -> float:
+        """Box-Muller transform for deterministic standard normal."""
+        u1 = max(1e-15, self._next_uniform())
+        u2 = self._next_uniform()
+        return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+
+    def generate(self, n_ticks: int, initial_price: float = 4500.0,
+                 mu: float = 0.0, sigma: float = 0.0002,
+                 spread_bps: float = 2.0) -> list[dict]:
+        """Generate deterministic tick stream via log-price GBM.
+
+        Args:
+            n_ticks: Number of ticks to generate
+            initial_price: Starting mid price
+            mu: GBM drift per tick
+            sigma: GBM volatility per tick
+            spread_bps: Half-spread in basis points
+
+        Returns:
+            List of tick dicts with mid, bid, ask, tick_id fields.
+        """
+        ticks = []
+        log_price = math.log(initial_price)
+        half_spread = initial_price * spread_bps * 1e-4
+
+        for i in range(n_ticks):
+            z = self._next_normal()
+            log_price += mu - 0.5 * sigma**2 + sigma * z
+            mid = math.exp(log_price)
+
+            # Spread widens slightly with volatility (microstructure)
+            spread_noise = 1.0 + 0.2 * abs(z)
+            effective_half = half_spread * spread_noise
+
+            ticks.append({
+                "tick_id": i,
+                "mid": round(mid, 2),
+                "bid": round(mid - effective_half, 2),
+                "ask": round(mid + effective_half, 2),
+            })
+
+        return ticks
+
+
+def generate_deterministic_ticks(asset_id: str, date_str: str,
+                                 n_ticks: int = 5000,
+                                 initial_price: float = 4500.0) -> list[dict]:
+    """Generate SHA256-seeded deterministic tick stream for regression tests.
+
+    Same (asset_id, date_str) always produces the identical tick sequence.
+    """
+    seed = f"{asset_id}:{date_str}"
+    stream = SHA256TickStream(seed)
+    return stream.generate(n_ticks, initial_price=initial_price)
 
 
 # ---------------------------------------------------------------------------
@@ -168,24 +259,32 @@ def _check_dll(daily_pnl: float, max_daily_loss: float | None) -> bool:
 
 def run_account_aware_replay(asset_id: str, update_type: str,
                               trades: list[dict],
-                              account_config: dict | None = None) -> dict:
+                              account_config: dict | None = None,
+                              mode: str = REPLAY_MODE_IDEAL) -> dict:
     """Execute P3-PG-09 with account-type constraint enforcement.
 
     Replays trade-level data while enforcing DLL, MDD, contract scaling,
     trading hours, and consistency rules per the account's TSM config.
-    When account_config is None, replays with only a basic $4,500 MDD check.
 
-    Spec: Pseudotrader_Account_Awareness_Amendment.md sections 1-4.
+    Modes (Doc 28 §8):
+      IDEAL:  Full account-aware replay (DLL, scaling, hours, consistency).
+              Default for go/no-go decisions.
+      LEGACY: Single fixed MDD treatment only. Results labelled non-production.
 
     Args:
         asset_id: Asset being evaluated
         update_type: "AIM_WEIGHT_CHANGE" | "MODEL_RETRAIN" | "STRATEGY_INJECTION"
         trades: List of trade dicts with keys: day, pnl, contracts, ts, model
         account_config: TSM config dict (or None for legacy behavior)
+        mode: REPLAY_MODE_IDEAL or REPLAY_MODE_LEGACY
 
     Returns:
-        Replay result dict with metrics and constraint breach counts.
+        Replay result dict with metrics, constraint breach counts, and mode label.
     """
+    # LEGACY mode: strip account constraints, use fixed MDD only (Doc 28 §8)
+    if mode == REPLAY_MODE_LEGACY:
+        account_config = None
+
     # Extract constraints from account_config
     if account_config:
         mdd_limit = account_config.get("max_drawdown_limit", 4500)
@@ -402,6 +501,8 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     result = {
         "asset_id": asset_id,
         "update_type": update_type,
+        "mode": mode,
+        "production": mode == REPLAY_MODE_IDEAL,
         "account_type": (account_config or {}).get("classification", {}).get("category", "UNKNOWN"),
         "sharpe": sharpe,
         "max_drawdown": max_dd,
@@ -683,8 +784,13 @@ def run_pseudotrader(asset_id: str, update_type: str,
                       proposed_params: dict | None = None,
                       user_id: str = "primary_user",
                       lookback_days: int = 30,
-                      n_trials: int = 1) -> dict:
+                      n_trials: int = 1,
+                      mode: str = REPLAY_MODE_IDEAL) -> dict:
     """Execute P3-PG-09: counterfactual replay comparison.
+
+    Modes (Doc 28 §8):
+      IDEAL:  Full account-aware replay — default for go/no-go decisions.
+      LEGACY: Fixed MDD only, results labelled non-production.
 
     PRIMARY PATH (spec Doc 32 PG-09 §1-2): When baseline_pnl/proposed_pnl
     are not provided, replays B1-B6 via captain_online_replay() for each
@@ -795,6 +901,8 @@ def run_pseudotrader(asset_id: str, update_type: str,
 
     result = {
         "update_type": update_type,
+        "mode": mode,
+        "production": mode == REPLAY_MODE_IDEAL,
         "sharpe_improvement": sharpe_improvement,
         "drawdown_change": drawdown_change,
         "winrate_delta": winrate_delta,

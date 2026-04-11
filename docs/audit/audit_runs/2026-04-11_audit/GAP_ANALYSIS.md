@@ -70,8 +70,8 @@
 | G-OFF-014 | B2-Escalation | b2_level_escalation.py:209 | Doc 32 PG-06:274 | `[GAP]` | MEDIUM | CUSUM breach severity hardcoded as 0.85 float; spec passes string label |
 | G-OFF-015 | B3 | orchestrator.py (entire) | Doc 32 PG-09 | `[RESOLVED]` | CRITICAL | B3 pseudotrader ZERO references in orchestrator; never triggered by any event |
 | G-OFF-016 | B3 | b3_pseudotrader.py:441-512 | Doc 32 PG-09 §1-2 | `[RESOLVED]` | CRITICAL | Spec requires captain_online_replay(); code accepts pre-computed P&L lists instead |
-| G-OFF-017 | B3 | b3_pseudotrader.py (entire) | Doc 28 §7 | `[GAP]` | HIGH | No SHA256 deterministic tick stream generator for synthetic replay |
-| G-OFF-018 | B3 | b3_pseudotrader.py (entire) | Doc 28 §8 | `[GAP]` | HIGH | No LEGACY vs IDEAL mode parameter; no mode-labelled results |
+| G-OFF-017 | B3 | b3_pseudotrader.py (entire) | Doc 28 §7 | `[RESOLVED]` | HIGH | SHA256TickStream class + generate_deterministic_ticks() added for synthetic regression tests |
+| G-OFF-018 | B3 | b3_pseudotrader.py (entire) | Doc 28 §8 | `[RESOLVED]` | HIGH | LEGACY/IDEAL mode parameter added to run_account_aware_replay + run_pseudotrader; results mode-labelled |
 | G-OFF-019 | B3 | b3_pseudotrader.py:169-438 | Doc 28 §5 | `[RESOLVED]` | HIGH | No per-account-type replay iteration; single account_config only |
 | G-OFF-020 | B3 | b3_pseudotrader.py:169-438 | Doc 28 §4 | `[RESOLVED]` | HIGH | No bankruptcy check (running_balance ≤ 0); Live accounts with mdd_limit=None unprotected |
 | G-OFF-021 | B3 | b3_pseudotrader.py:619-755 | Doc 32 PG-09B | `[RESOLVED]` | HIGH | G-025 UNRESOLVED: CB pseudotrader ignores DLL/MDD/scaling/hours account constraints |
@@ -86,15 +86,15 @@
 | G-OFF-030 | B5 | b5_sensitivity.py:59-62 | Doc 32 PG-12 | `[RESOLVED]` | MEDIUM | PBO computed on base_returns instead of perturbation grid results |
 | G-OFF-031 | B5 | b5_sensitivity.py:231-246 | Doc 32 PG-12 | `[GAP]` | MEDIUM | No GUI notification or RPT-03 section on FRAGILE detection |
 | G-OFF-032 | B6 | b6_auto_expansion.py:234-263 | Doc 32 PG-13 §2 | `[RESOLVED]` | HIGH | GA fitness evaluated on full window; no walk-forward train/validate split |
-| G-OFF-033 | B6 | b6_auto_expansion.py:269-275 | Doc 32 PG-13 §4 | `[GAP]` | HIGH | PBO computed on raw holdout_returns identically for all candidates; should use per-candidate OOS |
+| G-OFF-033 | B6 | b6_auto_expansion.py:269-275 | Doc 32 PG-13 §4 | `[RESOLVED]` | HIGH | Per-candidate OOS via _candidate_oos_returns() replay; PBO now computed on candidate-specific returns |
 | G-OFF-034 | B6 | b6_auto_expansion.py:211-214 | Doc 32 PG-13 §4 | `[GAP]` | MEDIUM | DSR uses hardcoded Gaussian (skew=0, kurt=3) instead of actual distributional parameters |
 | G-OFF-035 | B6 | b6_auto_expansion.py:296-297 | Doc 32 PG-13 §5 | `[GAP]` | MEDIUM | No CRITICAL notification when no viable replacement candidates found |
 | G-OFF-036 | B7 | b7_tsm_simulation.py:59-97 | Doc 32 PG-14:563-588 | `[GAP]` | MEDIUM | Two-level sim loop flattened; MLL checked per-return instead of per-day aggregate |
 | G-OFF-037 | B7 | b7_tsm_simulation.py:59-97 | Doc 32 PG-14:566-567 | `[GAP]` | MEDIUM | sim_drawdown starts at 0 instead of initializing from tsm.current_drawdown |
 | G-OFF-038 | B7 | b7_tsm_simulation.py:147-152 | Doc 32 PG-14:569-572 | `[GAP]` | MEDIUM | Block bootstrap produces flat path (1 return/day) instead of daily blocks of 3-7 returns |
-| G-OFF-039 | B8-Kelly | b8_kelly_update.py:108-116 | Doc 32 PG-15:664-666; Doc 21 L3 | `[GAP]` | HIGH | Shrinkage uses 1/√N proxy instead of compute_estimation_variance(P3-D05[u]) |
-| G-OFF-040 | B8-CB | b8_cb_params.py:134-207 | Doc 32 PG-16C:709-713 | `[GAP]` | HIGH | L_star breakeven (L* = -r̄/β_b) not computed or stored in P3-D25 |
-| G-OFF-041 | B8-CB | b8_cb_params.py:134-207 | Doc 32 PG-16C:686-715 | `[GAP]` | HIGH | cold_start field missing from D25 writes; basket grouping replaced by (account,model) |
+| G-OFF-039 | B8-Kelly | b8_kelly_update.py:108-116 | Doc 32 PG-15:664-666; Doc 21 L3 | `[RESOLVED]` | HIGH | _compute_estimation_variance() via delta-method on D05 EWMA states replaces 1/√N proxy |
+| G-OFF-040 | B8-CB | b8_cb_params.py:134-207 | Doc 32 PG-16C:709-713 | `[RESOLVED]` | HIGH | L_star = -r_bar/beta_b computed and stored in D25; NULL when beta_b >= 0 |
+| G-OFF-041 | B8-CB | b8_cb_params.py:134-207 | Doc 32 PG-16C:686-715 | `[RESOLVED]` | HIGH | Two-tier threshold (n<10 skip, 10≤n<100 cold_start=true); cold_start + l_star added to D25 schema |
 | G-OFF-042 | B8-CB | b8_cb_params.py:57-99 | Doc 32 PG-16C:697-702 | `[GAP]` | MEDIUM | r_bar computed as OLS intercept instead of mean(r_series) as spec defines |
 | G-OFF-043 | B8-CB | b8_cb_params.py:36-37 | Doc 32 PG-16C:690-695 | `[GAP]` | MEDIUM | Single cold start threshold at n<100; spec has two tiers: n<10 (skip) and n<100 (cold_start flag) |
 | G-OFF-044 | B9 | b9_diagnostic.py:826-853 | Doc 32 PG-17:739 | `[GAP]` | MEDIUM | D8 Resolution Verification lacks event-triggered path for ADMIN item resolution |

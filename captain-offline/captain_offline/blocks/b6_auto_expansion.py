@@ -217,6 +217,50 @@ def _compute_dsr(sharpe: float, n_trials: int, T: int) -> float:
     return compute_dsr(sharpe, n_trials, skew=0.0, kurtosis=3.0, T=T)
 
 
+def _candidate_oos_returns(candidate: Candidate, holdout_returns: list[float],
+                           asset_id: str) -> list[float]:
+    """Generate per-candidate OOS returns by replaying the candidate on holdout data.
+
+    Each candidate has different strategy parameters, so its OOS P&L differs.
+    Falls back to raw holdout_returns if replay is unavailable.
+    """
+    try:
+        from shared.signal_replay import SignalReplayEngine
+
+        ctx = SignalReplayEngine.load_replay_context(asset_id)
+        trades = ctx["trades"]
+        if not trades:
+            raise ValueError("No trades for replay")
+
+        strategy_params = {
+            "sl_multiplier": candidate.sl_multiplier,
+            "tp_multiplier": candidate.tp_multiplier,
+        }
+
+        engine = SignalReplayEngine(asset=asset_id)
+        replayed = engine.strategy_replay(
+            trades=trades,
+            regime_labels=ctx["regime_labels"],
+            aim_weights=ctx["aim_weights"],
+            kelly_params=ctx["kelly_params"],
+            strategy_params=strategy_params,
+            threshold=candidate.threshold,
+        )
+
+        if not replayed:
+            raise ValueError("Replay produced no trades")
+
+        # Use the last N trades as OOS (matching holdout window length)
+        oos_pnl = [t.get("pnl", 0.0) for t in replayed[-len(holdout_returns):]]
+        if len(oos_pnl) >= 16:  # minimum for CSCV with S=8
+            return oos_pnl
+
+        raise ValueError(f"Insufficient OOS trades ({len(oos_pnl)})")
+
+    except Exception:
+        return holdout_returns  # fallback: raw holdout
+
+
 def run_auto_expansion(asset_id: str, historical_returns: list[float],
                         holdout_returns: list[float]) -> list[dict]:
     """Execute P3-PG-13: GA-based strategy search.
@@ -278,8 +322,10 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
     n_trials = POPULATION_SIZE * GENERATIONS
 
     for candidate in top_candidates:
-        pbo = _compute_pbo(holdout_returns)
-        dsr = _compute_dsr(candidate.fitness, n_trials, len(holdout_returns))
+        # Per-candidate OOS returns (Doc 32 PG-13 §4)
+        oos = _candidate_oos_returns(candidate, holdout_returns, asset_id)
+        pbo = _compute_pbo(oos)
+        dsr = _compute_dsr(candidate.fitness, n_trials, len(oos))
 
         result = {
             "candidate": {

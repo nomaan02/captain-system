@@ -105,26 +105,55 @@ def _compute_kelly(win_rate: float, avg_win: float, avg_loss: float) -> float:
     return max(0.0, kelly)
 
 
-def _compute_shrinkage(n_trades: int) -> float:
-    """Shrinkage factor: max(0.3, 1.0 - 1/sqrt(N)).
+def _compute_estimation_variance(asset_id: str) -> float:
+    """Compute estimation variance from P3-D05 EWMA states (Doc 32 PG-15).
 
-    Approaches 1.0 as data accumulates. Floor at 0.3.
+    Uses the standard error of the Kelly fraction estimate across all
+    regime/session cells via delta-method propagation through f* = p - (1-p)/b.
+    A volatile asset with uncertain EWMA estimates yields higher variance
+    -> more shrinkage. Unlike 1/sqrt(N), this is data-dependent.
     """
-    if n_trades <= 0:
-        return SHRINKAGE_FLOOR
-    estimation_variance = 1.0 / math.sqrt(n_trades)
+    cells = []
+    for r in ["LOW_VOL", "HIGH_VOL"]:
+        for ss in [1, 2, 3]:
+            ewma = _load_ewma(asset_id, r, ss)
+            if ewma["n_trades"] > 0:
+                cells.append(ewma)
+
+    if not cells:
+        return 1.0  # maximum uncertainty -> minimum shrinkage (floor)
+
+    variances = []
+    for cell in cells:
+        n = cell["n_trades"]
+        p = cell["win_rate"]
+        W = cell["avg_win"]
+        L = cell["avg_loss"]
+
+        # Bernoulli variance of win_rate estimate
+        var_p = p * (1 - p) / max(1, n)
+
+        # Propagate through Kelly: f = p - (1-p)/(W/L)
+        # df/dp = 1 + L/W, so var(f) ~ (1 + L/W)^2 * var(p)
+        b = W / max(L, 0.001)
+        df_dp = 1.0 + 1.0 / max(b, 0.001)
+        var_f = df_dp ** 2 * var_p
+
+        variances.append(var_f)
+
+    # Mean estimation variance across cells, scaled to standard error
+    avg_var = sum(variances) / len(variances)
+    return min(1.0, math.sqrt(avg_var))
+
+
+def _compute_shrinkage(asset_id: str) -> float:
+    """Shrinkage factor: max(0.3, 1.0 - estimation_variance).
+
+    Uses compute_estimation_variance(P3-D05[u]) per spec Doc 32 PG-15.
+    Approaches 1.0 as data accumulates and estimates stabilise. Floor at 0.3.
+    """
+    estimation_variance = _compute_estimation_variance(asset_id)
     return max(SHRINKAGE_FLOOR, 1.0 - estimation_variance)
-
-
-def _count_asset_trades(asset_id: str) -> int:
-    """Count total trades for shrinkage computation."""
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT count() FROM p3_d03_trade_outcome_log WHERE asset = %s",
-            (asset_id,),
-        )
-        row = cur.fetchone()
-    return row[0] if row else 0
 
 
 def run_kelly_update(trade_outcome: dict):
@@ -142,8 +171,8 @@ def run_kelly_update(trade_outcome: dict):
            - 6 rows per asset, one for each regime x session combination
 
         2. Shrinkage row: (asset_id, "ALL", 0) -> shrinkage_factor
-           - One per asset, derived from total trade count
-           - shrinkage = max(0.3, 1 - 1/sqrt(n_trades))
+           - One per asset, derived from estimation variance of D05 EWMA states
+           - shrinkage = max(0.3, 1 - compute_estimation_variance(D05[asset]))
 
         Online consumer (b4_kelly_sizing) reads D12 keyed by (asset_id, regime, session):
         - _get_kelly_for_regime() matches exact (asset, regime, session) for kelly_full
@@ -206,9 +235,8 @@ def run_kelly_update(trade_outcome: dict):
                     (asset_id, r, ss, kelly_full, None, None),
                 )
 
-    # Update shrinkage factor (asset-level)
-    n_total = _count_asset_trades(asset_id)
-    shrinkage = _compute_shrinkage(n_total)
+    # Update shrinkage factor (asset-level, data-dependent per PG-15)
+    shrinkage = _compute_shrinkage(asset_id)
 
     with get_cursor() as cur:
         # Store shrinkage as a separate row (regime=ALL, session=0)

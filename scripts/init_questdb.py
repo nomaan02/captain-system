@@ -556,6 +556,8 @@ TABLES = [
         rho_bar DOUBLE,
         n_observations INT,
         p_value DOUBLE,
+        l_star DOUBLE,
+        cold_start BOOLEAN,
         last_updated TIMESTAMP
     ) timestamp(last_updated);
     """,
