@@ -172,9 +172,34 @@ def run_aim_aggregation(
     logger.info("AIM aggregation: %d assets, %d with active AIMs, %d individual AIMs computed",
                 len(active_assets), active_count, total_aim_count)
 
+    # Load session_budget_weights from D26 (spec PG-23 §3: AIM-16 HMM budget)
+    session_budget_weights = {}
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT opportunity_weights, n_observations, cold_start
+                   FROM p3_d26_hmm_opportunity_state
+                   ORDER BY last_updated DESC LIMIT 1"""
+            )
+            row = cur.fetchone()
+        if row and row[0]:
+            import json
+            raw = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            n_obs = row[1] or 0
+            cold_start = row[2] if row[2] is not None else True
+            session_budget_weights = {
+                "weights": raw if isinstance(raw, dict) else {},
+                "n_observations": n_obs,
+                "cold_start": cold_start,
+            }
+    except Exception as e:
+        logger.debug("AIM: Could not load session_budget_weights from D26: %s", e)
+
     return {
         "combined_modifier": combined_modifier,
         "aim_breakdown": aim_breakdown,
+        "session_budget_weights": session_budget_weights,
     }
 
 

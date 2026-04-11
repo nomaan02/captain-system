@@ -149,6 +149,12 @@ def run_kelly_sizing(
         # Step 5: User-level Kelly ceiling
         kelly_with_aim = min(kelly_with_aim, user_kelly_ceiling)
 
+        # Step 5b: Level 2 sizing override (pre-TSM, on Kelly fraction — PG-24 L6→L7)
+        override = sizing_overrides.get(u)
+        if override is not None:
+            override_val = float(override) if not isinstance(override, float) else override
+            kelly_with_aim *= override_val
+
         # Step 6: Per-account sizing
         asset_detail = assets_detail.get(u, {})
         strategy = locked_strategies.get(u, {})
@@ -189,14 +195,9 @@ def run_kelly_sizing(
             # Step 6c: Compute final contracts
             account_capital = tsm.get("current_balance", 0)
 
-            # Risk per contract from EWMA (per-contract $ risk)
-            dominant_regime = max(r_probs, key=r_probs.get)
-            ewma = get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
-            risk_per_contract = ewma["avg_loss"] if ewma and ewma.get("avg_loss", 0) > 0 else strategy_sl * point_value
-
-            # V3: Fee integration — add expected fee to risk per contract
+            # Risk per contract: spec PG-24 L7 = strategy_sl * point_value + expected_fee
             expected_fee = _get_expected_fee(tsm, u)
-            risk_per_contract_with_fee = risk_per_contract + expected_fee
+            risk_per_contract_with_fee = strategy_sl * point_value + expected_fee
 
             if risk_per_contract_with_fee <= 0:
                 risk_per_contract_with_fee = strategy_sl * point_value
@@ -250,16 +251,6 @@ def run_kelly_sizing(
             scale_factor = max_risk / total_risk
             for ac_id in accounts:
                 final_contracts[u][ac_id] = math.floor(final_contracts[u].get(ac_id, 0) * scale_factor)
-
-        # Step 8: Level 2 sizing override
-        override = sizing_overrides.get(u)
-        if override is not None:
-            override_val = float(override) if not isinstance(override, float) else override
-            for ac_id in accounts:
-                final_contracts[u][ac_id] = math.floor(final_contracts[u].get(ac_id, 0) * override_val)
-                if final_contracts[u][ac_id] == 0 and account_recommendation[u].get(ac_id) == "TRADE":
-                    account_recommendation[u][ac_id] = "REDUCED_TO_ZERO"
-                    account_skip_reason[u][ac_id] = "Level 2 sizing override"
 
     return {
         "final_contracts": final_contracts,

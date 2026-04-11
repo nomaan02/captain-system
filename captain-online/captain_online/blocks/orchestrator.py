@@ -549,6 +549,7 @@ class OnlineOrchestrator:
                 regime_probs=regime["regime_probs"],
                 user_silo=user_silo,
                 session_id=session_id,
+                final_contracts=trades["final_contracts"],
             )
 
             # V3: Circuit breaker screen (after quality gate, before signal output)

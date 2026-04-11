@@ -861,7 +861,16 @@ def _get_realised_vol(asset_id: str) -> Optional[float]:
     return None
 
 def _get_overnight_range(asset_id: str) -> Optional[float]:
-    return None
+    """Realised overnight range: |open/prior_close - 1| as overnight vol proxy.
+
+    Uses today's open vs prior session close from TopstepX daily bars.
+    """
+    today = now_et()
+    open_price = _get_open_price(asset_id, today)
+    prior_close = _get_prior_close_for_date(asset_id, today - timedelta(days=1))
+    if open_price is None or prior_close is None or prior_close <= 0:
+        return None
+    return abs(open_price / prior_close - 1)
 
 def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing VRP (IV - RV) values for z-score computation (spec: 60d).
@@ -936,7 +945,9 @@ def _get_trailing_overnight_returns(asset_id: str, lookback: int = 60) -> Option
         return None
 
 def _get_trailing_pcr(asset_id: str, lookback: int = 30) -> Optional[list[float]]:
-    """Trailing PCR values for z-score computation (spec: 30d)."""
+    """Trailing PCR values for z-score computation (spec: 30d).
+    DATA_UNAVAILABLE: Requires options volume data; TopstepX is futures-only.
+    AIM-02 pcr_z feature degrades gracefully (skew_z used alone at 0.4 weight)."""
     return None
 
 def _get_trailing_skew(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
@@ -962,13 +973,26 @@ def _get_trailing_skew(asset_id: str, lookback: int = 60) -> Optional[list[float
     except Exception:
         return None
 
+_OPTIONS_UNAVAILABLE_LOGGED = False
+
 def _get_options_volume(asset_id: str, option_type: str = "PUT") -> Optional[int]:
+    """DATA_UNAVAILABLE: TopstepX is futures-only; no options volume feed.
+    AIM-02 pcr feature degrades gracefully to neutral modifier."""
+    global _OPTIONS_UNAVAILABLE_LOGGED
+    if not _OPTIONS_UNAVAILABLE_LOGGED:
+        logger.info("ON-B1A: Options data unavailable (TopstepX futures-only) — "
+                     "AIM-02 pcr/put_skew and AIM-03 gex features will output neutral")
+        _OPTIONS_UNAVAILABLE_LOGGED = True
     return None
 
 def _get_put_iv(asset_id: str, delta: float = 0.10, maturity: str = "30d") -> Optional[float]:
+    """DATA_UNAVAILABLE: TopstepX is futures-only; no options IV feed.
+    AIM-02 put_skew feature degrades gracefully to neutral modifier."""
     return None
 
 def _get_option_chain(asset_id: str, max_maturity_days: int = 30) -> Optional[list[dict]]:
+    """DATA_UNAVAILABLE: TopstepX is futures-only; no options chain feed.
+    AIM-03 gex feature degrades gracefully to neutral modifier."""
     return None
 
 def _get_contract_multiplier(asset_id: str) -> float:
