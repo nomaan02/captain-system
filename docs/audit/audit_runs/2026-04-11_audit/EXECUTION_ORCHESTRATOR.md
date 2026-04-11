@@ -1195,7 +1195,7 @@ Phase 0 ────────────────────────
 | 8 | G-XCT-012 (crash recovery) | 3 | 3.1 | RESOLVED |
 | 9 | G-OFF-029 (sensitivity per-param) | 4 | 4.1 | RESOLVED |
 | 10 | G-CMD-002 (RPT-12) | 4 | 4.1 | RESOLVED |
-| 11 | G-OFF-046 (version rollback) | 4 | 4.2 | PENDING |
+| 11 | G-OFF-046 (version rollback) | 4 | 4.2 | RESOLVED |
 
 **Deferred (not in tracker):**
 - DEC-11: G-OFF-001 (HMM TVTP) — V2

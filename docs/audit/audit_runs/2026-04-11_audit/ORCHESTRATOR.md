@@ -865,7 +865,7 @@ These are spec requirements that may not have full code coverage. **Each must be
 
 | S2-ID | Finding | Resolution |
 |-------|---------|------------|
-| S2-01 | Version Snapshot Policy | **G-OFF-046 CRITICAL**: rollback unimplemented. **G-OFF-047/048 HIGH**: pruning and state query missing. Only snapshot_before_update() works. |
+| S2-01 | Version Snapshot Policy | **RESOLVED**: G-OFF-046/047/048 all implemented. rollback_to_version() with pseudotrader comparison, MAX_VERSIONS pruning, get_current_state() helper. |
 | S2-02 | Pseudotrader G-025 | **G-OFF-021 HIGH**: CB pseudotrader still not account-aware. Plus 6 additional HIGH gaps (G-OFF-015 through G-OFF-020). G-025 remains unresolved. |
 | S2-03 | AIM-16 HMM | **G-OFF-001 CRITICAL**: TVTP missing entirely. K=3, 7-obs vector, 60-day window, quartile seeding all valid. 240-obs min not enforced (G-OFF-002 HIGH). |
 | S2-19 | CUSUM bootstrap | **G-OFF-010 HIGH**: Init-time calibration missing; quarterly works. Sequential limits empty until first quarterly boundary. |

@@ -99,9 +99,9 @@
 | G-OFF-043 | B8-CB | b8_cb_params.py:36-37 | Doc 32 PG-16C:690-695 | `[GAP]` | MEDIUM | Single cold start threshold at n<100; spec has two tiers: n<10 (skip) and n<100 (cold_start flag) |
 | G-OFF-044 | B9 | b9_diagnostic.py:826-853 | Doc 32 PG-17:739 | `[GAP]` | MEDIUM | D8 Resolution Verification lacks event-triggered path for ADMIN item resolution |
 | G-OFF-045 | B9 | b9_diagnostic.py:854 | Doc 32 PG-17:747 | `[GAP]` | LOW | overall_health uses arithmetic mean; spec says "weighted_mean" |
-| G-OFF-046 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[GAP]` | CRITICAL | rollback_to_version() completely unimplemented (no admin approval, regression tests, or revert) |
-| G-OFF-047 | Support | version_snapshot.py:23 | Doc 32 Version Snapshot | `[GAP]` | HIGH | MAX_VERSIONS=50 defined but never enforced; no pruning or cold_storage migration |
-| G-OFF-048 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[GAP]` | HIGH | snapshot_before_update requires caller to pass state dict; no internal get_current_state() |
+| G-OFF-046 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[RESOLVED]` | CRITICAL | rollback_to_version() implemented with pseudotrader comparison, undo snapshot, regression tests, and HIGH alert |
+| G-OFF-047 | Support | version_snapshot.py:23 | Doc 32 Version Snapshot | `[RESOLVED]` | HIGH | MAX_VERSIONS enforced via _enforce_max_versions() on each snapshot write; cold-storage migration logged |
+| G-OFF-048 | Support | version_snapshot.py:51-79 | Doc 32 Version Snapshot | `[RESOLVED]` | HIGH | get_current_state() loads live state from backing table; snapshot_before_update state param now optional |
 | G-OFF-049 | Support | bootstrap.py:80-211 | Doc 32 PG-02 | `[GAP]` | HIGH | D02 (aim_meta_weights) not initialized by bootstrap; first DMA update will fail to find rows |
 | G-OFF-050 | Support | orchestrator.py:128-192 | Doc 32 | `[GAP]` | MEDIUM | Single try/except wraps all 7 trade outcome steps; one failure skips all subsequent steps |
 | G-OFF-051 | Support | orchestrator.py + main.py | CLAUDE.md Redis channels | `[GAP]` | LOW | No heartbeat published to captain:status channel; GUI will show Offline as Unknown |
@@ -933,7 +933,7 @@ All 22 S2-flagged items from Session 2 are now resolved:
 
 | S2-ID | Category | Resolution | Finding ID |
 |-------|----------|------------|------------|
-| S2-01 | HIGH | **GAP**: rollback unimplemented, pruning missing, state query missing | G-OFF-046/047/048 |
+| S2-01 | HIGH | **RESOLVED**: rollback with pseudotrader comparison, MAX_VERSIONS pruning, get_current_state() | G-OFF-046/047/048 |
 | S2-02 | HIGH | **RESOLVED**: CB pseudotrader now account-aware (G-025 resolved) | G-OFF-021 |
 | S2-03 | HIGH | **GAP**: TVTP missing; 240-obs min not enforced | G-OFF-001/002 |
 | S2-04 | HIGH | **VALID**: Priority rotation correctly deferred for V1 single-user | — |
