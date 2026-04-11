@@ -949,9 +949,69 @@ These are spec requirements that may not have full code coverage. **Each must be
 
 ## Session 5 — P3-Command Audit
 
-**Status:** PENDING
+**Status:** COMPLETE
+**Completed:** 2026-04-11 04:45 GMT+1
+**Objective:** Audit all 16 Captain Command files (12 blocks + orchestrator + api.py + telegram_bot + main.py) against Obsidian spec (Docs 18, 19, 25, 26, 29, 34)
 
-_(To be populated by Session 5)_
+### 5.1 Methodology
+
+5 parallel audit agents, each reading code files + spec pseudocode:
+- Agent 1: B1 + B2 (2 files) — core routing, GUI data server
+- Agent 2: B3 + B4 + B5 (3 files) — API adapter, TSM manager, injection flow
+- Agent 3: B6 + B7 + telegram_bot (3 files) — reports, notifications, Telegram bot
+- Agent 4: B8 + B9 + B10 + B11 + B12 (5 files) — reconciliation, incidents, validation, replay, compliance gate
+- Agent 5: api.py + orchestrator.py + main.py (3 files) — FastAPI app, orchestration, entry point
+
+### 5.2 Results Summary
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 4 |
+| HIGH | 15 |
+| MEDIUM | 31 |
+| LOW | 18 |
+| AMENDED | 3 |
+| **Total Findings** | **71** |
+
+~35 spec verification points confirmed as correctly implemented.
+
+### 5.3 CRITICAL Findings
+
+| ID | Block | Description |
+|----|-------|-------------|
+| G-CMD-001 | api.py | No RBAC enforcement: JWT has no roles field, zero role checking across all endpoints (S2-09) |
+| G-CMD-002 | B6 | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist (S2-06) |
+| G-CMD-003 | B10 | Data validation missing continuous freshness/staleness monitoring; only validates user inputs |
+| G-CMD-004 | B8 | Balance mismatch sends GUI notification only; no create_incident() for P3-D21 audit trail |
+
+### 5.4 S2-Flagged Items Resolution
+
+| S2-ID | Finding | Resolution |
+|-------|---------|------------|
+| S2-06 | RPT-12 Alpha Decomposition | **GAP CONFIRMED (G-CMD-002 CRITICAL)**: Missing entirely. |
+| S2-07 | P3-D16 per-user isolation | **GAP CONFIRMED (G-CMD-005 HIGH)**: 13 hardcoded "primary_user" in api.py. |
+| S2-09 | RBAC 6 roles | **GAP CONFIRMED (G-CMD-001 CRITICAL)**: No role infrastructure at all. |
+| S2-10 | Quiet hours with CRITICAL override | **VALID**: Correctly implemented in B7. |
+| S2-11 | Per-user notification preferences | **VALID**: Channel toggles, priority threshold, asset filters, sound all present. |
+| S2-12 | Compliance gate completeness | **GAP CONFIRMED (G-CMD-009/018/019 HIGH)**: Global gate only, no per-signal checks. |
+| S2-13 | XFA scaling tiers | **PARTIAL GAP (G-CMD-013 HIGH)**: Correct tiers in B4, wrong gate field in B8. |
+| S2-14 | Payout recommendation | **PARTIAL GAP (G-CMD-040 MEDIUM)**: Cap + commission correct, 5-winning-days missing. |
+| S2-16 | Health endpoint 30s monitoring | **MOSTLY VALID (G-CMD-046 MEDIUM)**: 7/7 fields present, HALTED status path missing. |
+| S2-21 | Incident escalation matrix | **GAP CONFIRMED (G-CMD-015 HIGH)**: No timers, no acknowledgement, no auto-escalation. |
+
+### 5.5 Pattern Observations
+
+**System-wide patterns detected across Command blocks:**
+
+1. **Multi-user infrastructure absent despite spec mandate**: G-CMD-001 (no RBAC), G-CMD-005 (hardcoded primary_user ×13), G-CMD-021 (no account ownership validation). The entire Command layer assumes single-user. V2 multi-user would require changes to api.py (every endpoint), B1 (signal routing), and B2 (dashboard scoping).
+
+2. **Incident creation never called from outside B9**: Blocks B3 (API failure), B8 (balance mismatch), B10 (data quality) all detect error conditions but route them as notifications instead of incidents. P3-D21 incident_log is only written by B9 itself, never by callers. The incident system exists but is disconnected from its intended consumers.
+
+3. **Reports are infrastructure without analytics**: 9 of 11 reports (all except RPT-04 and RPT-07) dump raw QuestDB query results to CSV without computing the aggregations, decompositions, or analytics that the spec requires. The report framework (archive, envelope, journal) is solid but the report content is largely placeholder.
+
+4. **Compliance gate is global, not per-signal**: B12 checks 11 boolean flags for system-wide execution mode (AUTO/MANUAL), but the spec's per-signal compliance_check (max_contracts, instrument_permitted) does not exist anywhere in the pre-execution path. B4 silently caps contracts but doesn't reject with the spec response format.
+
+5. **Notification routing partially broken at runtime**: G-CMD-012 ($N placeholders crash for role-based queries), G-CMD-011 (no email channel), G-CMD-014 (P1 routing missing DEV and ALL channels). The notification and incident routing for non-standard cases has multiple failure paths that would surface in production on the first P1 incident.
 
 ---
 

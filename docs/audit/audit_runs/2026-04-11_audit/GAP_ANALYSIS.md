@@ -533,21 +533,238 @@ The following spec requirements were verified as correctly implemented:
 
 | Status | Count |
 |--------|-------|
-| `[GAP]` | — |
-| `[VALID]` | — |
-| `[AMENDED]` | — |
-| `[BLOCKED]` | — |
-| **Total** | — |
+| `[GAP]` | 65 |
+| `[VALID]` | ~35 |
+| `[AMENDED]` | 3 |
+| `[BLOCKED]` | 0 |
+| **Total** | 68 |
 
-### Findings
+**Severity Breakdown:**
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 4 |
+| HIGH | 15 |
+| MEDIUM | 31 |
+| LOW | 18 |
+| AMENDED | 3 |
+| **Total Findings** | **71** |
+
+### Findings Table
 
 | ID | Block | File | Spec Ref | Status | Severity | Description |
 |----|-------|------|----------|--------|----------|-------------|
-| | | | | | | _(Session 5 will populate)_ |
+| G-CMD-001 | api.py | api.py:113-142 | Doc 19 §4 (S2-09) | `[GAP]` | CRITICAL | No RBAC enforcement: JWT middleware extracts user_id but never validates roles; any authenticated user accesses any endpoint |
+| G-CMD-002 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 (S2-06) | `[GAP]` | CRITICAL | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist |
+| G-CMD-003 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | CRITICAL | Missing continuous data freshness/staleness monitoring; code only validates user inputs, no data feed checks |
+| G-CMD-004 | B8 | b8_reconciliation.py:109-111 | Doc 34 PG-39 step 1 | `[GAP]` | CRITICAL | Balance mismatch sends GUI notification only; spec requires create_incident("RECONCILIATION", "P2_HIGH", "FINANCE") for audit trail in D21 |
+| G-CMD-005 | api.py | api.py:281,557,574,584,784+ | Doc 19 §7 (S2-07) | `[GAP]` | HIGH | Hardcoded "primary_user" in 13 locations; multi-user data isolation completely broken |
+| G-CMD-006 | api.py | api.py (entire) | Doc 19 §10 (S2-18) | `[GAP]` | HIGH | No audit trail logging; no AuditLog table; no user_id/timestamp/action/old_value/new_value records |
+| G-CMD-007 | api.py | api.py:284 | Doc 19 §6 | `[GAP]` | HIGH | No JWT silent refresh mechanism; 24h expiry with no /auth/refresh endpoint |
+| G-CMD-008 | B3 | b3_api_adapter.py:432-438 | Doc 34 PG-32 | `[GAP]` | HIGH | API connection failure uses notify_fn() not create_incident(); no incident record in D21 |
+| G-CMD-009 | B3 | b3_api_adapter.py:468-471 | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | No compliance_check function with max_contracts/instrument_permitted; B12 only checks global gate flags |
+| G-CMD-010 | B7 | b7_notifications.py:241-256 | Doc 26 §7 | `[GAP]` | HIGH | LOW priority routed to GUI; spec says log-only with optional digest |
+| G-CMD-011 | B7 | b7_notifications.py (entire) | Doc 26 §1,§7 | `[GAP]` | HIGH | Email channel completely unimplemented; P1_CRITICAL requires ALL channels including Email |
+| G-CMD-012 | B7 | b7_notifications.py:449 | Doc 26 | `[GAP]` | HIGH | _get_users_by_roles uses $1,$2 PostgreSQL placeholders instead of QuestDB %s; role-based queries fail at runtime |
+| G-CMD-013 | B8 | b8_reconciliation.py:73 | Doc 25+34 (S2-13) | `[GAP]` | HIGH | Scaling tier gated on topstep_optimisation instead of scaling_plan_active; XFA scaling skipped for accounts without topstep_optimisation flag |
+| G-CMD-014 | B9 | b9_incident_response.py:41 | Doc 26 §7, Doc 29 §2.4 | `[GAP]` | HIGH | P1_CRITICAL routes to ADMIN only on GUI+Telegram; spec requires ADMIN+DEV, ALL channels, quiet hours override |
+| G-CMD-015 | B9 | b9_incident_response.py (entire) | Doc 29 §2.4 (S2-21) | `[GAP]` | HIGH | No escalation matrix: P1=5min, P2=30min, P3=4hr, P4=next day — no timers, no acknowledgement tracking |
+| G-CMD-016 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | HIGH | Missing completeness validation with incident creation; returns dicts instead of calling create_incident |
+| G-CMD-017 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | HIGH | Missing format/schema validation with incident creation |
+| G-CMD-018 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing instrument_permitted check per signal; only checks 11 RTS6 boolean flags |
+| G-CMD-019 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing max_contracts check per signal; gate is global pass/fail not per-order |
+| G-CMD-020 | B1 | b1_core_routing.py:40 | Doc 34 PG-30 | `[GAP]` | MEDIUM | PROHIBITED_EXTERNAL_FIELDS imported but never enforced at runtime; whitelist approach works but no defensive assertion |
+| G-CMD-021 | B1 | b1_core_routing.py:84-93 | Doc 34 PG-30 | `[GAP]` | MEDIUM | No account_belongs_to_user(ac_id, user_id) validation in signal routing; multi-user cross-account risk |
+| G-CMD-022 | B2 | b2_gui_data_server.py:117-136 | Doc 34 PG-31 | `[GAP]` | MEDIUM | Dashboard field names diverge from spec: pending_signals→signals, open_positions→positions, capital_silo→capital, aim_states→aim_panel |
+| G-CMD-023 | B2 | b2_gui_data_server.py:117-136 | Doc 34+18 PG-31 | `[GAP]` | MEDIUM | Dashboard missing universe (P3-D00) field entirely |
+| G-CMD-024 | B2 | b2_gui_data_server.py:425-458 | Doc 18 §5 | `[GAP]` | MEDIUM | AIM panel summary missing Confidence, 30-day hit rate, Last retrained; meta_weight always None |
+| G-CMD-025 | B2 | b2_gui_data_server.py:144-164 | Doc 18 §7 | `[GAP]` | MEDIUM | System overview missing all_users section and parameter_editor (read-only params only) |
+| G-CMD-026 | B2 | b2_gui_data_server.py (entire) | Doc 18 §3 | `[GAP]` | MEDIUM | No autonomy tier support: FULL_AUTO/SEMI_AUTO(default)/MANUAL not implemented |
+| G-CMD-027 | B3 | b3_api_adapter.py:354-366 | Doc 34 PG-32 | `[GAP]` | MEDIUM | No per-account adapter loading loop with api_type dispatch; single hardcoded TopstepX adapter |
+| G-CMD-028 | B3 | b3_api_adapter.py:147-190 | Doc 34 PG-32 | `[GAP]` | MEDIUM | Initial connect bypasses per-account vault credential loading; uses env vars directly |
+| G-CMD-029 | B4 | b4_tsm_manager.py:179-217 | Doc 34 PG-33 | `[GAP]` | MEDIUM | No onboard_account() that atomically stores D08 + appends D16; stores split across main.py and bootstrap |
+| G-CMD-030 | B4 | b4_tsm_manager.py:274-299 | Doc 25 | `[GAP]` | MEDIUM | Missing resolve_commission(tsm, asset, contracts) function; caller must multiply fee × contracts |
+| G-CMD-031 | B4 | b4_tsm_manager.py:274-299 | Doc 25 | `[GAP]` | MEDIUM | Missing get_expected_fee(tsm, asset) named function; similar function exists under different name |
+| G-CMD-032 | B5 | b5_injection_flow.py:169-176 | Doc 34 PG-34 | `[GAP]` | MEDIUM | Decision enum uses abbreviated names (ADOPT/REJECT vs ADOPT_STRATEGY/REJECT_STRATEGY) at API boundary |
+| G-CMD-033 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 | `[GAP]` | MEDIUM | Report names deviate from spec: "Monthly Decay" vs "Monthly Health", "Strategy Comparison" vs "Injection Comparison" |
+| G-CMD-034 | B6 | b6_reports.py:32-44 | Doc 34 PG-35 | `[GAP]` | MEDIUM | No scheduled trigger mechanism; all 11 reports are on-demand only despite spec triggers (pre-session, weekly, monthly) |
+| G-CMD-035 | B6 | b6_reports.py:529-549 | Doc 34 PG-35 | `[GAP]` | MEDIUM | D09 archive stores metadata only (6 fields); actual report content/data payload discarded |
+| G-CMD-036 | B6 | b6_reports.py:145-529 | Doc 29 §2.5 | `[GAP]` | MEDIUM | 9 of 11 reports are shallow: raw query dump to CSV without spec-required analytics/aggregation (RPT-04 and RPT-07 are exceptions) |
+| G-CMD-037 | B7 | b7_notifications.py:479-524 | Doc 26 §6 | `[GAP]` | MEDIUM | D10 delivery log missing channel field; uses boolean flags per row instead of per-channel rows |
+| G-CMD-038 | B7 | b7_notifications.py:290-297 | Doc 26 | `[GAP]` | MEDIUM | No delivery retry mechanism; failed Telegram sends silently dropped |
+| G-CMD-039 | B8 | b8_reconciliation.py:419-437 | Doc 34 PG-39 step 3 | `[GAP]` | MEDIUM | D23 reset inserts L_t=0, n_t=0 but does not clear session_trades[] as spec requires |
+| G-CMD-040 | B8 | b8_reconciliation.py:298-391 | Doc 25 (S2-14) | `[GAP]` | MEDIUM | Payout missing XFA 5-winning-days requirement; only BROKER_LIVE checks winning_days |
+| G-CMD-041 | B9 | b9_incident_response.py:42 | Doc 26 §7 | `[GAP]` | MEDIUM | P2_HIGH routes to ADMIN only; spec requires ADMIN + RISK |
+| G-CMD-042 | B9 | b9_incident_response.py:43 | Doc 26 §7, Doc 29 §2.4 | `[GAP]` | MEDIUM | P3_MEDIUM routes to generic ADMIN; spec says assigned owner |
+| G-CMD-043 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | MEDIUM | No integration with B9 incident response; validation errors returned as dicts, never trigger incidents |
+| G-CMD-044 | B11 | b11_replay_runner.py:206 | N/A (quality) | `[GAP]` | MEDIUM | _active_sessions dict has no eviction/cleanup; completed sessions accumulate unboundedly |
+| G-CMD-045 | B12 | b12_compliance_gate.py:46-54 | N/A (quality) | `[GAP]` | MEDIUM | compliance_gate.json reloaded from disk on every call with no caching |
+| G-CMD-046 | api.py | api.py:211-216 | Doc 34 PG-30 (S2-16) | `[GAP]` | MEDIUM | Health endpoint never returns HALTED overall status; CB halt doesn't propagate to top-level status |
+| G-CMD-047 | api+orch | api.py:159, orchestrator.py:107+ | CLAUDE.md TZ rule | `[GAP]` | MEDIUM | Naive datetime.now() in 8+ locations; functionally OK in Docker but fragile outside container |
+| G-CMD-048 | api.py | api.py:257-271 | Doc 18 §10 | `[GAP]` | MEDIUM | /api/status leaks internal adapter state and WebSocket session counts beyond 6-field limit |
+| G-CMD-049 | telegram | telegram_bot.py:39-53 | Doc 26 §3 | `[GAP]` | MEDIUM | Rate limiter _rate_window and _mute_until dicts unprotected across threads |
+| G-CMD-050 | telegram | telegram_bot.py:600-608 | Doc 26 §3 | `[GAP]` | MEDIUM | HTML injection possible via unsanitized message text in parse_mode=HTML Telegram calls |
+| G-CMD-051 | B1 | b1_core_routing.py:160 | Doc 34 PG-30 | `[GAP]` | LOW | TAKEN and SKIPPED merged into single TAKEN_SKIPPED command type with sub-field discriminator |
+| G-CMD-052 | B1 | b1_core_routing.py:290-331 | Doc 34 PG-30 | `[GAP]` | LOW | Push notification channel missing from routing (V2 feature) |
+| G-CMD-053 | B2 | b2_gui_data_server.py:461-585 | Doc 18 §5 | `[GAP]` | LOW | AIM detail modal returns inclusion_probability but no explicit "Confidence" alias |
+| G-CMD-054 | B4 | b4_tsm_manager.py:115-116 | Doc 25+34 PG-33 | `[GAP]` | LOW | No default_fee_schedule(category) function; fees silently default to 0 |
+| G-CMD-055 | B5 | b5_injection_flow.py:51-62 | Doc 34 PG-34 | `[GAP]` | LOW | RPT-05 not proactively generated on candidate notification; user must fetch on demand |
+| G-CMD-056 | B5 | b5_injection_flow.py:144-146 | Security | `[GAP]` | LOW | Error response leaks raw exception string to API consumers |
+| G-CMD-057 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 | `[GAP]` | LOW | Notification priority mapping per report not implemented (RPT-03,10,11=LOW; others=MEDIUM) |
+| G-CMD-058 | B6 | b6_reports.py:47-103 | Doc 29 | `[GAP]` | LOW | Data source documentation missing per report; only RPT-04 has proper docstring |
+| G-CMD-059 | B7 | b7_notifications.py:49 | Doc 26 §2 | `[GAP]` | LOW | CRITICAL event count comment says "9 events" but actual count is 10 |
+| G-CMD-060 | B7 | b7_notifications.py:339 | Doc 26 | `[GAP]` | LOW | zoneinfo re-imported inside function body on every quiet hours check |
+| G-CMD-061 | B8 | b8_reconciliation.py:221 | Doc 25 | `[GAP]` | LOW | MDD fallback default 4500 hardcoded; should warn when triggered |
+| G-CMD-062 | B9 | b9_incident_response.py:86 | Doc 34 PG-40 | `[GAP]` | LOW | Incident ID truncated UUID hex (12 chars) instead of full UUID |
+| G-CMD-063 | B9 | b9_incident_response.py:56 | Doc 34 PG-40 | `[GAP]` | LOW | system_snapshot is optional param (default None); spec says auto-capture on every incident |
+| G-CMD-064 | B11 | b11_replay_runner.py:184-193 | Security | `[GAP]` | LOW | Error string leakage to GUI WebSocket via str(exc) |
+| G-CMD-065 | telegram | telegram_bot.py:586-623 | Doc 26 §3 | `[GAP]` | LOW | Uses raw urllib.request instead of python-telegram-bot library's send API |
+| G-CMD-066 | telegram | telegram_bot.py:113 | Doc 26 §3 | `[GAP]` | LOW | Open position count uses fragile WHERE exit_time IS NULL query on outcome log |
+| G-CMD-067 | main.py | main.py (entire) | CLAUDE.md TZ rule | `[GAP]` | LOW | No explicit timezone set in code; relies entirely on Docker ENV TZ |
+| G-CMD-068 | orch | api.py:156-160, orchestrator.py:104-108 | N/A (quality) | `[GAP]` | LOW | Duplicate process_health dicts in api.py and orchestrator.py; divergence risk |
 
-### Detailed Findings
+**Amended Items (intentional deviations):**
 
-_(See `findings/`, `validation/`, `amendments/` subdirectories for per-component detail files)_
+| ID | Block | File | Spec Ref | Description | Rationale |
+|----|-------|------|----------|-------------|-----------|
+| G-CMD-A01 | B1 | b1_core_routing.py:71-100 | Doc 20 S2-04 | Signal distribution priority rotation deferred | V1 single-user; no distribution needed |
+| G-CMD-A02 | B4 | b4_tsm_manager.py:38-52 | Doc 34 PG-33 | Validation requires 5 fields (superset of spec's 3) and accepts 7 categories (superset of spec's 5) | More restrictive onboarding; forward-compatible categories |
+| G-CMD-A03 | B4 | b4_tsm_manager.py:296-299 | Doc 25 | Fee fallback uses cpc × 2 (round-turn) per-contract matching spec | Caller multiplies by contracts; correct total |
+
+### Detailed Findings — CRITICAL
+
+#### G-CMD-001 — No RBAC Enforcement Anywhere in API
+
+**Spec:** Doc 19 §4 defines 6 roles (ADMIN, ANALYST/DEV, TRADER, VIEWER, SYSTEM, AUDITOR) with tag-based permissions. ADMIN gets full control; VIEWER is read-only; AUDITOR gets read logs with no mutating actions.
+
+**Code:** `api.py:113-142` — JWT middleware extracts `sub` (user_id) from the token and stores it in `request.state`, but the JWT payload (`api.py:299-303`) contains only `sub`, `iat`, and `exp` — no `roles` or `tags` field. Endpoints like `/api/system-overview` (line 592) and `/api/aim/{aim_id}/activate` (line 571) have comments saying "ADMIN only" but zero enforcement code exists. Any authenticated user can: activate/deactivate AIMs, view system overview, modify notification preferences, start replays, and access all endpoints indiscriminately.
+
+**Impact:** In V2 multi-user deployment, a VIEWER-role user could activate/deactivate AIMs or trigger diagnostics. Even in V1, the complete absence of role infrastructure means adding RBAC later requires changes across every endpoint.
+
+#### G-CMD-002 — RPT-12 Alpha Decomposition Completely Missing
+
+**Spec:** Doc 29 §2.5 defines 12 reports (RPT-01 through RPT-12). RPT-12 "Alpha Decomposition" should decompose PnL into: base strategy contribution, regime conditioning, AIM modifiers, and Kelly sizing effects. Sources: P3-D03, D02, D05, D12. Trigger: monthly / on-demand.
+
+**Code:** `b6_reports.py:32-44` — `REPORT_TYPES` registry contains only 11 entries (RPT-01 through RPT-11). Module docstring at line 9 says "11 report types." The `generators` dict at lines 76-88 has no RPT-12 entry. No alpha decomposition function exists anywhere in the codebase.
+
+**Impact:** The system cannot attribute returns to its component strategies. Without alpha decomposition, it is impossible to determine whether AIM modifiers, regime conditioning, or the base strategy drive performance — critical for model validation (Doc 29 Part 3).
+
+#### G-CMD-003 — B10 Data Validation Missing Continuous Monitoring
+
+**Spec:** Doc 34 PG-41 requires continuous validation of incoming data streams checking: (1) freshness via max_staleness threshold → P3_MEDIUM incident, (2) completeness via required_fields → P2_HIGH incident, (3) format via schema validation → P2_HIGH incident.
+
+**Code:** `b10_data_validation.py` validates user-submitted data (entry price, commission, balance) and asset configs. There is zero data feed freshness checking, no staleness timer, no monitoring loop, and no call to `create_incident()` anywhere in the file. The block does not import B9 incident response.
+
+**Impact:** Stale market data, missing feed fields, or corrupted schemas will not be detected until they cause downstream signal errors. The system has no automated data quality defense.
+
+#### G-CMD-004 — B8 Balance Mismatch Not Recorded as Incident
+
+**Spec:** Doc 34 PG-39 step 1: if `abs(broker_balance - system_balance) > reconciliation_threshold`, call `create_incident("RECONCILIATION", "P2_HIGH", "FINANCE", "Balance mismatch for {ac}...")`.
+
+**Code:** `b8_reconciliation.py:109-111` pushes a GUI notification with priority "MEDIUM" and logs the correction, but never calls `create_incident()`. The B9 module is not imported. The mismatch is auto-corrected (broker = source of truth) without creating an auditable incident record in P3-D21.
+
+**Impact:** Balance mismatches — which could indicate unauthorized trades, API errors, or accounting bugs — leave no formal incident trail. ADMIN cannot review historical reconciliation failures.
+
+### Detailed Findings — HIGH (Selected)
+
+#### G-CMD-005 — Hardcoded "primary_user" Breaks Multi-User Isolation
+
+**Code:** `api.py` has 13 instances of hardcoded `"primary_user"` across lines 281, 557, 574, 584, 784, 790, 803, 830, 849, 873, 919, 926, 983. Examples: `api_aim_activate` (line 574) hardcodes `user_id: "primary_user"` instead of reading from JWT `request.state.user_id`; replay endpoints (lines 803, 926) use hardcoded user_id in SQL queries. **Spec (Doc 19 §7):** P3-D16 capital silos must isolate per-user.
+
+#### G-CMD-009/018/019 — Compliance Gate Missing Per-Signal Checks
+
+**Code:** B12 (`b12_compliance_gate.py`) checks 11 RTS6 boolean flags and `AUTO_EXECUTE` env var — a global gate status. B3 (`b3_api_adapter.py:468-471`) delegates to B12. Neither checks `signal.contracts > max_contracts` nor `instrument_permitted(signal.asset)` as spec requires. B4 (`b4_tsm_manager.py:243-246`) caps contracts at `max_contracts` but doesn't reject with the spec-mandated `{approved: False, reason: "EXCEEDS_MAX_CONTRACTS"}` format.
+
+#### G-CMD-012 — SQL Placeholder Syntax Crash in B7 Role Queries
+
+**Code:** `b7_notifications.py:449` builds `$1, $2, ...` PostgreSQL-style positional placeholders, but QuestDB via psycopg2 uses `%s` placeholders (as used everywhere else in the codebase). Any call to `_get_users_by_roles` for non-TRADER roles will raise a database error, meaning ADMIN/DEV/RISK notifications are undeliverable.
+
+#### G-CMD-015 — No Incident Escalation Matrix
+
+**Spec:** Doc 29 §2.4: P1 acknowledged within 5 minutes, P2 within 30 minutes, P3 within 4 hours, P4 next business day. **Code:** B9 creates incidents as OPEN and supports manual resolution, but has no timers, no acknowledgement tracking, no auto-escalation on timeout. Unacknowledged P1 incidents will never auto-notify additional responders.
+
+### S2-Flagged Items Resolution
+
+| S2-ID | Finding | Resolution |
+|-------|---------|------------|
+| S2-06 | RPT-12 Alpha Decomposition | **GAP CONFIRMED (G-CMD-002 CRITICAL)**: Missing entirely. Only 11 of 12 reports exist. |
+| S2-07 | P3-D16 capital_silos per-user isolation | **GAP CONFIRMED (G-CMD-005 HIGH)**: api.py hardcodes "primary_user" in 13 locations; no per-user scoping from JWT. |
+| S2-09 | RBAC 6 roles | **GAP CONFIRMED (G-CMD-001 CRITICAL)**: JWT has no roles field; zero enforcement across all endpoints. |
+| S2-10 | Quiet hours 22:00-06:00 with CRITICAL override | **VALID**: b7_notifications.py:98-100 defaults 22:00-06:00 local TZ. Line 266 checks `priority != "CRITICAL"` for quiet hours bypass. Correctly implemented. |
+| S2-11 | Per-user notification preferences | **VALID**: b7_notifications.py:88-105 includes channel toggles (telegram/email/push), priority threshold, asset filters (allowlist), sound per priority. All spec preference types present. |
+| S2-12 | Compliance gate completeness | **GAP CONFIRMED (G-CMD-009/018/019 HIGH)**: B12 checks global flags only; no instrument_permitted or max_contracts per-signal checks. |
+| S2-13 | XFA scaling tiers end-of-day | **PARTIAL GAP (G-CMD-013 HIGH)**: B4 has correct 5-tier lookup table; B8 gates evaluation on `topstep_optimisation` instead of `scaling_plan_active`. |
+| S2-14 | Payout recommendation logic | **PARTIAL GAP (G-CMD-040 MEDIUM)**: XFA $5k/50% cap and 10% commission implemented; 5 winning days requirement missing for XFA accounts. |
+| S2-16 | Health endpoint with 30s monitoring | **MOSTLY VALID (G-CMD-046 MEDIUM)**: 7/7 required fields present; 30s health check schedule confirmed; overall status never returns "HALTED" even when CB is halted. |
+| S2-21 | Incident escalation matrix | **GAP CONFIRMED (G-CMD-015 HIGH)**: No escalation timers, acknowledgement tracking, or auto-escalation. |
+
+### Key Validated Areas
+
+**V-CMD-001 | B1 | 6-field sanitisation:** `sanitise_for_api()` returns exactly 6 fields (asset, direction, size, tp, sl, timestamp) via whitelist. PROHIBITED_EXTERNAL_FIELDS constant in `shared/constants.py` matches spec's 9 prohibited fields.
+
+**V-CMD-002 | B1 | 13+ command types handled:** `route_command()` dispatches all spec command types: TAKEN/SKIPPED (combined), ADOPT_STRATEGY, REJECT_STRATEGY, PARALLEL_TRACK, SELECT_TSM, ACTIVATE_AIM, DEACTIVATE_AIM, CONFIRM_ROLL, UPDATE_ACTION_ITEM, TRIGGER_DIAGNOSTIC, MANUAL_PAUSE, MANUAL_RESUME. Plus extensions: CONCENTRATION_PROCEED, CONCENTRATION_PAUSE.
+
+**V-CMD-003 | B1 | Notification logging to D10:** `_log_notification()` inserts to `p3_d10_notification_log`. Telegram routing fires for CRITICAL and HIGH priority.
+
+**V-CMD-004 | B1 | Broadcast to all users:** `route_notification()` calls `_get_all_active_user_ids()` when `user_id` absent, correctly broadcasting system alerts.
+
+**V-CMD-005 | B2 | Payout panel:** `_get_payout_panel()` implements per-account recommended payout with net-after-commission and tier impact, matching Doc 18 §6.
+
+**V-CMD-006 | B2 | 8-dimension diagnostics:** `_get_diagnostic_health()` queries P3-D22 for all 8 system health dimensions per PG-17.
+
+**V-CMD-007 | B2 | Thread-safe snapshot:** `_state_lock` and atomic snapshot pattern protect mutable state for concurrent GUI clients.
+
+**V-CMD-008 | B3 | Adapter interface:** ABC with 5 lifecycle methods (connect, send_signal, receive_fill, get_account_status, disconnect) plus ping. TopstepX concrete adapter with bracket order placement.
+
+**V-CMD-009 | B3 | 30s health check with 3-retry reconnect:** Matches spec's auto-reconnect requirement.
+
+**V-CMD-010 | B3 | 4-field inbound boundary:** balance, equity, drawdown, open_positions — information from broker correctly restricted.
+
+**V-CMD-011 | B4 | TSM validation:** Required fields, classification block, numeric sanity, V3 fee_schedule with per-instrument fees.
+
+**V-CMD-012 | B4 | Scaling tier lookup:** `get_scaling_tier()` implements correct 5-tier balance-threshold lookup matching Doc 25 table.
+
+**V-CMD-013 | B5 | Injection flow end-to-end:** Receives candidate from Offline B4 via D06 query, presents to user via GUI push, captures ADOPT/PARALLEL_TRACK/REJECT, forwards to Offline via Redis CH_COMMANDS.
+
+**V-CMD-014 | B6 | RPT-04 (AIM Effectiveness):** Fully implemented with DMA weights, modifier accuracy, PnL contribution, and days suppressed.
+
+**V-CMD-015 | B6 | RPT-07 (TSM Compliance):** Computes drawdown vs MDD, budget remaining, pass probability.
+
+**V-CMD-016 | B7 | Quiet hours with CRITICAL override:** 22:00-06:00 local TZ, CRITICAL bypasses, queue capped at 50 with FIFO eviction.
+
+**V-CMD-017 | B7 | Per-user preferences:** Channel toggles, priority threshold, asset filters, sound per priority all implemented.
+
+**V-CMD-018 | B7 | Rate limit 60/hr:** Enforced in telegram_bot.py per chat.
+
+**V-CMD-019 | B8 | SOD formulas correct:** f(A)=4500/A, R_eff=(4500p+phi)/A, N=floor(eA/(4500p+phi)), E=eA, L_halt=ceA all match spec.
+
+**V-CMD-020 | B8 | Broker balance as source of truth:** Auto-corrects system balance to match broker on mismatch.
+
+**V-CMD-021 | B8 | Reconciliation logged to D19:** Correct data store write.
+
+**V-CMD-022 | B9 | Incident persistence to D21:** UUID-based ID, severity validation, OPEN status, resolution flow all correct.
+
+**V-CMD-023 | telegram | 7 commands implemented:** /status, /signals, /positions, /reports, /tsm, /mute, /help.
+
+**V-CMD-024 | telegram | Inline TAKEN/SKIPPED buttons:** On signal notifications, callback validation for action type.
+
+**V-CMD-025 | telegram | Security controls:** Chat ID whitelist from D16, bot token from vault, no strategy details in messages, CRITICAL bypasses mute.
+
+**V-CMD-026 | orch | Parity filter:** `_check_parity_skip` correctly implements INSTANCE_PARITY with daily Redis counter and deterministic trade splitting.
+
+**V-CMD-027 | orch | Always-on architecture:** 4 threads (signal reader, Redis listener, log forwarder, scheduler) with exponential backoff.
+
+**V-CMD-028 | api.py | Health endpoint fields:** All 7 required fields present: status, uptime_seconds, last_signal_time, active_users, circuit_breaker, api_connections, last_heartbeat.
+
+**V-CMD-029 | api.py | JWT authentication:** HS256 signing, 24h expiry, middleware validation on all non-exempt paths, WebSocket JWT verification.
+
+**V-CMD-030 | api.py | WebSocket per-user scoping:** Sessions tracked per-user; dashboard pushes per-user.
+
+**V-CMD-031 | api.py | Graceful shutdown:** FastAPI lifespan stops orchestrator and Telegram bot on SIGTERM/SIGINT.
+
+**V-CMD-032 | main.py | Initialization sequence:** QuestDB+Redis verify → TSM load → Telegram bot → chat_id to D16 → TopstepX auth → TSM link → orchestrator thread → uvicorn main thread.
+
+**V-CMD-033 | B12 | RTS6 gate:** All 11 flags checked with fail-safe default to MANUAL mode. AUTO_EXECUTE env var required.
 
 ---
 
@@ -597,7 +814,7 @@ _(See `findings/`, `validation/`, `amendments/` subdirectories for per-component
 |---------|-----|-------|---------|---------|-------|---------|
 | P3-Offline | 52 | ~75 | 3 | 0 | 55 | 5 CRITICAL |
 | P3-Online | 49 | ~40 | 8 | 0 | 57 | 3 CRITICAL |
-| P3-Command | — | — | — | — | — | — |
+| P3-Command | 65 | ~35 | 3 | 0 | 71 | 4 CRITICAL |
 | Shared | — | — | — | — | — | — |
 | Cross-Cutting | — | — | — | — | — | — |
 | **TOTAL** | — | — | — | — | — | **—** |
