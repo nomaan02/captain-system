@@ -22,6 +22,7 @@ from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def generate_report(report_type: str, user_id: str, params: dict | None = None) 
         "name": meta["name"],
         "format": meta["render"],
         "data": data,
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": now_et().isoformat(),
     }
 
     _archive_report(report_id, report_type, user_id, result)
@@ -458,7 +459,7 @@ def _rpt09_parameter_audit(user_id: str, params: dict) -> str:
 
 def _rpt10_annual_performance(user_id: str, params: dict) -> str:
     """Full-year performance, AIM value-add, decay events, injection history."""
-    year = params.get("year", datetime.now().year)
+    year = params.get("year", now_et().year)
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -667,7 +668,7 @@ def _archive_report(report_id: str, report_type: str, user_id: str, result: dict
                        name, format, generated_at
                    ) VALUES(%s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     report_id,
                     report_type,
                     user_id,

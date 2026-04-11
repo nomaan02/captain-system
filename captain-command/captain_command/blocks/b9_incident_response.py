@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
-from shared.constants import INCIDENT_SEVERITY_VALUES
+from shared.constants import INCIDENT_SEVERITY_VALUES, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,24 @@ INCIDENT_TYPES = {
     "PERFORMANCE", "SECURITY", "OPERATIONAL",
 }
 
-# Severity → notification routing
+# Severity → notification routing (spec Doc 26 §7, Doc 29 §2.4)
 SEVERITY_ROUTING = {
-    "P1_CRITICAL": {"channels": ["GUI", "TELEGRAM"], "targets": ["ADMIN"]},
-    "P2_HIGH":     {"channels": ["GUI", "TELEGRAM"], "targets": ["ADMIN"]},
-    "P3_MEDIUM":   {"channels": ["GUI"],             "targets": ["ADMIN"]},
-    "P4_LOW":      {"channels": [],                  "targets": []},
+    "P1_CRITICAL": {"channels": ["GUI", "TELEGRAM", "EMAIL"], "targets": ["ADMIN", "DEV"], "quiet_hours_override": True},
+    "P2_HIGH":     {"channels": ["GUI", "TELEGRAM"],          "targets": ["ADMIN"]},
+    "P3_MEDIUM":   {"channels": ["GUI"],                      "targets": ["ADMIN"]},
+    "P4_LOW":      {"channels": [],                           "targets": []},
 }
+
+# Escalation matrix — acknowledgement deadlines (spec Doc 29 §2.4)
+ESCALATION_MATRIX = {
+    "P1_CRITICAL": 5 * 60,       # 5 minutes
+    "P2_HIGH":     30 * 60,      # 30 minutes
+    "P3_MEDIUM":   4 * 3600,     # 4 hours
+    "P4_LOW":      24 * 3600,    # Next business day (24 hours)
+}
+
+# In-memory escalation tracker: {incident_id: {"severity", "created_at", "acknowledged"}}
+_escalation_state: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +94,7 @@ def create_incident(incident_type: str, severity: str, component: str,
         severity = "P3_MEDIUM"
 
     incident_id = f"INC-{uuid.uuid4().hex[:12].upper()}"
-    ts = datetime.now().isoformat()
+    ts = now_et().isoformat()
 
     incident = {
         "incident_id": incident_id,
@@ -112,12 +123,27 @@ def create_incident(incident_type: str, severity: str, component: str,
             "P3_MEDIUM": "MEDIUM",
             "P4_LOW": "LOW",
         }
-        notify_fn({
+        notif_payload = {
             "priority": priority_map.get(severity, "LOW"),
             "message": f"[{severity}] {incident_type} in {component}: {details}",
             "source": "INCIDENT",
+            "roles": routing.get("targets", ["ADMIN"]),
             "data": {"incident_id": incident_id},
-        })
+        }
+        if routing.get("quiet_hours_override"):
+            notif_payload["quiet_hours_override"] = True
+        notify_fn(notif_payload)
+
+    # Register escalation tracking
+    deadline = ESCALATION_MATRIX.get(severity)
+    if deadline:
+        _escalation_state[incident_id] = {
+            "severity": severity,
+            "created_at": ts,
+            "deadline_seconds": deadline,
+            "acknowledged": False,
+            "escalated": False,
+        }
 
     write_checkpoint("COMMAND", "INCIDENT_CREATED", "logged", "monitoring",
                      {"incident_id": incident_id, "severity": severity})
@@ -151,7 +177,7 @@ def resolve_incident(incident_id: str, resolution: str,
     dict
         Updated incident record.
     """
-    ts = datetime.now().isoformat()
+    ts = now_et().isoformat()
 
     try:
         with get_cursor() as cur:
@@ -256,6 +282,69 @@ def get_incident_detail(incident_id: str) -> dict:
         logger.error("Incident detail query failed: %s", exc, exc_info=True)
         return {"error": "Incident detail query failed"}
     return {"error": "Unexpected state"}
+
+
+# ---------------------------------------------------------------------------
+# Escalation
+# ---------------------------------------------------------------------------
+
+
+def acknowledge_incident(incident_id: str, user_id: str) -> bool:
+    """Mark an incident as acknowledged, stopping escalation.
+
+    Returns True if the incident was tracked and is now acknowledged.
+    """
+    entry = _escalation_state.get(incident_id)
+    if not entry:
+        return False
+    entry["acknowledged"] = True
+    logger.info("Incident %s acknowledged by %s", incident_id, user_id)
+    return True
+
+
+def check_escalations(notify_fn: Callable | None = None) -> list[str]:
+    """Check for unacknowledged incidents past their escalation deadline.
+
+    Called periodically by the orchestrator (every 60 s).
+    Returns list of incident IDs that were escalated.
+    """
+    escalated = []
+    now = now_et()
+
+    for inc_id, state in list(_escalation_state.items()):
+        if state["acknowledged"] or state["escalated"]:
+            continue
+
+        try:
+            created = datetime.fromisoformat(state["created_at"])
+        except (ValueError, TypeError):
+            continue
+
+        elapsed = (now - created).total_seconds()
+        if elapsed >= state["deadline_seconds"]:
+            state["escalated"] = True
+            escalated.append(inc_id)
+
+            severity = state["severity"]
+            logger.warning(
+                "Incident %s (%s) unacknowledged after %ds — escalating",
+                inc_id, severity, int(elapsed),
+            )
+
+            if notify_fn:
+                notify_fn({
+                    "priority": "CRITICAL",
+                    "message": (
+                        f"[ESCALATION] Incident {inc_id} ({severity}) "
+                        f"unacknowledged for {int(elapsed)}s — requires immediate attention"
+                    ),
+                    "source": "ESCALATION",
+                    "roles": ["ADMIN", "DEV"],
+                    "quiet_hours_override": True,
+                    "data": {"incident_id": inc_id, "original_severity": severity},
+                })
+
+    return escalated
 
 
 # ---------------------------------------------------------------------------

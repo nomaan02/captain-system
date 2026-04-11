@@ -29,7 +29,7 @@ from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, REDIS_KEY_QUOTES
-from shared.constants import SYSTEM_TIMEZONE
+from shared.constants import SYSTEM_TIMEZONE, now_et
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
@@ -116,7 +116,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
 
     return {
         "type": "dashboard",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "user_id": user_id,
         "capital_silo": _get_capital_silo(user_id, stream),
         "open_positions": _get_open_positions(user_id),
@@ -151,7 +151,7 @@ def build_system_overview() -> dict:
     """
     return {
         "type": "system_overview",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "network_concentration": _get_network_concentration(),
         "signal_quality": _get_signal_quality_summary(),
         "capacity_state": _get_capacity_state(),
@@ -182,7 +182,8 @@ def _get_payout_panel(user_id: str) -> list[dict]:
                 """SELECT account_id, name, current_balance, starting_balance,
                           max_drawdown_limit, topstep_state
                    FROM p3_d08_tsm_state
-                   WHERE user_id = %s AND topstep_optimisation = true""",
+                   WHERE user_id = %s AND topstep_optimisation = true
+                   LATEST ON last_updated PARTITION BY account_id""",
                 (user_id,),
             )
             rows = cur.fetchall()
@@ -247,7 +248,8 @@ def _get_scaling_display(user_id: str) -> list[dict]:
                 """SELECT account_id, current_balance, starting_balance,
                           topstep_state
                    FROM p3_d08_tsm_state
-                   WHERE user_id = %s AND scaling_plan_active = true""",
+                   WHERE user_id = %s AND scaling_plan_active = true
+                   LATEST ON last_updated PARTITION BY account_id""",
                 (user_id,),
             )
             rows = cur.fetchall()
@@ -1476,7 +1478,7 @@ def build_processes_status(process_health: dict, api_connections: dict) -> dict:
         API adapter connection state from api module.
     """
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "processes": {
             role: {
                 "status": info.get("status", "unknown"),

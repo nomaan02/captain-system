@@ -41,7 +41,7 @@ from shared.redis_client import (
 )
 from shared.process_logger import ProcessLogger
 from shared.journal import write_checkpoint
-from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, SYSTEM_TIMEZONE
+from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, SYSTEM_TIMEZONE, now_et
 
 from captain_command.blocks.b1_core_routing import (
     route_signal_batch,
@@ -104,7 +104,7 @@ class CommandOrchestrator:
         self.process_health: dict = {
             "OFFLINE": {"status": "unknown", "timestamp": None},
             "ONLINE": {"status": "unknown", "timestamp": None},
-            "COMMAND": {"status": "ok", "timestamp": datetime.now().isoformat()},
+            "COMMAND": {"status": "ok", "timestamp": now_et().isoformat()},
         }
         self._last_reconciliation_date: str | None = None
         self._last_dashboard_refresh: float = 0
@@ -287,7 +287,7 @@ class CommandOrchestrator:
         theoretical outcome learning.
         """
         user_id = data.get("user_id", "")
-        ts = data.get("timestamp", datetime.now().isoformat())
+        ts = data.get("timestamp", now_et().isoformat())
 
         update_last_signal_time(ts)
 
@@ -362,12 +362,7 @@ class CommandOrchestrator:
 
         Returns True if this batch should be skipped (parity mismatch).
         """
-        try:
-            import zoneinfo
-            tz = zoneinfo.ZoneInfo("America/New_York")
-            today = datetime.now(tz).strftime("%Y-%m-%d")
-        except Exception:
-            today = datetime.now().strftime("%Y-%m-%d")
+        today = now_et().strftime("%Y-%m-%d")
 
         counter_key = f"captain:signal_counter:{today}"
         try:
@@ -402,7 +397,7 @@ class CommandOrchestrator:
         else:
             logger.info("AUTO-EXECUTE SKIP: direction=%s for %s (no valid direction)",
                         direction, sanitised_order.get("asset"))
-            gui_push("primary_user", {
+            gui_push(sanitised_order.get("user_id", "unknown"), {
                 "type": "signal_pending",
                 "message": f"Signal for {sanitised_order.get('asset')} awaiting OR breakout direction",
                 "order": sanitised_order,
@@ -442,7 +437,7 @@ class CommandOrchestrator:
                 f"x{sanitised_order.get('size')} (order_id={result.get('order_id')})",
                 source="b3_api",
             )
-            gui_push("primary_user", {
+            gui_push(sanitised_order.get("user_id", "unknown"), {
                 "type": "command_ack",
                 "command": "AUTO_EXECUTED",
                 "order": sanitised_order,
@@ -454,7 +449,7 @@ class CommandOrchestrator:
                 f"Order FAILED: {sanitised_order.get('asset')} \u2014 {status}",
                 source="b3_api",
             )
-            gui_push("primary_user", {
+            gui_push(sanitised_order.get("user_id", "unknown"), {
                 "type": "error",
                 "message": f"Auto-execute failed: {status}",
                 "detail": result,
@@ -619,23 +614,18 @@ class CommandOrchestrator:
             client.publish(CH_STATUS, json.dumps({
                 "role": "COMMAND",
                 "status": "ok",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_et().isoformat(),
                 "details": {
                     "api_connections": get_connection_summary(),
                 },
             }))
-            self.process_health["COMMAND"]["timestamp"] = datetime.now().isoformat()
+            self.process_health["COMMAND"]["timestamp"] = now_et().isoformat()
         except Exception as exc:
             logger.error("Heartbeat publish failed: %s", exc)
 
     def _check_reconciliation_trigger(self):
         """Check if it's 19:00 EST and run daily reconciliation."""
-        try:
-            import zoneinfo
-            tz = zoneinfo.ZoneInfo(SYSTEM_TIMEZONE)
-            now = datetime.now(tz)
-        except Exception:
-            now = datetime.now()
+        now = now_et()
 
         if now.hour == SOD_RESET_HOUR and now.minute == SOD_RESET_MINUTE:
             today = now.strftime("%Y-%m-%d")

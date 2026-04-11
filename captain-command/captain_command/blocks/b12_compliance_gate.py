@@ -101,3 +101,113 @@ def get_gate_status() -> dict:
         **gate,
         "_enforcement": result,
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-signal compliance (PG-32 spec)
+# ---------------------------------------------------------------------------
+
+
+def _get_active_assets() -> set[str]:
+    """Load active asset IDs from D00."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT asset_id FROM p3_d00_asset_universe "
+                "WHERE captain_status = 'ACTIVE'"
+            )
+            return {row[0] for row in cur.fetchall()}
+    except Exception as exc:
+        logger.error("Failed to load active assets from D00: %s", exc)
+    return set()
+
+
+def _get_account_tsm(account_id: str) -> dict | None:
+    """Load TSM config for an account from D08."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT max_contracts, fee_schedule "
+                "FROM p3_d08_tsm_state "
+                "WHERE account_id = %s "
+                "ORDER BY ts DESC LIMIT 1",
+                (account_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                fee_schedule = {}
+                if row[1]:
+                    try:
+                        fee_schedule = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+                    except (json.JSONDecodeError, TypeError):
+                        fee_schedule = {}
+                return {
+                    "max_contracts": row[0],
+                    "fee_schedule": fee_schedule,
+                }
+    except Exception as exc:
+        logger.error("Failed to load TSM for account %s: %s", account_id, exc)
+    return None
+
+
+def instrument_permitted(asset: str, account_tsm: dict) -> bool:
+    """Check if an instrument is permitted for the account.
+
+    An instrument is permitted if it is in the D00 active universe.
+    If the TSM has ``fee_schedule.fees_by_instrument`` entries,
+    the asset must also be listed there.
+    """
+    active_assets = _get_active_assets()
+    if active_assets and asset not in active_assets:
+        return False
+
+    fee_sched = account_tsm.get("fee_schedule", {})
+    if isinstance(fee_sched, str):
+        try:
+            fee_sched = json.loads(fee_sched)
+        except (json.JSONDecodeError, TypeError):
+            fee_sched = {}
+    fees_by_inst = fee_sched.get("fees_by_instrument", {})
+    if fees_by_inst and asset not in fees_by_inst:
+        return False
+
+    return True
+
+
+def compliance_check(signal: dict, account_id: str) -> dict:
+    """Per-signal compliance check per spec PG-32.
+
+    Verifies:
+    1. ``signal.contracts <= max_contracts``
+    2. ``instrument_permitted(signal.asset)``
+
+    Parameters
+    ----------
+    signal : dict
+        Signal/order dict with ``asset`` and ``size`` (contracts) fields.
+    account_id : str
+        Account ID to look up TSM constraints from D08.
+
+    Returns
+    -------
+    dict
+        ``{approved: bool, reason?: str}``
+    """
+    tsm = _get_account_tsm(account_id)
+    if tsm is None:
+        logger.warning("No TSM found for account %s — compliance check skipped", account_id)
+        return {"approved": True}
+
+    contracts = int(signal.get("size", signal.get("contracts", 0)))
+    max_contracts = tsm.get("max_contracts") or 0
+
+    if max_contracts > 0 and contracts > max_contracts:
+        return {"approved": False, "reason": "EXCEEDS_MAX_CONTRACTS"}
+
+    asset = signal.get("asset", "")
+    if not instrument_permitted(asset, tsm):
+        return {"approved": False, "reason": "INSTRUMENT_NOT_PERMITTED"}
+
+    return {"approved": True}
