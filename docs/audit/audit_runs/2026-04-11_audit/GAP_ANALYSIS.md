@@ -37,15 +37,15 @@
 
 | Status | Count |
 |--------|-------|
-| `[GAP]` | 52 |
+| `[GAP]` | 51 |
 | `[VALID]` | ~75 verification points confirmed |
-| `[AMENDED]` | 3 |
+| `[AMENDED]` | 4 |
 | `[BLOCKED]` | 0 |
-| **Total** | 55 findings (52 GAP + 3 AMENDED) |
+| **Total** | 55 findings (51 GAP + 4 AMENDED) |
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 5 |
+| CRITICAL | 4 |
 | HIGH | 20 |
 | MEDIUM | 22 |
 | LOW | 5 |
@@ -54,7 +54,7 @@
 
 | ID | Block | File | Spec Ref | Status | Severity | Description |
 |----|-------|------|----------|--------|----------|-------------|
-| G-OFF-001 | B1-HMM | b1_aim16_hmm.py:104-115 | Doc 22 §2 TVTP | `[GAP]` | CRITICAL | AIM-16 uses hmmlearn GaussianHMM with static transition matrix; spec requires TVTP conditioned on {VIX, DoW, prior_PnL} |
+| G-OFF-001 | B1-HMM | b1_aim16_hmm.py:104-115 | Doc 22 §2 TVTP | `[AMENDED]` | — | DEC-11: AIM-16 uses hmmlearn GaussianHMM with static transition matrix; TVTP deferred to V2 (library change required) |
 | G-OFF-002 | B1-HMM | b1_aim16_hmm.py:40 | Doc 22 §6 | `[GAP]` | HIGH | 240 minimum observation count not enforced; SESSIONS_PER_DAY=4 defined but never used |
 | G-OFF-003 | B1-HMM | b1_aim16_hmm.py:43 | Doc 22 §7 | `[GAP]` | HIGH | SMOOTHING_ALPHA=0.3 defined but never used or included in output state for online inference |
 | G-OFF-004 | B1-Drift | b1_drift_detection.py:269-319 | Doc 32 PG-04:207-208 | `[GAP]` | HIGH | On drift: weight*=0.5 applied but no retrain flag set in P3-D01 as spec requires |
@@ -533,9 +533,9 @@ The following spec requirements were verified as correctly implemented:
 
 | Status | Count |
 |--------|-------|
-| `[GAP]` | 65 |
+| `[GAP]` | 64 |
 | `[VALID]` | ~35 |
-| `[AMENDED]` | 3 |
+| `[AMENDED]` | 4 |
 | `[BLOCKED]` | 0 |
 | **Total** | 68 |
 
@@ -543,18 +543,18 @@ The following spec requirements were verified as correctly implemented:
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 4 |
+| CRITICAL | 3 |
 | HIGH | 15 |
 | MEDIUM | 31 |
 | LOW | 18 |
-| AMENDED | 3 |
+| AMENDED | 4 |
 | **Total Findings** | **71** |
 
 ### Findings Table
 
 | ID | Block | File | Spec Ref | Status | Severity | Description |
 |----|-------|------|----------|--------|----------|-------------|
-| G-CMD-001 | api.py | api.py:113-142 | Doc 19 §4 (S2-09) | `[GAP]` | CRITICAL | No RBAC enforcement: JWT middleware extracts user_id but never validates roles; any authenticated user accesses any endpoint |
+| G-CMD-001 | api.py | api.py:113-142 | Doc 19 §4 (S2-09) | `[AMENDED]` | — | DEC-12: RBAC deferred to V2 multi-user; V1 single-user has no role separation need |
 | G-CMD-002 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 (S2-06) | `[GAP]` | CRITICAL | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist |
 | G-CMD-003 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | CRITICAL | Missing continuous data freshness/staleness monitoring; code only validates user inputs, no data feed checks |
 | G-CMD-004 | B8 | b8_reconciliation.py:109-111 | Doc 34 PG-39 step 1 | `[GAP]` | CRITICAL | Balance mismatch sends GUI notification only; spec requires create_incident("RECONCILIATION", "P2_HIGH", "FINANCE") for audit trail in D21 |
@@ -964,14 +964,16 @@ All 22 S2-flagged items from Session 2 are now resolved:
 
 | Program | GAP | VALID | AMENDED | BLOCKED | CRITICAL | HIGH | MEDIUM | LOW |
 |---------|-----|-------|---------|---------|----------|------|--------|-----|
-| P3-Offline | 52 | ~75 | 3 | 0 | 5 | 20 | 22 | 5 |
+| P3-Offline | 51 | ~75 | 4 | 0 | 4 | 20 | 22 | 5 |
 | P3-Online | 49 | ~40 | 8 | 0 | 3 | 14 | 22 | 10 |
-| P3-Command | 65 | ~35 | 3 | 0 | 4 | 15 | 31 | 18 |
+| P3-Command | 64 | ~35 | 4 | 0 | 3 | 15 | 31 | 18 |
 | Shared Modules | 22 | 41 | 2 | 0 | 0 | 5 | 12 | 5 |
 | Cross-Cutting | 16 | 4 | 0 | 0 | 2 | 6 | 6 | 2 |
-| **TOTAL** | **204** | **~195** | **16** | **0** | **14** | **60** | **93** | **40** |
+| **TOTAL** | **202** | **~195** | **18** | **0** | **12** | **60** | **93** | **40** |
 
-**Note:** Cross-cutting findings (G-XCT-xxx) overlap with per-program findings (the same underlying issue surfaces in multiple programs). The per-program findings provide the granular detail; cross-cutting findings identify the systemic pattern. De-duplicated unique gap count is approximately **188** (removing ~16 cross-cutting entries that are aggregations of per-program findings).
+**Note:** Cross-cutting findings (G-XCT-xxx) overlap with per-program findings (the same underlying issue surfaces in multiple programs). The per-program findings provide the granular detail; cross-cutting findings identify the systemic pattern. De-duplicated unique gap count is approximately **186** (removing ~16 cross-cutting entries that are aggregations of per-program findings).
+
+**Post-audit decisions:** DEC-11 (defer HMM TVTP) and DEC-12 (defer RBAC) reclassified G-OFF-001 and G-CMD-001 from CRITICAL GAP to AMENDED, reducing active CRITICALs from 14 to 12.
 
 ---
 
@@ -981,12 +983,11 @@ All 22 S2-flagged items from Session 2 are now resolved:
 
 ### Justification
 
-**14 CRITICAL gaps** remain across the system. Any single CRITICAL finding could produce wrong trades, lose money, or crash the system in production:
+**12 CRITICAL gaps** remain across the system (down from 14 after DEC-11/DEC-12 deferrals). Any single CRITICAL finding could produce wrong trades, lose money, or crash the system in production:
 
-1. **Position sizing errors (3 CRITICAL):**
+1. **Position sizing errors (2 CRITICAL):**
    - G-ONL-017: Kelly L4 robust formula algebraically wrong — 52% oversize during regime uncertainty
    - G-OFF-029: Sensitivity scanner applies uniform perturbation instead of per-parameter — cannot detect single-parameter fragility
-   - G-OFF-001: AIM-16 HMM uses static transitions instead of TVTP — HMM regime detection ignores market context
 
 2. **Safety gates missing (3 CRITICAL):**
    - G-OFF-015/016: Pseudotrader completely unwired from orchestrator AND uses pre-computed P&L instead of actual pipeline replay — parameter updates committed without validation
@@ -997,9 +998,8 @@ All 22 S2-flagged items from Session 2 are now resolved:
    - G-CMD-003: No continuous data feed monitoring — stale/corrupt market data undetected until downstream signal errors
    - G-ONL-042: Capacity evaluation implements entirely different algorithm — no empirical fill quality monitoring exists
 
-4. **Information leakage (2 CRITICAL):**
+4. **Information leakage (1 CRITICAL):**
    - G-ONL-028 / G-XCT-015: Prohibited fields (aim_breakdown, regime_probs, Kelly params) leak through GUI WebSocket — proprietary strategy visible in browser DevTools
-   - G-CMD-001: Zero RBAC enforcement — any authenticated user can activate/deactivate AIMs, trigger diagnostics, access all endpoints
 
 5. **Operational gaps (3 CRITICAL):**
    - G-CMD-002: RPT-12 Alpha Decomposition missing — cannot attribute returns to component strategies
@@ -1019,36 +1019,39 @@ Despite the CRITICAL gaps, substantial portions of the system are correctly impl
 
 ### Minimum Path to READY
 
-To reach READY status, the following CRITICAL gaps must be resolved (in priority order):
+To reach READY status, the following 12 CRITICAL gaps must be resolved (in priority order).
+DEC-11 (HMM TVTP) and DEC-12 (RBAC) are deferred — not in this list.
+DEC-04 (pseudotrader post-live) is **REVOKED** — pseudotrader wiring is now mandatory.
 
 | Priority | Finding | Effort | Risk if Deferred |
 |----------|---------|--------|-------------------|
 | 1 | G-ONL-017: Fix Kelly L4 robust formula | Small (formula swap) | Wrong position sizes during uncertainty |
 | 2 | G-ONL-028/G-XCT-015: Sanitize GUI WebSocket path | Small (add sanitise call) | Strategy leakage to all GUI users |
-| 3 | G-CMD-001: Add RBAC role field to JWT + endpoint guards | Medium | Any user can modify system |
-| 4 | G-CMD-004: Add create_incident for balance mismatch | Small | No audit trail for mismatches |
-| 5 | G-CMD-003: Add data feed freshness monitoring | Medium | Stale data → wrong signals |
-| 6 | G-OFF-015: Wire pseudotrader into orchestrator | Medium | Parameter updates unvalidated |
+| 3 | G-OFF-015/016: Wire pseudotrader into orchestrator + use SignalReplayEngine | Medium-Large | Parameter updates unvalidated — system self-modifies with no safety net |
+| 4 | G-ONL-042: Implement fill slippage monitoring alongside capacity model | Medium | Slippage invisible until P&L erodes |
+| 5 | G-CMD-004: Add create_incident for balance mismatch | Small | No audit trail for mismatches |
+| 6 | G-CMD-003: Add data feed freshness monitoring | Medium | Stale data → wrong signals |
 | 7 | G-XCT-012: Implement crash recovery branching | Medium | Full restart on every crash |
 | 8 | G-OFF-029: Fix sensitivity per-parameter perturbation | Small (loop restructure) | Cannot detect per-param fragility |
 | 9 | G-CMD-002: Implement RPT-12 Alpha Decomposition | Medium | Cannot attribute returns |
 | 10 | G-OFF-046: Implement rollback_to_version | Large | No automated parameter revert |
-| 11 | G-OFF-001: Implement TVTP or document DEC-XX | Large (library change) | HMM ignores market context |
-| 12 | G-ONL-042: Implement fill slippage monitoring | Medium | No fill quality defense |
 
-Items 1-2 are quick fixes. Items 3-7 are the minimum before first live session. Items 8-12 can be addressed in parallel with cautious live operation.
+Items 1-2 are quick fixes (<1 hour). Items 3-4 are the highest-priority medium efforts (pseudotrader + fill monitoring). Items 5-7 complete the safety layer. Items 8-10 round out operational completeness.
 
 ### BLOCKED Items Requiring Isaac's Input
 
 None. All findings could be traced to clear spec requirements. No ambiguity requiring spec author clarification.
 
-### Decisions to Record
+### Architectural Decisions Recorded
 
-The following items may warrant formal DEC-XX architectural decisions if the current implementations are intentional:
+| DEC-ID | Finding | Decision | Rationale | Date |
+|--------|---------|----------|-----------|------|
+| DEC-11 | G-OFF-001 | Defer HMM TVTP to V2; hmmlearn static HMM acceptable for V1 | Library change (pomegranate/pyro) is research-grade work. Static HMM still detects regimes — it just doesn't adapt sensitivity to market context. Base detection works; context-tuning is an optimization. | 2026-04-11 |
+| DEC-12 | G-CMD-001 | Defer RBAC to V2 multi-user; V1 single-user has no role separation need | Only Nomaan uses V1. JWT auth locks the front door. Adding roles/guards across ~15 endpoints is medium effort for zero V1 benefit. Required before any second user is added. | 2026-04-11 |
 
-| Finding | Question for Nomaan |
-|---------|-------------------|
-| G-OFF-001 | Is hmmlearn's static HMM acceptable for V1, with TVTP deferred? |
-| G-ONL-042 | Is the capacity planning model a replacement for or addition to fill slippage monitoring? |
-| G-OFF-015/016 | Is pseudotrader validation deferred post-live (confirming DEC-04 still holds)? |
-| G-CMD-001 | Is RBAC deferred to V2 multi-user? If so, document as DEC-XX |
+**Pending decisions (to be resolved during execution):**
+
+| Finding | Question |
+|---------|----------|
+| G-ONL-042 | Capacity planning model stays as addition; fill slippage monitoring to be implemented alongside it |
+| G-OFF-015/016 | DEC-04 (defer pseudotrader post-live) is REVOKED — pseudotrader wiring is now execution priority |
