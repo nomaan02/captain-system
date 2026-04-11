@@ -28,8 +28,9 @@ from typing import Any
 from shared.questdb_client import get_cursor
 from shared.vault import get_api_key
 from shared.journal import write_checkpoint
-from captain_command.blocks.b12_compliance_gate import check_compliance_gate
-from shared.constants import PROHIBITED_EXTERNAL_FIELDS, SANITISED_SIGNAL_FIELDS
+from captain_command.blocks.b9_incident_response import create_incident
+from captain_command.blocks.b12_compliance_gate import check_compliance_gate, compliance_check
+from shared.constants import PROHIBITED_EXTERNAL_FIELDS, SANITISED_SIGNAL_FIELDS, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import (
     TopstepXClient, get_topstep_client,
@@ -214,6 +215,13 @@ class TopstepXAdapter(APIAdapter):
                         order.get("size"))
             return {"order_id": oid, "status": "MANUAL_PENDING"}
 
+        # Per-signal compliance check (PG-32): max_contracts + instrument_permitted
+        per_signal = compliance_check(order, self._account_id)
+        if not per_signal["approved"]:
+            logger.warning("Compliance rejected order for %s: %s",
+                           self._account_id, per_signal["reason"])
+            return {"order_id": None, "status": "REJECTED", "reason": per_signal["reason"]}
+
         asset_id = order.get("asset", "ES")
         contract_id = resolve_contract_id(asset_id) or self._contract_id
         if not contract_id:
@@ -290,7 +298,7 @@ class TopstepXAdapter(APIAdapter):
                     if status == OrderStatus.FILLED:
                         return {
                             "fill_price": o.get("filledPrice"),
-                            "fill_time": datetime.now().isoformat(),
+                            "fill_time": now_et().isoformat(),
                         }
                     return {"fill_price": None, "fill_time": None}
             return {"fill_price": None, "fill_time": None}
@@ -383,7 +391,7 @@ def register_connection(account_id: str, adapter: APIAdapter, endpoint: str):
         "adapter": adapter,
         "endpoint": endpoint,
         "connected": adapter.connected if hasattr(adapter, 'connected') else True,
-        "last_heartbeat": datetime.now().isoformat(),
+        "last_heartbeat": now_et().isoformat(),
         "latency_ms": 0.0,
         "retry_count": 0,
     }
@@ -434,14 +442,19 @@ def run_health_checks(notify_fn=None) -> dict:
                 logger.error(msg)
                 _log_api_health(ac_id, "DISCONNECTED", -1)
 
-                if notify_fn:
-                    notify_fn(msg, "CRITICAL")
+                create_incident(
+                    incident_type="OPERATIONAL",
+                    severity="P1_CRITICAL",
+                    component="API",
+                    details=msg,
+                    notify_fn=notify_fn,
+                )
         else:
             state["connected"] = True
             state["latency_ms"] = latency
             connected_count += 1
 
-        state["last_heartbeat"] = datetime.now().isoformat()
+        state["last_heartbeat"] = now_et().isoformat()
 
     _log_api_health_batch()
 

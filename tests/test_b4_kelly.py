@@ -12,6 +12,7 @@ from captain_online.blocks.b4_kelly_sizing import (
     run_kelly_sizing,
     _apply_risk_goal, _compute_tsm_cap, _get_expected_fee,
 )
+from unittest.mock import patch
 from captain_offline.blocks.b8_kelly_update import _compute_kelly, _compute_shrinkage
 from tests.fixtures.synthetic_data import (
     make_ewma_states, make_kelly_params, make_assets_detail, make_locked_strategy,
@@ -210,12 +211,19 @@ class TestKellyHelpers:
     def test_compute_kelly_zero_loss(self):
         assert _compute_kelly(0.5, 100.0, 0.0) == 0.0
 
-    def test_compute_shrinkage_low_n(self):
-        assert _compute_shrinkage(1) == 0.3  # 1-1/1 = 0 -> floor 0.3
+    @patch("captain_offline.blocks.b8_kelly_update._load_ewma")
+    def test_compute_shrinkage_low_n(self, mock_ewma):
+        """Low-N EWMA -> high estimation variance -> floor shrinkage."""
+        mock_ewma.return_value = {"win_rate": 0.5, "avg_win": 1.0, "avg_loss": 1.0, "n_trades": 1}
+        s = _compute_shrinkage("ES")
+        assert s == 0.3  # high variance -> floor
 
-    def test_compute_shrinkage_high_n(self):
-        s = _compute_shrinkage(100)
-        assert abs(s - 0.9) < 0.01  # 1 - 1/10 = 0.9
+    @patch("captain_offline.blocks.b8_kelly_update._load_ewma")
+    def test_compute_shrinkage_high_n(self, mock_ewma):
+        """High-N EWMA -> low estimation variance -> shrinkage near 1.0."""
+        mock_ewma.return_value = {"win_rate": 0.5, "avg_win": 100.0, "avg_loss": 100.0, "n_trades": 200}
+        s = _compute_shrinkage("ES")
+        assert s > 0.85  # low variance, data-dependent (was ~0.9 with 1/sqrt proxy)
 
     def test_apply_risk_goal_grow(self):
         assert _apply_risk_goal(0.10, "GROW_CAPITAL", {}) == 0.10

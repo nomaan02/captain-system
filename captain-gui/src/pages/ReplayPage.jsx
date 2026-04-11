@@ -86,8 +86,10 @@ const ResizableBottomPanel = ({ expandedStage }) => {
         <>
           {/* Drag handle */}
           <div
+            role="separator"
+            aria-label="Resize detail panel"
             onMouseDown={onMouseDown}
-            className="h-[5px] cursor-row-resize border-t border-solid border-[#1e293b] hover:bg-[#10b981]/30 active:bg-[#10b981]/50 transition-colors"
+            className="h-[8px] cursor-row-resize border-t border-solid border-[#1e293b] hover:bg-[#10b981]/30 active:bg-[#10b981]/50 transition-colors"
           />
           <ErrorBoundary name="BlockDetail">
             <div style={{ height: panelHeight }} className="overflow-y-auto">
@@ -129,7 +131,7 @@ const ReplayPage = () => {
       </div>
 
       {/* Main content: 3-column layout */}
-      <div className="flex-1 min-h-0 grid grid-cols-[280px_1fr_280px]">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[280px_1fr_280px]">
         {/* Left Column -- Config only */}
         <div className="h-full overflow-y-auto border-r border-solid border-[#1e293b]">
           <ErrorBoundary name="ReplayConfigPanel"><ReplayConfigPanel /></ErrorBoundary>

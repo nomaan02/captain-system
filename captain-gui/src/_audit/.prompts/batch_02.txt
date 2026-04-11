@@ -1,0 +1,45 @@
+You are executing BATCH 2 — Market + Chart of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/layout/MarketTicker.jsx src/components/chart/ChartPanel.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/layout/MarketTicker.jsx (FIX-039..046):
+   - FIX-039 CRITICAL: The 9 hardcoded tickers must show real data or "---" when no data. Check the liveMarket store — wire all tickers to it the same way MES is wired. If the store only supports one asset currently, show "---" for unconnected tickers and add a TODO comment.
+   - FIX-040: Increase change % text from text-[7.5px] to min text-[10px]
+   - FIX-041 CRITICAL: Convert ticker divs from `<div onClick>` to `<button>`. Add tabIndex, onKeyDown (Enter/Space).
+   - FIX-042: Add sr-only text to green status dots
+   - FIX-043: Increase ticker prices to min text-[10px], names to min text-[10px]
+   - FIX-044: Add scroll shadow/fade indicator on overflow-x-auto
+   - FIX-045: Add aria-current="true" on selected ticker
+   - FIX-046: Increase status dots from 4.5px to min 6px
+
+2. src/components/chart/ChartPanel.jsx (FIX-068..073):
+   - FIX-068 CRITICAL: Increase system info footer from text-[6.3px] to min text-[10px]
+   - FIX-069: Make price display responsive — use clamp() or responsive text classes instead of fixed text-[45.8px]
+   - FIX-070: Round fractional sizes (21.2 → 21 or text-xl, 15.2 → 15 or text-sm)
+   - FIX-071: Add overflow-hidden and text-ellipsis on OHLC + Bid/Ask row
+   - FIX-072: Differentiate "---" states (OR not formed vs no data)
+   - FIX-073: Add visually-hidden h1 for page context
+
+3. Delete dead chart files (FIX-154..156):
+   Delete these files — they are unused:
+   - src/components/chart/CandlestickChart.jsx
+   - src/components/chart/ChartOverlayToggles.jsx
+   - src/components/chart/TimeframeSelector.jsx
+   Remove any imports referencing them in ChartPanel.jsx.
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

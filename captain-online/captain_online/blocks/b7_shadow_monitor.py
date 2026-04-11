@@ -30,6 +30,7 @@ from shared.questdb_client import get_cursor
 from shared.redis_client import publish_to_stream, STREAM_SIGNAL_OUTCOMES
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,11 @@ def register_shadow_position(signal: dict, session_id: int) -> dict:
         "point_value": _get_point_value(signal.get("asset")),
         "contracts": _get_shadow_contracts(signal),
         "session": session_id,
-        "regime_state": signal.get("regime_state"),
-        "combined_modifier": signal.get("combined_modifier", 1.0),
-        "aim_breakdown": signal.get("aim_breakdown"),
-        "user_id": signal.get("user_id", "primary_user"),
-        "created_at": datetime.now(),
+        "regime_state": signal.get("_context", {}).get("regime_state"),
+        "combined_modifier": signal.get("_context", {}).get("combined_modifier", 1.0),
+        "aim_breakdown": signal.get("_context", {}).get("aim_breakdown"),
+        "user_id": signal["user_id"],
+        "created_at": now_et(),
         "resolved": False,
     }
 
@@ -85,7 +86,7 @@ def monitor_shadow_positions(shadow_positions: list[dict]) -> list[dict]:
             continue
 
         # Expire stale shadows — publish TIMEOUT outcome for Offline learning
-        age = (datetime.now() - shadow["created_at"]).total_seconds()
+        age = (now_et() - shadow["created_at"]).total_seconds()
         if age > SHADOW_MAX_AGE_SECONDS:
             exit_price = _get_live_price(shadow["asset"]) or shadow.get("entry_price", 0)
             _resolve_shadow(shadow, "TIMEOUT", exit_price)
@@ -144,7 +145,7 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
     theoretical_outcome = {
         "trade_id": f"SHADOW-{uuid.uuid4().hex[:12].upper()}",
         "signal_id": shadow["signal_id"],
-        "user_id": shadow.get("user_id", "primary_user"),
+        "user_id": shadow["user_id"],
         "asset": shadow["asset"],
         "direction": direction,
         "entry_price": entry_price,
@@ -159,15 +160,27 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
         "aim_breakdown_at_entry": shadow.get("aim_breakdown"),
         "session": shadow.get("session"),
         "theoretical": True,  # Category B blocks (CB params) must ignore this
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
     }
 
-    try:
-        publish_to_stream(STREAM_SIGNAL_OUTCOMES, theoretical_outcome)
-        logger.info("Shadow resolved: %s %s %s pnl=%.2f (theoretical)",
-                     shadow["asset"], outcome, shadow["signal_id"], gross_pnl)
-    except Exception as e:
-        logger.error("Failed to publish shadow outcome %s: %s", shadow["signal_id"], e)
+    import time
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            publish_to_stream(STREAM_SIGNAL_OUTCOMES, theoretical_outcome)
+            logger.info("Shadow resolved: %s %s %s pnl=%.2f (theoretical)",
+                         shadow["asset"], outcome, shadow["signal_id"], gross_pnl)
+            return
+        except Exception as e:
+            if attempt < max_attempts:
+                delay = 0.5 * (2 ** (attempt - 1))
+                logger.warning("Shadow retry %d/%d for %s: %s (backoff %.1fs)",
+                               attempt, max_attempts, shadow["signal_id"], e, delay)
+                time.sleep(delay)
+            else:
+                logger.error("FAILED to publish shadow outcome %s after %d attempts: %s",
+                             shadow["signal_id"], max_attempts, e)
 
 
 # ---------------------------------------------------------------------------

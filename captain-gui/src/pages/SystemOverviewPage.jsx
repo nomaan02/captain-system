@@ -186,7 +186,7 @@ const SystemOverviewPage = () => {
         <PanelCard title="System Health">
           {radarData.length > 0 ? (
             <>
-              <div className="h-[200px] mb-3">
+              <div className="h-[200px] mb-3" role="img" aria-label="System health radar chart">
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="#1e293b" />
@@ -213,7 +213,7 @@ const SystemOverviewPage = () => {
         <PanelCard
           title="Network Concentration"
           headerRight={
-            <span className="text-[10px] text-[#64748b] font-mono">
+            <span className="text-[11px] text-[#64748b] font-mono">
               {(o.network_concentration?.exposures || []).length} positions
             </span>
           }
@@ -274,7 +274,7 @@ const SystemOverviewPage = () => {
         <PanelCard
           title="Action Queue"
           headerRight={
-            <span className="text-[10px] text-[#64748b] font-mono">
+            <span className="text-[11px] text-[#64748b] font-mono">
               {(o.action_queue || []).length} open
             </span>
           }
@@ -287,7 +287,7 @@ const SystemOverviewPage = () => {
                     <StatusBadge status={item.status} />
                     <div>
                       <div className="text-xs text-white font-mono font-bold">{item.dimension}</div>
-                      {item.details && <div className="text-[10px] text-[#94a3b8] font-mono mt-0.5">{item.details}</div>}
+                      {item.details && <div className="text-[11px] text-[#94a3b8] font-mono mt-0.5">{item.details}</div>}
                     </div>
                   </div>
                   <span className="text-[9px] text-[#64748b] font-mono whitespace-nowrap ml-2">{formatTimestamp(item.timestamp)}</span>
@@ -310,9 +310,9 @@ const SystemOverviewPage = () => {
                     <div className="flex items-center gap-2">
                       <StatusDot status={isStale ? "error" : "ok"} />
                       <span className="text-xs text-white font-mono font-bold">{a.asset_id}</span>
-                      <span className="text-[10px] text-[#94a3b8] font-mono">{a.status}</span>
+                      <span className="text-[11px] text-[#94a3b8] font-mono">{a.status}</span>
                     </div>
-                    <span className="text-[10px] text-[#64748b] font-mono">{formatTimeAgo(a.last_data_update)}</span>
+                    <span className="text-[11px] text-[#64748b] font-mono">{formatTimeAgo(a.last_data_update)}</span>
                   </div>
                 );
               })}
@@ -388,7 +388,7 @@ const SystemOverviewPage = () => {
                 <div key={role} className="flex items-center gap-2 py-1.5 border-b border-border-subtle last:border-b-0">
                   <StatusDot status={info.status || "unknown"} />
                   <span className="text-xs text-white font-mono uppercase">{role}</span>
-                  <span className="text-[10px] text-[#64748b] font-mono ml-auto">{info.status}</span>
+                  <span className="text-[11px] text-[#64748b] font-mono ml-auto">{info.status}</span>
                 </div>
               ))}
             </div>
@@ -400,7 +400,7 @@ const SystemOverviewPage = () => {
         {/* 4.12 Performance */}
         <PanelCard title="Performance">
           <div className="text-[#64748b] text-xs font-mono py-4 text-center">
-            Performance data available via RPT-02 / RPT-10
+            Coming soon — data source not yet connected
           </div>
         </PanelCard>
       </div>
@@ -410,7 +410,7 @@ const SystemOverviewPage = () => {
         {/* 4.13 Model Validation */}
         <PanelCard title="Model Validation">
           <div className="text-[#64748b] text-xs font-mono py-4 text-center">
-            AIM model validation metrics are available via RPT-04 (AIM Effectiveness Report). Decay detection monitors model drift continuously.
+            Coming soon — AIM validation metrics will appear here when decay detection data is available
           </div>
         </PanelCard>
 
@@ -419,9 +419,9 @@ const SystemOverviewPage = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border-subtle">
-                <th className="text-left text-[10px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Event</th>
-                <th className="text-left text-[10px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Frequency</th>
-                <th className="text-left text-[10px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Status</th>
+                <th className="text-left text-[11px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Event</th>
+                <th className="text-left text-[11px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Frequency</th>
+                <th className="text-left text-[11px] text-[#94a3b8] uppercase tracking-wider font-mono font-normal px-2 py-1">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -441,7 +441,7 @@ const SystemOverviewPage = () => {
         {/* 4.15 Capacity Recommendations */}
         <PanelCard title="Capacity Recommendations">
           <div className="text-[#64748b] text-xs font-mono py-4 text-center">
-            Capacity recommendations are computed by Online B9 (Capacity Evaluator). Data appears here when capacity evaluations run at session boundaries.
+            Coming soon — capacity recommendations will appear here at session boundaries
           </div>
         </PanelCard>
       </div>
@@ -451,7 +451,7 @@ const SystemOverviewPage = () => {
         <PanelCard
           title="Incident Log"
           headerRight={
-            <span className="text-[10px] text-[#64748b] font-mono">
+            <span className="text-[11px] text-[#64748b] font-mono">
               {(o.incident_log || []).length} incidents
             </span>
           }
@@ -470,25 +470,25 @@ const SystemOverviewPage = () => {
         {/* 4.17 Admin Decision Log */}
         <PanelCard title="Admin Decision Log">
           <div className="text-[#64748b] text-xs font-mono py-4 text-center">
-            Admin decisions (strategy adoptions, AIM toggles, TSM switches) are logged in P3-D17 session event log. View in History &rarr; System Events tab.
+            Coming soon — admin decision history will appear here when events are logged
           </div>
         </PanelCard>
 
         {/* 4.18 Stress Test Review */}
         <PanelCard title="Stress Test Review">
           <div className="text-[#64748b] text-xs font-mono py-4 text-center">
-            Stress test results will be available after Phase 7 validation. Generate via RPT-08 (Regime Calibration).
+            Coming soon — stress test results will appear here after validation runs
           </div>
         </PanelCard>
 
         {/* 4.19 Version History */}
         <PanelCard title="Version History">
           <div className="flex items-start gap-3 py-2">
-            <span className="px-2 py-0.5 text-[10px] font-mono bg-[rgba(59,130,246,0.15)] border border-[rgba(59,130,246,0.3)] text-[#3b82f6] whitespace-nowrap">
+            <span className="px-2 py-0.5 text-[11px] font-mono bg-[rgba(59,130,246,0.15)] border border-[rgba(59,130,246,0.3)] text-[#3b82f6] whitespace-nowrap">
               v1.0.0
             </span>
             <div>
-              <div className="text-[10px] text-[#64748b] font-mono">2026-03-14</div>
+              <div className="text-[11px] text-[#64748b] font-mono">2026-03-14</div>
               <div className="text-xs text-[#94a3b8] font-mono mt-0.5">Initial Captain Function release — V1+V2+V3 unified build</div>
             </div>
           </div>

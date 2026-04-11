@@ -42,6 +42,7 @@ MAX_EM_ITERATIONS = 100
 CONVERGENCE_THRESHOLD = 1e-6
 SMOOTHING_ALPHA = 0.3
 FLOOR_PER_SESSION = 0.05
+MIN_OBSERVATIONS = TRAINING_WINDOW_DAYS * SESSIONS_PER_DAY  # 240 (Doc 22 §6)
 
 # Cold start thresholds
 COLD_START_DISABLE_DAYS = 20
@@ -82,6 +83,22 @@ def train_aim16_hmm(observations: np.ndarray, session_pnl: np.ndarray,
             "current_state_probs": [1.0 / N_STATES] * N_STATES,
             "opportunity_weights": {},  # equal weights applied by caller
             "prior_alpha": {},
+            "smoothing_alpha": SMOOTHING_ALPHA,
+            "training_window": TRAINING_WINDOW_DAYS,
+            "n_observations": T,
+            "cold_start": True,
+        }
+
+    # Enforce minimum observation count (Doc 22 §6: 240 obs per 60-day window)
+    if T < MIN_OBSERVATIONS:
+        logger.info("AIM-16 HMM: insufficient observations (%d < %d), cold-start output",
+                     T, MIN_OBSERVATIONS)
+        return {
+            "hmm_params": None,
+            "current_state_probs": [1.0 / N_STATES] * N_STATES,
+            "opportunity_weights": {},
+            "prior_alpha": {},
+            "smoothing_alpha": SMOOTHING_ALPHA,
             "training_window": TRAINING_WINDOW_DAYS,
             "n_observations": T,
             "cold_start": True,
@@ -137,6 +154,7 @@ def train_aim16_hmm(observations: np.ndarray, session_pnl: np.ndarray,
         "current_state_probs": current_state_probs,
         "opportunity_weights": {},  # populated by online inference
         "prior_alpha": {},
+        "smoothing_alpha": SMOOTHING_ALPHA,
         "training_window": TRAINING_WINDOW_DAYS,
         "n_observations": T,
         "cold_start": is_cold,

@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, date
 
 from shared.journal import write_checkpoint
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class ReplaySession:
     def start(self):
         """Start replay in background thread."""
         self._status = "running"
-        self._started_at = datetime.now().isoformat()
+        self._started_at = now_et().isoformat()
         self._thread = threading.Thread(
             target=self._run,
             name=f"replay-{self.replay_id}",
@@ -168,7 +169,7 @@ class ReplaySession:
             self._results = result
             self._cached_bars = result.get("cached_bars", {})
             self._status = "complete"
-            self._finished_at = datetime.now().isoformat()
+            self._finished_at = now_et().isoformat()
 
             write_checkpoint(
                 "COMMAND", "REPLAY_COMPLETE", "run_replay", "idle",
@@ -182,7 +183,7 @@ class ReplaySession:
         except Exception as exc:
             self._status = "error"
             self._error = str(exc)
-            self._finished_at = datetime.now().isoformat()
+            self._finished_at = now_et().isoformat()
             logger.error("Replay %s failed: %s", self.replay_id, exc, exc_info=True)
 
             # Push error to GUI
@@ -308,7 +309,7 @@ def save_replay(replay_id, user_id) -> dict:
         return {"error": f"Replay {replay_id} has no results (status: {rs._status})"}
 
     results = rs._results
-    now = datetime.now().isoformat()
+    now = now_et().isoformat()
 
     try:
         with get_cursor() as cur:
@@ -412,7 +413,7 @@ class BatchReplaySession:
 
     def start(self):
         self._status = "running"
-        self._started_at = datetime.now().isoformat()
+        self._started_at = now_et().isoformat()
         self._thread = threading.Thread(
             target=self._run, name=f"batch-{self.replay_id}", daemon=True
         )
@@ -560,7 +561,7 @@ class BatchReplaySession:
         # Compute and send overall summary
         batch_summary = self._compute_batch_summary()
         self._status = "complete"
-        self._finished_at = datetime.now().isoformat()
+        self._finished_at = now_et().isoformat()
         self._results = {"day_results": self.day_results, "summary": batch_summary}
 
         self.gui_push_fn(self.user_id, {

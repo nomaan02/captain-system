@@ -19,6 +19,7 @@ import logging
 from datetime import datetime
 
 from shared.questdb_client import get_cursor
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ def run_capacity_evaluation(
 
     # Save capacity state
     capacity_state = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "session": session_id,
         "active_users": total_users,
         "active_accounts": _count_accounts(active_users),

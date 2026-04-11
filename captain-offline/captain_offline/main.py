@@ -25,6 +25,7 @@ from shared.redis_client import (
     GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS,
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
+from shared.process_logger import ProcessLogger
 
 ROLE = os.environ.get("CAPTAIN_ROLE", "OFFLINE")
 
@@ -98,6 +99,7 @@ def _seed_aim_states():
 
 def main():
     logger.info("Starting Captain Offline...")
+    plog = ProcessLogger("OFFLINE", get_redis_client())
 
     # Verify QuestDB connection
     try:
@@ -121,6 +123,7 @@ def main():
     ensure_consumer_group(STREAM_TRADE_OUTCOMES, GROUP_OFFLINE_OUTCOMES)
     ensure_consumer_group(STREAM_COMMANDS, GROUP_OFFLINE_COMMANDS)
     logger.info("Redis Stream consumer groups initialized")
+    plog.info("QuestDB + Redis verified", source="main")
 
     # Check for recovery from crash
     last = get_last_checkpoint(ROLE)
@@ -132,6 +135,7 @@ def main():
 
     # Seed all 16 AIMs for every asset in D00 (idempotent — skips if rows exist)
     _seed_aim_states()
+    plog.info("AIM states seeded (16 AIMs per active asset)", source="main")
 
     write_checkpoint(ROLE, "AIMS_SEEDED", "aims_ready", "starting_orchestrator")
 
@@ -149,6 +153,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown_handler)
 
     write_checkpoint(ROLE, "ORCHESTRATOR_STARTED", "running", "event_loop")
+    plog.info("Offline orchestrator started \u2014 listening for trade outcomes", source="orchestrator")
     logger.info("Starting orchestrator (event loop + Redis subscriber)...")
     orchestrator.start()  # Blocks — runs scheduler + Redis listener
 

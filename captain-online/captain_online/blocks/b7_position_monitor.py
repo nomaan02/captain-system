@@ -31,10 +31,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, STREAM_TRADE_OUTCOMES
-from shared.constants import TRADE_OUTCOME_VALUES
+from shared.constants import TRADE_OUTCOME_VALUES, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
@@ -131,7 +132,7 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
             close_time = _parse_close_time(trading_hours)
             if close_time:
                 buffer_time = close_time - timedelta(minutes=5)
-                if datetime.now() >= buffer_time:
+                if datetime.now(ZoneInfo("America/New_York")) >= buffer_time:
                     _notify(pos["user_id"], "CRITICAL",
                             f"TIME EXIT: {pos['asset']} closing — account does not allow overnight")
                     resolve_position(pos, "TIME_EXIT", current_price, tsm_configs)
@@ -383,7 +384,7 @@ def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commissi
         "aim_breakdown_at_entry": pos.get("aim_breakdown"),
         "session": pos.get("session"),
         "account": pos.get("account"),
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
     }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
@@ -415,7 +416,7 @@ def _notify(user_id: str, priority: str, message: str):
             "priority": priority,
             "message": message,
             "source": "ONLINE_B7",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
         })
         client.publish(CH_ALERTS, payload)
     except Exception as e:
@@ -508,7 +509,7 @@ def _parse_close_time(trading_hours: str) -> datetime | None:
     try:
         close_str = trading_hours.split("-")[1].strip()
         h, m = close_str.split(":")
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("America/New_York"))
         return now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
     except (ValueError, IndexError):
         return None

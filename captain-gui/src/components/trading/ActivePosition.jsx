@@ -1,138 +1,311 @@
+import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import useDashboardStore from "../../stores/dashboardStore";
-import { formatCurrency, formatPrice, formatTimeSince } from "../../utils/formatting";
+import { formatCurrency, formatPrice } from "../../utils/formatting";
 import { POINT_VALUES } from "../../constants/pointValues";
 
 const TICK_SIZES = {
   MES: 0.25, ES: 0.25, MNQ: 0.25, NQ: 0.25,
   MYM: 1.0, M2K: 0.10, MGC: 0.10, MCL: 0.01,
-  NKD: 5.0, ZB: 1/32, ZN: 1/64,
+  NKD: 5.0, ZB: 1 / 32, ZN: 1 / 64,
 };
+
+function formatElapsed(entryTime, now) {
+  const ms = now - new Date(entryTime).getTime();
+  if (ms <= 0) return "00:00:00";
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
 
 const ActivePosition = ({ className = "" }) => {
   const openPositions = useDashboardStore((s) => s.openPositions);
-  const liveMarket = useDashboardStore((s) => s.liveMarket);
-  const pos = openPositions?.[0]; // First open position
+  const pendingSignals = useDashboardStore((s) => s.pendingSignals);
+  const selectedSignalId = useDashboardStore((s) => s.selectedSignalId);
+  const allMarket = useDashboardStore((s) => s.liveMarket);
+  const [now, setNow] = useState(Date.now());
 
-  if (!pos) {
-    return (
-      <section data-testid="active-position" className={`self-stretch flex items-center justify-center py-4 text-[10.9px] text-[#64748b] font-mono ${className}`}>
-        <span data-testid="position-empty">No active position</span>
-      </section>
-    );
+  // --- Resolve display source: real position > selected signal > pending ---
+  const selectedSignal = selectedSignalId
+    ? pendingSignals.find((s) => s.signal_id === selectedSignalId)
+    : null;
+
+  let pos = null;
+  let isPreview = false;
+
+  if (selectedSignal) {
+    const sigAsset = selectedSignal.asset_id ?? selectedSignal.asset;
+    const matching = openPositions.find((p) => (p.asset_id ?? p.asset) === sigAsset);
+    if (matching) {
+      pos = matching;
+    } else {
+      pos = {
+        direction: selectedSignal.direction,
+        asset_id: sigAsset,
+        entry_price: selectedSignal.entry_price,
+        sl_level: selectedSignal.sl_level,
+        tp_level: selectedSignal.tp_level,
+        contracts: selectedSignal.contracts ?? 1,
+        order_id: selectedSignal.signal_id,
+        entry_time: selectedSignal.timestamp,
+        current_pnl: selectedSignal.pnl ?? null,
+      };
+      isPreview = true;
+    }
+  } else if (openPositions.length > 0) {
+    pos = openPositions[0];
   }
 
-  const direction = pos.direction; // Already normalized by store
-  const asset = pos.asset_id ?? pos.asset ?? "—";
-  const contracts = pos.contracts ?? 1;
-  const entryPrice = pos.entry_price;
-  // TODO: Refactor liveMarket to Map<assetId, MarketData>
-  const marketMatch = liveMarket?.contract_id === asset || liveMarket?.symbol === asset;
-  const currentPrice = marketMatch ? liveMarket?.last_price : null;
-  const pnl = pos.current_pnl ?? 0;
+  const isPending = !pos;
+
+  // --- Derived values ---
+  const direction = pos?.direction ?? null;
+  const asset = pos?.asset_id ?? pos?.asset ?? "—";
+  const contracts = pos?.contracts ?? null;
+  const entryPrice = pos?.entry_price ?? null;
+  const slLevel = pos?.sl_level ?? null;
+  const tpLevel = pos?.tp_level ?? null;
+  const orderId = pos?.order_id ?? null;
+  const entryTime = pos?.entry_time ?? null;
+
+  const currentPrice = allMarket?.[asset]?.last_price ?? null;
   const pointValue = POINT_VALUES[asset] ?? 5;
   const tickSize = TICK_SIZES[asset] ?? 0.25;
-  const ticks = currentPrice && entryPrice ? Math.round((currentPrice - entryPrice) * (direction === "LONG" ? 1 : -1) / tickSize) : 0;
-  const slLevel = pos.sl_level;
-  const tpLevel = pos.tp_level;
 
-  // Derive SL/TP distances
-  const slDist = slLevel != null && entryPrice != null ? Math.abs(entryPrice - slLevel) : null;
-  const tpDist = tpLevel != null && entryPrice != null ? Math.abs(tpLevel - entryPrice) : null;
-  const slDistValue = slDist != null ? slDist * contracts * pointValue : null;
-  const tpDistValue = tpDist != null ? tpDist * contracts * pointValue : null;
+  // PnL: compute from market data for responsiveness, fallback to stored value
+  const computedPnl =
+    !isPending && currentPrice != null && entryPrice != null && direction
+      ? (currentPrice - entryPrice) *
+        (direction === "LONG" ? 1 : -1) *
+        (contracts ?? 1) *
+        pointValue
+      : null;
+  const pnl = isPending ? 0 : computedPnl ?? pos?.current_pnl ?? 0;
+
+  const ticks =
+    !isPending && currentPrice != null && entryPrice != null
+      ? Math.round(
+          ((currentPrice - entryPrice) * (direction === "LONG" ? 1 : -1)) /
+            tickSize
+        )
+      : 0;
+
+  // SL/TP distances from entry
+  const slDist =
+    slLevel != null && entryPrice != null ? Math.abs(entryPrice - slLevel) : null;
+  const tpDist =
+    tpLevel != null && entryPrice != null ? Math.abs(tpLevel - entryPrice) : null;
+  const slDistVal = slDist != null ? slDist * (contracts ?? 1) * pointValue : null;
+  const tpDistVal = tpDist != null ? tpDist * (contracts ?? 1) * pointValue : null;
+
+  // Gradient bar: (price - SL) / (TP - SL) works for both LONG and SHORT
+  const barDenom =
+    tpLevel != null && slLevel != null ? tpLevel - slLevel : 0;
+  const calcBarPct = (price) => {
+    if (!barDenom || price == null || slLevel == null) return null;
+    return Math.max(0, Math.min(100, ((price - slLevel) / barDenom) * 100));
+  };
+  const currentPct = calcBarPct(currentPrice);
+
+  // Elapsed timer - ticks every second when active
+  useEffect(() => {
+    if (!entryTime) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [entryTime]);
+
+  const elapsedStr = entryTime ? formatElapsed(entryTime, now) : "—";
+  const isProfit = pnl >= 0;
+  const pnlColor = isPending
+    ? "text-[#64748b]"
+    : isProfit
+      ? "text-[#10b981]"
+      : "text-[#ef4444]";
+  const curColor =
+    isPending || currentPrice == null
+      ? "text-[#64748b]"
+      : isProfit
+        ? "text-[#10b981]"
+        : "text-[#ef4444]";
 
   return (
     <section
       data-testid="active-position"
-      className={`self-stretch flex items-start justify-end max-w-full relative text-left text-[10.9px] text-[#64748b] font-['JetBrains_Mono'] ${className}`}
+      className={`self-stretch font-['JetBrains_Mono'] text-[10px] text-[#64748b] ${className}`}
     >
-      <div className="w-full border-[#1e293b] border-solid border-b-[0.9px] box-border flex flex-col items-end pt-0 px-0 pb-1 gap-[6.2px] max-w-full z-[1]">
-        <div className="self-stretch border-[#1e293b] border-solid border-b-[0.9px] flex items-start justify-between pt-[3.4px] px-[7px] pb-[3px] gap-5 text-[9.2px] mq450:flex-wrap mq450:gap-5">
-          <div className="flex items-start gap-1.5">
-            <div className="flex flex-col items-start pt-[4.5px] px-0 pb-0">
-              <div className="w-[5px] h-[5.3px] relative rounded-full bg-[rgba(16,185,129,0.54)]" />
-            </div>
-            <div className="relative tracking-[1.02px] leading-[13.8px] uppercase">
+      <div
+        className={`w-full border-b border-[#1e293b] flex flex-col gap-[5px] pb-1 transition-opacity duration-300 ${
+          isPending ? "opacity-50" : ""
+        }`}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-2 pt-[3px] pb-[3px] border-b border-[#1e293b]">
+          <div className="flex items-center gap-1.5">
+            <div
+              className={`w-[5px] h-[5px] rounded-full ${
+                isPending
+                  ? "bg-[rgba(100,116,139,0.5)]"
+                  : "bg-[rgba(16,185,129,0.54)]"
+              }`}
+            />
+            <span className="text-[9px] tracking-[1px] leading-[14px] uppercase">
               Active Position
-            </div>
+            </span>
           </div>
-          <div className="flex items-start gap-[5.1px] text-[8.2px]">
-            <div className={`border-solid border-[0.9px] flex items-start pt-[0.8px] pb-[0.7px] pl-1 pr-[3px] ${direction === "LONG" ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981]" : "bg-[rgba(239,68,68,0.15)] border-[rgba(239,68,68,0.3)] text-[#ef4444]"}`}>
-              <div data-testid="position-direction" className="relative leading-[13.3px]">{direction}</div>
-            </div>
-            <div data-testid="position-asset" className="flex-1 relative text-[9.2px] leading-[13.8px] text-[#06b6d4] inline-block min-w-[45px]">
-              {asset}
-            </div>
-            <div className="flex flex-col items-start pt-[1.4px] px-0 pb-0">
-              <div className="relative leading-[12.3px]">{`×${contracts}`}</div>
-            </div>
-            <div className="flex-1 flex flex-col items-start pt-[1.4px] px-0 pb-0">
-              <div className="relative leading-[12.3px]">{pos.order_id ?? "—"}</div>
-            </div>
-          </div>
-        </div>
-        <div className="self-stretch flex items-start justify-end py-0 pl-2 pr-[3px] box-border max-w-full text-[7.2px]">
-          <div className="flex-1 flex items-start justify-between py-0 pl-px pr-0 box-border gap-5 max-w-full mq450:flex-wrap mq450:gap-5">
-            <div className="flex items-start gap-[10.2px]">
-              <div className="flex flex-col items-start gap-[3.4px]">
-                <div className="relative leading-[7.2px]">ENTRY</div>
-                <div data-testid="position-entry" className="relative text-[11.2px] leading-[11.3px] text-[#e2e8f0]">
-                  {formatPrice(entryPrice)}
-                </div>
-              </div>
-              <div className="flex flex-col items-start gap-[3.4px]">
-                <div className="relative leading-[7.2px]">CURRENT</div>
-                <div data-testid="position-current" className={`relative text-[11.2px] leading-[11.3px] ${pnl >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-                  {currentPrice ? formatPrice(currentPrice) : "—"}
-                </div>
-              </div>
-            </div>
-            <div data-testid="position-pnl" className={`relative text-right text-[18.4px] ${pnl >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-              <span className={`leading-[18.41px] ${pnl >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>{formatCurrency(pnl, { showSign: true })}</span>
-              <span className={`text-[9.2px] leading-[13.8px] ${pnl >= 0 ? "text-[rgba(16,185,129,0.7)]" : "text-[rgba(239,68,68,0.7)]"}`}>({ticks >= 0 ? "+" : ""}{ticks}t)</span>
-            </div>
+          <div className="flex items-center gap-[5px]">
+            {direction ? (
+              <>
+                <span
+                  data-testid="position-direction"
+                  className={`px-1 py-[0.5px] text-[10px] leading-[13px] border border-solid ${
+                    direction === "LONG"
+                      ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
+                      : "bg-[rgba(239,68,68,0.15)] border-[rgba(239,68,68,0.3)] text-[#ef4444]"
+                  }`}
+                >
+                  {direction}
+                </span>
+                <span
+                  data-testid="position-asset"
+                  className="text-[9px] text-[#06b6d4]"
+                >
+                  {asset}
+                </span>
+                <span className="text-[9px] leading-[12px]">
+                  x{contracts ?? "—"}
+                </span>
+                <span className="text-[9px] leading-[12px]">
+                  {orderId ?? "—"}
+                </span>
+              </>
+            ) : (
+              <span className="text-[9px]">—</span>
+            )}
           </div>
         </div>
-        <div className="self-stretch flex items-start justify-end py-0 pl-2 pr-[7px] box-border max-w-full text-[#ef4444]">
-          <div className="flex-1 flex items-start justify-between py-0 pl-px pr-0 box-border gap-5 max-w-full mq450:flex-wrap mq450:gap-5">
-            <div className="flex flex-col items-start pt-[1.5px] px-0 pb-0">
-              <div className="relative leading-[7.2px]">{slLevel != null ? `SL ${formatPrice(slLevel)}` : "SL —"}</div>
+
+        {/* Entry + Current + PnL */}
+        <div className="flex items-start justify-between px-2">
+          <div className="flex items-start gap-[10px]">
+            <div className="flex flex-col gap-[2px]">
+              <span className="text-[10px] leading-tight">ENTRY</span>
+              <span
+                data-testid="position-entry"
+                className="text-[11px] leading-[11px] text-[#e2e8f0]"
+              >
+                {entryPrice != null ? formatPrice(entryPrice) : "—"}
+              </span>
             </div>
-            <div className="relative leading-[7.2px] text-[#10b981]">
-              {tpLevel != null ? `TP ${formatPrice(tpLevel)}` : "TP —"}
+            <div className="flex flex-col gap-[2px]">
+              <span className="text-[10px] leading-tight">CURRENT</span>
+              <span
+                data-testid="position-current"
+                className={`text-[11px] leading-[11px] ${curColor}`}
+              >
+                {currentPrice != null ? formatPrice(currentPrice) : "—"}
+              </span>
             </div>
+          </div>
+          <div
+            data-testid="position-pnl"
+            className={`text-right ${pnlColor}`}
+          >
+            <span className="text-lg leading-[18px]">
+              {isPending
+                ? "$0.00"
+                : formatCurrency(pnl, { showSign: true })}
+            </span>
+            {!isPending && (
+              <span
+                className={`text-[9px] ${
+                  isProfit
+                    ? "text-[rgba(16,185,129,0.7)]"
+                    : "text-[rgba(239,68,68,0.7)]"
+                }`}
+              >
+                ({ticks >= 0 ? "+" : ""}
+                {ticks}t)
+              </span>
+            )}
           </div>
         </div>
-        <div className="self-stretch flex items-start justify-end py-0 px-2 box-border max-w-full">
-          <div className="flex-1 [background:linear-gradient(90deg,_#ef4444,_#1e293b_50%,_#10b981)] flex items-start justify-between py-0 pl-[346px] pr-[265px] box-border gap-5 max-w-full mq750:gap-5 mq750:pl-[86px] mq750:pr-[66px] mq750:box-border mq1025:gap-5 mq1025:pl-[173px] mq1025:pr-[132px] mq1025:box-border">
-            <div className="h-[6.3px] w-px relative bg-[#3b82f6] shrink-0" />
-            <div className="mt-[-2.1px] h-[3.2px] w-[5px] relative shrink-0" />
+
+        {/* SL / TP */}
+        <div className="flex items-center justify-between px-2">
+          {isPending ? (
+            <>
+              <span className="text-[rgba(239,68,68,0.4)] leading-tight">
+                PENDING
+              </span>
+              <span className="text-[rgba(16,185,129,0.4)] leading-tight">
+                PENDING
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-[#ef4444] leading-tight">
+                SL {slLevel != null ? formatPrice(slLevel) : "—"}
+              </span>
+              <span className="text-[#10b981] leading-tight">
+                TP {tpLevel != null ? formatPrice(tpLevel) : "—"}
+              </span>
+            </>
+          )}
+        </div>
+
+        {/* Gradient bar */}
+        <div className="px-2">
+          <div
+            className={`w-full h-1.5 relative ${isPending ? "opacity-30" : ""}`}
+            style={{
+              background:
+                "linear-gradient(90deg, #ef4444, #1e293b 50%, #10b981)",
+            }}
+          >
+            {currentPct != null && !isPending && (
+              <div
+                className="absolute top-0 h-full w-[2px] bg-[#06b6d4]"
+                style={{
+                  left: `${currentPct}%`,
+                  transition: "left 300ms ease-out",
+                  boxShadow: "0 0 4px rgba(6,182,212,0.6)",
+                }}
+              />
+            )}
           </div>
         </div>
-        <div className="self-stretch flex items-start justify-end py-0 pl-2 pr-1 box-border max-w-full text-[#ef4444]">
-          <div className="flex-1 flex items-start justify-between gap-5 max-w-full mq450:flex-wrap mq450:gap-5">
-            <div className="relative leading-[7.2px]">{slDist != null ? `${slDist.toFixed(2)}pts (${formatCurrency(slDistValue)})` : "—"}</div>
-            <div className="relative leading-[7.2px] text-[#10b981]">
-              {tpDist != null ? `${tpDist.toFixed(2)}pts (${formatCurrency(tpDistValue)})` : "—"}
-            </div>
-          </div>
+
+        {/* Distance to SL / TP */}
+        <div className="flex items-center justify-between px-2">
+          <span className="text-[#10b981] leading-tight">
+            {slDist != null
+              ? `${slDist.toFixed(2)}pts (${formatCurrency(slDistVal)})`
+              : "—"}
+          </span>
+          <span className="text-[#10b981] leading-tight">
+            {tpDist != null
+              ? `${tpDist.toFixed(2)}pts (${formatCurrency(tpDistVal)})`
+              : "—"}
+          </span>
         </div>
-        <div className="self-stretch flex items-start py-0 px-2 text-[8.2px]">
-          <div className="flex items-start gap-[10.3px]">
-            <div className="flex-1 relative leading-[12.3px]">
-              <span>{`Time: `}</span>
-              <span className="text-[#e2e8f0]">{pos.entry_time ? formatTimeSince(pos.entry_time) : "—"}</span>
-            </div>
-            <div className="relative leading-[12.3px]">
-              <span>{`Lots: `}</span>
-              <span className="text-[#e2e8f0]">{contracts}</span>
-            </div>
-            <div className="flex-1 relative leading-[12.3px]">
-              <span>{`Fill: `}</span>
-              <span className="text-[#e2e8f0]">{pos.order_id ?? "—"}</span>
-            </div>
-          </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-[10px] px-2 text-[10px]">
+          <span>
+            Time:{" "}
+            <span className="text-[#e2e8f0]">{elapsedStr}</span>
+          </span>
+          <span>
+            Lots:{" "}
+            <span className="text-[#e2e8f0]">{contracts ?? "—"}</span>
+          </span>
+          <span>
+            Fill:{" "}
+            <span className="text-[#e2e8f0]">{orderId ?? "—"}</span>
+          </span>
         </div>
       </div>
     </section>

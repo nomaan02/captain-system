@@ -201,8 +201,8 @@ def _check_all_layers(
     if reason:
         return reason
 
-    # Layer 2: Budget — n_t >= N (total trades today)
-    reason = _layer2_budget(intraday, tsm, fee_per_trade)
+    # Layer 2: Dollar budget — remaining < rho_j
+    reason = _layer2_budget(intraday, tsm, rho_j)
     if reason:
         return reason
 
@@ -211,7 +211,7 @@ def _check_all_layers(
     if reason:
         return reason
 
-    # Layer 4: Correlation-adjusted conditional Sharpe
+    # Layer 4: Rolling basket Sharpe (60d lookback)
     reason = _layer4_correlation_sharpe(cb_param, intraday, tsm, model_m)
     if reason:
         return reason
@@ -293,34 +293,30 @@ def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: float) -> str | No
     return None
 
 
-def _layer2_budget(intraday: dict, tsm: dict, fee_per_trade: float = 0.0) -> str | None:
-    """Layer 2: Remaining budget — n_t >= N -> BLOCKED.
+def _layer2_budget(intraday: dict, tsm: dict, rho_j: float) -> str | None:
+    """Layer 2: Remaining dollar budget — IF remaining < rho_j -> BLOCKED.
 
-    N = floor((e * A) / (MDD * p + phi)) per spec Part 3.2.
-    MDD is read from TSM config (not hardcoded) so changes propagate automatically.
-    n_t is total trades completed today (all baskets), NOT consecutive losses.
+    Spec: remaining_budget = E - |L_t|; IF remaining < rho_j -> BLOCK
+    where E = e * A (daily exposure budget in dollars).
+    Blocks when worst-case signal risk exceeds remaining day budget.
     """
     topstep_params = parse_json(tsm.get("topstep_params"), {})
 
-    p = topstep_params.get("p", 0.005)  # Fraction of MDD% risked per trade
     e = topstep_params.get("e", 0.01)   # Daily exposure fraction
     A = tsm.get("current_balance", 0)
-    mdd = tsm.get("max_drawdown_limit") or tsm.get("max_daily_drawdown") or 4500.0
 
-    if A <= 0 or p <= 0:
+    if A <= 0:
         return None
 
-    # N(A, p, e, phi) = floor((e * A) / (MDD * p + phi))
-    denominator = mdd * p + fee_per_trade
-    if denominator <= 0:
-        return None
+    E = e * A  # Daily exposure budget in dollars
+    l_t = intraday.get("l_t", 0.0)
+    remaining = E - abs(l_t)
 
-    N = math.floor((e * A) / denominator)
-
-    n_t = intraday.get("n_t", 0)
-
-    if n_t >= N:
-        return f"L2: budget exhausted — n_t={n_t} >= N={N} (max trades today)"
+    if remaining < rho_j:
+        return (
+            f"L2: dollar budget exhausted — remaining={remaining:.0f} "
+            f"< rho_j={rho_j:.0f} (E={E:.0f}, |L_t|={abs(l_t):.0f})"
+        )
 
     return None
 
@@ -378,60 +374,35 @@ def _layer4_correlation_sharpe(
     tsm: dict,
     model_m: str | None,
 ) -> str | None:
-    """Layer 4: Correlation-adjusted conditional Sharpe.
+    """Layer 4: Rolling basket Sharpe gate.
 
-    S = mu_b / (sigma * sqrt(1 + 2 * n_t * rho_bar))
+    Spec: rolling_basket_sharpe(lookback=60d) from D03 trade history.
     If S <= lambda -> BLOCKED.
 
-    Cold start: rho_bar = 0 -> denominator = sigma -> S = mu_b / sigma
-    (unconditional Sharpe). With lambda = 0 (default), filter never triggers
-    if mu_b > 0 (which is guaranteed if Layer 3 passed).
+    Cold start: fewer than 10 trades in lookback -> skip (insufficient data).
     """
-    if cb_param is None:
-        return None
-
-    r_bar = cb_param.get("r_bar", 0.0)
-    beta_b = cb_param.get("beta_b", 0.0)
-    sigma = cb_param.get("sigma", 0.0)
-    rho_bar = cb_param.get("rho_bar", 0.0)
-    p_value = cb_param.get("p_value", 1.0)
-    n_obs = cb_param.get("n_observations", 0)
-
-    # Cold start: spec says "beta_b=0, layers 3-4 disabled"
-    if n_obs == 0:
-        return None
-
-    # Significance gate for beta_b
-    if p_value > 0.05 or n_obs < 100:
-        beta_b = 0.0
-
-    if sigma <= 0:
-        return None  # Cannot compute Sharpe — skip
-
-    # Get per-basket cumulative P&L
-    l_b_dict = intraday.get("l_b", {})
-    basket_key = str(model_m) if model_m is not None else None
-    l_b = l_b_dict.get(basket_key, 0.0) if basket_key else 0.0
-
-    mu_b = r_bar + beta_b * l_b
-
-    # Marginal portfolio variance denominator
-    n_t = intraday.get("n_t", 0)
-    denominator = sigma * math.sqrt(1.0 + 2.0 * n_t * rho_bar)
-
-    if denominator <= 0:
-        return None  # Edge case — skip
-
-    S = mu_b / denominator
-
-    # Lambda threshold from topstep_params
     topstep_params = parse_json(tsm.get("topstep_params"), {})
     lambda_threshold = topstep_params.get("lambda", DEFAULT_LAMBDA)
 
+    returns = _get_rolling_trade_returns(lookback_days=60)
+
+    if len(returns) < 10:
+        return None  # Insufficient data for rolling Sharpe
+
+    mean_r = sum(returns) / len(returns)
+    variance = sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)
+    sigma = math.sqrt(variance) if variance > 0 else 0.0
+
+    if sigma <= 0:
+        return None  # Zero variance — skip
+
+    S = mean_r / sigma
+
     if S <= lambda_threshold:
         return (
-            f"L4: Sharpe below threshold — S={S:.4f} <= lambda={lambda_threshold} "
-            f"(mu_b={mu_b:.2f}, sigma={sigma:.2f}, n_t={n_t}, rho_bar={rho_bar:.4f})"
+            f"L4: rolling basket Sharpe below threshold — S={S:.4f} <= "
+            f"lambda={lambda_threshold} (mean={mean_r:.2f}, sigma={sigma:.2f}, "
+            f"n_trades={len(returns)})"
         )
 
     return None
@@ -514,16 +485,12 @@ def _load_intraday_state(accounts: list[str]) -> dict:
         cur.execute(
             """SELECT account_id, l_t, n_t, l_b, n_b
                FROM p3_d23_circuit_breaker_intraday
-               ORDER BY last_updated DESC"""
+               LATEST ON last_updated PARTITION BY account_id"""
         )
         rows = cur.fetchall()
 
-    seen = set()
     result = {}
     for r in rows:
-        if r[0] in seen:
-            continue
-        seen.add(r[0])
         result[r[0]] = {
             "l_t": r[1] or 0.0,
             "n_t": r[2] or 0,
@@ -531,6 +498,19 @@ def _load_intraday_state(accounts: list[str]) -> dict:
             "n_b": parse_json(r[4], {}),
         }
     return result
+
+
+def _get_rolling_trade_returns(lookback_days: int = 60) -> list[float]:
+    """Query per-trade P&L from D03 for rolling basket Sharpe calculation."""
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT pnl FROM p3_d03_trade_outcomes
+               WHERE timestamp > dateadd('d', -%s, now())
+               ORDER BY timestamp DESC""",
+            (lookback_days,),
+        )
+        rows = cur.fetchall()
+    return [r[0] for r in rows if r[0] is not None]
 
 
 def _resolve_fee(tsm: dict, asset_id: str, fallback_fee: float) -> float:

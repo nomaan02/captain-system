@@ -272,8 +272,8 @@ def phase4_seed_circuit_breaker(dry_run: bool = False):
         cur.execute(
             """INSERT INTO p3_d25_circuit_breaker_params (
                 account_id, model_m, r_bar, beta_b, sigma, rho_bar,
-                n_observations, p_value, last_updated
-            ) VALUES (%s, 0, 0.0, 0.0, 1.0, 0.0, 0, 1.0, now())""",
+                n_observations, p_value, l_star, cold_start, last_updated
+            ) VALUES (%s, 0, 0.0, 0.0, 1.0, 0.0, 0, 1.0, NULL, true, now())""",
             (ACCOUNT_ID,),
         )
     print(f"    [OK] {ACCOUNT_ID}: cold-start (beta_b=0, layers 3-4 disabled until history accumulates)")

@@ -556,6 +556,8 @@ TABLES = [
         rho_bar DOUBLE,
         n_observations INT,
         p_value DOUBLE,
+        l_star DOUBLE,
+        cold_start BOOLEAN,
         last_updated TIMESTAMP
     ) timestamp(last_updated);
     """,
@@ -768,6 +770,22 @@ TABLES = [
         opening_vol_z DOUBLE,
         ts TIMESTAMP
     ) timestamp(session_date) PARTITION BY MONTH;
+    """,
+
+    # =====================================================================
+    # p3_audit_log: User action audit trail (Doc 19 §10)
+    # Owner: Command API
+    # Fields: user_id, action, old_value, new_value
+    # =====================================================================
+    """
+    CREATE TABLE IF NOT EXISTS p3_audit_log (
+        user_id SYMBOL,
+        action STRING,
+        detail STRING,
+        old_value STRING,
+        new_value STRING,
+        ts TIMESTAMP
+    ) timestamp(ts) PARTITION BY MONTH;
     """,
 ]
 

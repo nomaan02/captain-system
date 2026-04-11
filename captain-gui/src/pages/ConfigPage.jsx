@@ -5,8 +5,8 @@ const ConfigPage = () => {
         Configuration
       </h1>
       <div className="bg-surface-card border border-border-subtle p-6 font-mono text-xs text-[#64748b]">
-        <p className="mb-2">Strategy parameters, account configuration, and system settings will be available here.</p>
-        <p>Pending backend endpoint integration.</p>
+        <p className="mb-2">Strategy parameters, account settings, and system configuration will be managed here.</p>
+        <p>Coming soon — waiting for configuration endpoints to be connected.</p>
       </div>
     </div>
   );

@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
-from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE
+from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def run_daily_reconciliation(gui_push_fn: Callable,
         ``notify_fn(notif_dict)``
     """
     write_checkpoint("COMMAND", "RECONCILIATION", "starting", "process_accounts")
-    logger.info("Daily reconciliation started at %s", datetime.now().isoformat())
+    logger.info("Daily reconciliation started at %s", now_et().isoformat())
 
     try:
         accounts = _get_all_accounts()
@@ -70,7 +70,7 @@ def run_daily_reconciliation(gui_push_fn: Callable,
                 _request_manual_reconciliation(ac_id, user_id, gui_push_fn)
 
             # Step 2: SOD Topstep parameter computation (V3)
-            if ac.get("topstep_optimisation"):
+            if ac.get("scaling_plan_active"):
                 _compute_sod_topstep_params(ac_id, user_id, ac, gui_push_fn, notify_fn)
 
         # Step 3: Daily counter resets (all accounts)
@@ -121,7 +121,7 @@ def _reconcile_api_account(ac_id: str, user_id: str, ac: dict,
                     f"(diff: ${mismatch:,.2f})"
                 ),
                 "source": "RECONCILIATION",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_et().isoformat(),
             })
 
             logger.info("Balance corrected for %s: %.2f → %.2f (diff: %.2f)",
@@ -147,7 +147,7 @@ def _request_manual_reconciliation(ac_id: str, user_id: str,
         "priority": "MEDIUM",
         "message": f"Please confirm current balance for account {ac_id} via GUI.",
         "source": "RECONCILIATION",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "data": {
             "action": "CONFIRM_BALANCE",
             "account_id": ac_id,
@@ -264,7 +264,7 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
                 "L_halt": round(L_halt, 2),
                 "W_max_payout": round(W, 2),
                 "g_A_post_payout_mdd": round(g_A, 6),
-                "computed_at": datetime.now().isoformat(),
+                "computed_at": now_et().isoformat(),
             },
             "scaling_tier": scaling.get("tier_label", ""),
             "current_tier_label": scaling.get("tier_label", ""),
@@ -371,7 +371,7 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
         "message": message,
         "source": "PAYOUT_RECOMMENDATION",
         "user_id": user_id,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "data": {
             "account_id": ac_id,
             "payout_amount": round(withdraw_amount, 2),
@@ -410,8 +410,8 @@ def _reset_daily_counters():
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), "SYSTEM",
-                    "DAILY_RESET", "RESET-" + datetime.now().strftime("%Y%m%d"),
+                    now_et().isoformat(), "SYSTEM",
+                    "DAILY_RESET", "RESET-" + now_et().strftime("%Y%m%d"),
                     "", json.dumps({"reset_type": "daily_counters"}),
                 ),
             )
@@ -429,7 +429,7 @@ def _reset_daily_counters():
                            L_b, n_b, reset_flag
                        ) VALUES(%s, %s, %s, %s, %s, %s, %s)""",
                     (
-                        datetime.now().isoformat(), ac_id,
+                        now_et().isoformat(), ac_id,
                         0.0, 0,
                         json.dumps({}), json.dumps({}),
                         True,
@@ -536,7 +536,7 @@ def _update_account_balance(ac_id: str, new_balance: float):
             # 2. Insert corrected D08 row with updated current_balance
             params = list(row)
             params[5] = new_balance  # current_balance is column index 5
-            params.append(datetime.now().isoformat())  # last_updated
+            params.append(now_et().isoformat())  # last_updated
 
             cur.execute(
                 """INSERT INTO p3_d08_tsm_state(
@@ -575,7 +575,7 @@ def _update_account_balance(ac_id: str, new_balance: float):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), "SYSTEM",
+                    now_et().isoformat(), "SYSTEM",
                     "BALANCE_UPDATE", ac_id, "",
                     json.dumps({"new_balance": new_balance}),
                 ),
@@ -594,7 +594,7 @@ def _update_topstep_state(ac_id: str, topstep_state_json: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), "SYSTEM",
+                    now_et().isoformat(), "SYSTEM",
                     "TOPSTEP_SOD_UPDATE", ac_id, "",
                     topstep_state_json,
                 ),
@@ -616,7 +616,7 @@ def _log_reconciliation(ac_id: str, user_id: str, method: str,
                        auto_corrected
                    ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     ac_id, user_id, method,
                     system_balance, broker_balance, mismatch,
                     mismatch is not None and mismatch > 1.0,

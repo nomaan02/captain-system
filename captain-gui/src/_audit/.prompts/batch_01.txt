@@ -1,0 +1,41 @@
+You are executing BATCH 1 — App Shell of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "fixing-accessibility"
+  args: "src/components/layout/TopBar.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/App.jsx (FIX-143..144):
+   - FIX-143: In RequireAuth, replace `return null` during loading with a centered spinner or skeleton matching the dark theme
+   - FIX-144: Set document.title per route
+
+2. src/api/client.js (FIX-148):
+   Replace `window.location.href = "/login"` with a soft redirect approach — store a flag or use an event the AuthContext can listen to, avoiding hard nav that kills Zustand state.
+
+3. src/auth/AuthContext.jsx (FIX-149):
+   Ensure the loading state is consumed by App.jsx's RequireAuth spinner.
+
+4. src/components/layout/TopBar.jsx (FIX-012..022):
+   - Increase "Last tick" timestamp from text-[6.4px] to min text-[10px]
+   - Increase health dots from 5.5px to min 8px
+   - Add sr-only text to each status dot (e.g., "API: connected")
+   - Implement ARIA dropdown on account selector: aria-expanded, aria-haspopup="listbox", role="listbox" on menu, arrow-key navigation, Escape to close
+   - Increase account dropdown and Git Pull buttons to min h-[32px]
+   - Increase nav tab text to min text-[10px] with min px-[10px] py-[6px]
+   - Add focus-visible styling on all interactive elements
+   - Wrap decorative Unicode (▼, ↻, ⚙, ✓, ✗, ↓) in aria-hidden="true"
+   - Round h-[36.6px] to h-[36px] or h-9
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

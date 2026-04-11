@@ -1,0 +1,38 @@
+You are executing BATCH 3 — Risk + Trade of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/risk/RiskPanel.jsx src/components/trading/TradeLog.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/risk/RiskPanel.jsx (FIX-001..011) — most complex component:
+   - FIX-001 CRITICAL: Replace fixed `w-[42.7px]` drawdown bar segments with flex percentages so they don't overflow
+   - FIX-002 CRITICAL: Replace ALL fractional pixel values (text-[10.7px], leading-[16.1px], gap-[9.1px] etc.) with nearest Tailwind scale values. These are Figma auto-export artifacts.
+   - FIX-003..004 CRITICAL: Add `role="progressbar"`, `aria-valuenow`, `aria-valuemin="0"`, `aria-valuemax="100"` on MDD and Daily DD drawdown bars
+   - FIX-005: Replace Payout cards fixed `w-[201px]` with responsive grid (e.g., grid-cols-2 md:grid-cols-3)
+   - FIX-006: Replace `min-w-[112px] max-w-[149px]` on risk param cards with flex-wrap-friendly sizing
+   - FIX-007: Replace `font-['JetBrains_Mono']` with `font-mono`
+   - FIX-008: Fix footer label clipping
+   - FIX-009: Add `role="progressbar"` on payout target bar
+   - FIX-010: Replace `mq450`/`mq750`/`mq1025` with Tailwind sm:/md:/lg:
+   - FIX-011: Replace `pb-[29px]` with nearest Tailwind spacing (pb-7 = 28px)
+
+2. src/components/trading/TradeLog.jsx (FIX-106..109):
+   - FIX-106: Increase column headers from text-[8.6px] to min text-[10px]
+   - FIX-107: Replace fixed `gap-[33px]` with a proper table layout or auto grid
+   - FIX-108: Convert div grid to semantic `<table>` with `<thead>`/`<tbody>`/`<th>`/`<td>` so screen readers can navigate it as tabular data
+   - FIX-109: Increase total footer text slightly
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

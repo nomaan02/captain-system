@@ -147,12 +147,12 @@ const ProcessesPage = () => {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className="text-xs text-white font-bold font-mono">{block.name}</span>
-                          <span className={`px-1.5 py-0.5 text-[8px] font-mono border border-solid ${TRIGGER_COLORS[block.trigger] || DEFAULT_TRIGGER_COLOR}`}>
+                          <span className={`px-1.5 py-0.5 text-[10px] font-mono border border-solid ${TRIGGER_COLORS[block.trigger] || DEFAULT_TRIGGER_COLOR}`}>
                             {block.triggerLabel}
                           </span>
                         </div>
                         <div className="text-[10px] text-[#94a3b8] font-mono mb-0.5">{block.description}</div>
-                        <div className="text-[9px] text-[#64748b] font-mono">{block.sourceFile}</div>
+                        <div className="text-[10px] text-[#64748b] font-mono">{block.sourceFile}</div>
                       </div>
                     </div>
                   ))}

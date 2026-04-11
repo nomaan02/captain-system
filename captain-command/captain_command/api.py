@@ -34,6 +34,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from shared.constants import now_et
+
 from captain_command.blocks.b1_core_routing import (
     route_command,
     route_notification,
@@ -156,7 +158,7 @@ app.add_middleware(_JWTAuthMiddleware)
 _process_health: dict[str, dict] = {
     "OFFLINE": {"status": "unknown", "timestamp": None},
     "ONLINE": {"status": "unknown", "timestamp": None},
-    "COMMAND": {"status": "ok", "timestamp": datetime.now().isoformat()},
+    "COMMAND": {"status": "ok", "timestamp": now_et().isoformat()},
 }
 
 # API adapter connection status — updated by B3 health monitor
@@ -278,7 +280,7 @@ async def status():
 
 class _AuthTokenRequest(BaseModel):
     api_key: str
-    user_id: str = "primary_user"
+    user_id: str = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
 
 
 @app.post("/auth/token")
@@ -302,11 +304,66 @@ def auth_token(req: _AuthTokenRequest):
         "exp": now + timedelta(hours=_JWT_EXPIRY_HOURS),
     }
     token = pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    _write_audit_log(req.user_id, "AUTH_TOKEN_ISSUED")
     return JSONResponse({
         "access_token": token,
         "token_type": "bearer",
         "expires_in": _JWT_EXPIRY_HOURS * 3600,
     })
+
+
+@app.post("/auth/refresh")
+def auth_refresh(request: Request):
+    """Silent JWT refresh — issue a new token from a valid existing token.
+
+    Spec (Doc 19 §6): 24h expiry with silent refresh before expiry.
+    Client calls this before the current token expires to get a fresh one.
+    """
+    user_id = getattr(request.state, "user_id", "")
+    if not user_id:
+        return JSONResponse(status_code=401, content={"error": "No valid token"})
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "iat": now,
+        "exp": now + timedelta(hours=_JWT_EXPIRY_HOURS),
+    }
+    token = pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    return JSONResponse({
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": _JWT_EXPIRY_HOURS * 3600,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Audit trail logging (Doc 19 §10)
+# ---------------------------------------------------------------------------
+
+
+def _write_audit_log(
+    user_id: str,
+    action: str,
+    old_value: str | None = None,
+    new_value: str | None = None,
+    detail: str | None = None,
+):
+    """Write an audit trail entry to p3_audit_log in QuestDB.
+
+    Non-blocking best-effort: logs a warning on failure but never raises.
+    """
+    try:
+        from shared.questdb_client import get_cursor
+        now = now_et().isoformat()
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO p3_audit_log(user_id, action, detail, old_value, new_value, ts)
+                   VALUES(%s, %s, %s, %s, %s, %s)""",
+                (user_id, action, detail, old_value, new_value, now),
+            )
+    except Exception as exc:
+        logger.warning("Audit log write failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +607,17 @@ def api_dashboard(user_id: str):
     return JSONResponse(_make_json_safe(build_dashboard_snapshot(user_id)))
 
 
+@app.post("/api/signals/clear")
+def api_clear_signals(body: dict, request: Request):
+    """Mark signals as cleared so they don't reappear on refresh."""
+    from captain_command.blocks.b1_core_routing import mark_signals_cleared
+    user_id = getattr(request.state, "user_id", body.get("user_id", ""))
+    signal_ids = body.get("signal_ids", [])
+    if signal_ids:
+        mark_signals_cleared(user_id, signal_ids)
+    return JSONResponse({"ok": True, "cleared": len(signal_ids)})
+
+
 @app.get("/api/aim/{aim_id}/detail")
 def api_aim_detail(aim_id: int):
     """AIM detail for the registry modal — per-asset breakdown + validation."""
@@ -557,22 +625,26 @@ def api_aim_detail(aim_id: int):
 
 
 @app.post("/api/aim/{aim_id}/activate")
-def api_aim_activate(aim_id: int):
+def api_aim_activate(aim_id: int, request: Request):
     """Activate an AIM — routes ACTIVATE_AIM command to Offline via Redis."""
+    user_id = getattr(request.state, "user_id", "")
     route_command(
-        {"type": "ACTIVATE_AIM", "aim_id": aim_id, "user_id": "primary_user"},
+        {"type": "ACTIVATE_AIM", "aim_id": aim_id, "user_id": user_id},
         gui_push_fn=lambda *_a, **_kw: None,
     )
+    _write_audit_log(user_id, "ACTIVATE_AIM", old_value=None, new_value=str(aim_id))
     return JSONResponse({"ok": True, "aim_id": aim_id, "action": "ACTIVATE_AIM"})
 
 
 @app.post("/api/aim/{aim_id}/deactivate")
-def api_aim_deactivate(aim_id: int):
+def api_aim_deactivate(aim_id: int, request: Request):
     """Deactivate (suppress) an AIM — routes DEACTIVATE_AIM command to Offline."""
+    user_id = getattr(request.state, "user_id", "")
     route_command(
-        {"type": "DEACTIVATE_AIM", "aim_id": aim_id, "user_id": "primary_user"},
+        {"type": "DEACTIVATE_AIM", "aim_id": aim_id, "user_id": user_id},
         gui_push_fn=lambda *_a, **_kw: None,
     )
+    _write_audit_log(user_id, "DEACTIVATE_AIM", old_value=None, new_value=str(aim_id))
     return JSONResponse({"ok": True, "aim_id": aim_id, "action": "DEACTIVATE_AIM"})
 
 
@@ -683,10 +755,12 @@ def api_get_notification_prefs(user_id: str):
 
 
 @app.post("/api/notifications/preferences")
-def api_save_notification_prefs(req: NotificationPrefsRequest):
+def api_save_notification_prefs(req: NotificationPrefsRequest, request: Request):
     """Save notification preferences for a user."""
-    save_user_preferences(req.user_id, req.preferences)
-    return JSONResponse({"status": "ok", "user_id": req.user_id})
+    user_id = getattr(request.state, "user_id", req.user_id)
+    save_user_preferences(user_id, req.preferences)
+    _write_audit_log(user_id, "UPDATE_NOTIFICATION_PREFS", new_value=json.dumps(req.preferences))
+    return JSONResponse({"status": "ok", "user_id": user_id})
 
 
 @app.post("/api/notifications/read")
@@ -770,26 +844,25 @@ class ReplayControlRequest(BaseModel):
 
 class ReplaySaveRequest(BaseModel):
     replay_id: str
-    user_id: str = "primary_user"
 
 
 class ReplayPresetRequest(BaseModel):
     name: str
     config: dict
-    user_id: str = "primary_user"
 
 
 @app.post("/api/replay/start")
-def api_replay_start(req: ReplayStartRequest):
+def api_replay_start(req: ReplayStartRequest, request: Request):
     """Start a session replay. Returns replay_id.
 
     Sync def -- FastAPI runs this in a thread pool so the blocking
     replay_engine calls do NOT freeze the uvicorn event loop.
     """
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import start_replay
         replay_id = start_replay(
-            user_id="primary_user",
+            user_id=user_id,
             date_str=req.date,
             sessions=req.resolved_sessions,
             config_overrides=req.config_overrides,
@@ -811,12 +884,13 @@ class BatchReplayStartRequest(BaseModel):
 
 
 @app.post("/api/replay/batch/start")
-def api_batch_replay_start(req: BatchReplayStartRequest):
+def api_batch_replay_start(req: BatchReplayStartRequest, request: Request):
     """Start a batch (period) replay over a date range. Returns replay_id."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import start_batch_replay
         replay_id = start_batch_replay(
-            user_id="primary_user",
+            user_id=user_id,
             date_from=req.date_from,
             date_to=req.date_to,
             sessions=req.sessions,
@@ -831,11 +905,12 @@ def api_batch_replay_start(req: BatchReplayStartRequest):
 
 
 @app.post("/api/replay/control")
-def api_replay_control(req: ReplayControlRequest):
+def api_replay_control(req: ReplayControlRequest, request: Request):
     """Control an active replay: pause, resume, speed, skip_to_next, stop."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import control_replay
-        result = control_replay("primary_user", req.action, req.value)
+        result = control_replay(user_id, req.action, req.value)
         return JSONResponse(result)
     except Exception as exc:
         logger.error("Replay control failed: %s", exc, exc_info=True)
@@ -843,11 +918,12 @@ def api_replay_control(req: ReplayControlRequest):
 
 
 @app.post("/api/replay/save")
-def api_replay_save(req: ReplaySaveRequest):
+def api_replay_save(req: ReplaySaveRequest, request: Request):
     """Save replay results to p3_replay_results."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import save_replay
-        result = save_replay(req.replay_id, req.user_id)
+        result = save_replay(req.replay_id, user_id)
         return JSONResponse(result)
     except Exception as exc:
         logger.error("Replay save failed: %s", exc, exc_info=True)
@@ -855,11 +931,12 @@ def api_replay_save(req: ReplaySaveRequest):
 
 
 @app.get("/api/replay/status")
-def api_replay_status():
-    """Get the status of the active replay for primary_user."""
+def api_replay_status(request: Request):
+    """Get the status of the active replay for the authenticated user."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import get_active_replay
-        result = get_active_replay("primary_user")
+        result = get_active_replay(user_id)
         if result is None:
             return JSONResponse({"status": "no_active_replay"})
         return JSONResponse(result)
@@ -904,16 +981,18 @@ def api_replay_history():
 
 
 @app.get("/api/replay/presets")
-def api_replay_presets():
-    """List saved replay presets for primary_user."""
+def api_replay_presets(request: Request):
+    """List saved replay presets for the authenticated user."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         from shared.questdb_client import get_cursor
         with get_cursor() as cur:
             cur.execute(
                 """SELECT preset_id, name, config, ts
                    FROM p3_replay_presets
-                   WHERE user_id = 'primary_user'
-                   ORDER BY ts DESC"""
+                   WHERE user_id = %s
+                   ORDER BY ts DESC""",
+                (user_id,),
             )
             rows = cur.fetchall()
         presets = []
@@ -937,19 +1016,20 @@ def api_replay_presets():
 
 
 @app.post("/api/replay/presets")
-def api_replay_preset_save(req: ReplayPresetRequest):
+def api_replay_preset_save(req: ReplayPresetRequest, request: Request):
     """Save a replay configuration preset."""
+    user_id = getattr(request.state, "user_id", "")
     try:
         import uuid as _uuid
         from shared.questdb_client import get_cursor
         preset_id = f"PRESET-{_uuid.uuid4().hex[:8].upper()}"
-        now = datetime.now().isoformat()
+        now = now_et().isoformat()
         with get_cursor() as cur:
             cur.execute(
                 """INSERT INTO p3_replay_presets(
                        preset_id, user_id, name, config, ts
                    ) VALUES(%s, %s, %s, %s, %s)""",
-                (preset_id, req.user_id, req.name, json.dumps(req.config), now),
+                (preset_id, user_id, req.name, json.dumps(req.config), now),
             )
         return JSONResponse({
             "status": "saved",
@@ -962,15 +1042,207 @@ def api_replay_preset_save(req: ReplayPresetRequest):
 
 
 @app.post("/api/replay/whatif")
-def api_replay_whatif(req: ReplayStartRequest):
+def api_replay_whatif(req: ReplayStartRequest, request: Request):
     """Rerun sizing with different config using cached bars from last replay.
 
     No API calls needed -- uses bars cached during the last replay run.
     """
+    user_id = getattr(request.state, "user_id", "")
     try:
         from captain_command.blocks.b11_replay_runner import run_whatif as do_whatif
-        result = do_whatif("primary_user", req.config_overrides)
+        result = do_whatif(user_id, req.config_overrides)
         return JSONResponse(_make_json_safe(result))
     except Exception as exc:
         logger.error("Replay what-if failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+# ---------------------------------------------------------------------------
+# REST: Pseudotrader Dashboard
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/pseudotrader/decisions")
+def api_pseudotrader_decisions(limit: int = 200, request: Request = None):
+    """D11 pseudotrader decision log -- ADOPT/REJECT history."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT result_id, update_type, sharpe_improvement,
+                          drawdown_change, winrate_delta, pbo, dsr,
+                          recommendation, ts
+                   FROM p3_d11_pseudotrader_results
+                   ORDER BY ts DESC LIMIT %s""",
+                (limit,),
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return JSONResponse(_make_json_safe({"decisions": rows}))
+    except Exception as exc:
+        logger.error("Pseudotrader decisions failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+@app.get("/api/pseudotrader/parameters")
+def api_pseudotrader_parameters():
+    """Current gated parameters: D02 AIM weights + D05 EWMA + D12 Kelly."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            # D02 AIM meta-weights (latest per aim_id + asset_id)
+            cur.execute(
+                """SELECT aim_id, asset_id, inclusion_probability,
+                          inclusion_flag, recent_effectiveness,
+                          days_below_threshold, last_updated
+                   FROM p3_d02_aim_meta_weights
+                   LATEST ON last_updated PARTITION BY aim_id, asset_id"""
+            )
+            cols_d02 = [desc[0] for desc in cur.description]
+            d02 = [dict(zip(cols_d02, row)) for row in cur.fetchall()]
+
+            # D05 EWMA states (latest per asset/regime/session)
+            cur.execute(
+                """SELECT asset_id, regime, session, win_rate, avg_win,
+                          avg_loss, n_trades, last_updated
+                   FROM p3_d05_ewma_states
+                   LATEST ON last_updated PARTITION BY asset_id, regime, session"""
+            )
+            cols_d05 = [desc[0] for desc in cur.description]
+            d05 = [dict(zip(cols_d05, row)) for row in cur.fetchall()]
+
+            # D12 Kelly parameters (latest per asset/regime/session)
+            cur.execute(
+                """SELECT asset_id, regime, session, kelly_full,
+                          shrinkage_factor, sizing_override, last_updated
+                   FROM p3_d12_kelly_parameters
+                   LATEST ON last_updated PARTITION BY asset_id, regime, session"""
+            )
+            cols_d12 = [desc[0] for desc in cur.description]
+            d12 = [dict(zip(cols_d12, row)) for row in cur.fetchall()]
+
+        return JSONResponse(_make_json_safe({
+            "aim_weights": d02,
+            "ewma_states": d05,
+            "kelly_params": d12,
+        }))
+    except Exception as exc:
+        logger.error("Pseudotrader parameters failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+@app.get("/api/pseudotrader/health")
+def api_pseudotrader_health():
+    """Health check: freshness timestamps from D03, D11, D05, D12, D08."""
+    try:
+        from shared.questdb_client import get_cursor
+        checks = {}
+        with get_cursor() as cur:
+            # D03 trade outcomes -- last entry
+            cur.execute("SELECT max(ts) FROM p3_d03_trade_outcome_log")
+            row = cur.fetchone()
+            checks["d03_last_trade_outcome"] = row[0] if row else None
+
+            # D11 decisions -- last entry
+            cur.execute("SELECT max(ts) FROM p3_d11_pseudotrader_results")
+            row = cur.fetchone()
+            checks["d11_last_decision"] = row[0] if row else None
+
+            # D05 EWMA freshness
+            cur.execute("SELECT max(last_updated) FROM p3_d05_ewma_states")
+            row = cur.fetchone()
+            checks["d05_last_updated"] = row[0] if row else None
+
+            # D12 Kelly freshness
+            cur.execute("SELECT max(last_updated) FROM p3_d12_kelly_parameters")
+            row = cur.fetchone()
+            checks["d12_last_updated"] = row[0] if row else None
+
+            # D08 active accounts
+            cur.execute(
+                "SELECT account_id, status FROM p3_d08_tsm_state WHERE status = 'ACTIVE'"
+            )
+            cols = [desc[0] for desc in cur.description]
+            checks["active_accounts"] = [
+                dict(zip(cols, row)) for row in cur.fetchall()
+            ]
+
+        return JSONResponse(_make_json_safe({"health": checks}))
+    except Exception as exc:
+        logger.error("Pseudotrader health failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+@app.get("/api/pseudotrader/trends")
+def api_pseudotrader_trends(days: int = 30):
+    """D11 metric series for charts: sharpe, pbo, dsr, adopt/reject counts."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT result_id, update_type, sharpe_improvement,
+                          pbo, dsr, recommendation, ts
+                   FROM p3_d11_pseudotrader_results
+                   WHERE ts > dateadd('d', -%s, now())
+                   ORDER BY ts ASC""",
+                (days,),
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return JSONResponse(_make_json_safe({"trends": rows}))
+    except Exception as exc:
+        logger.error("Pseudotrader trends failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+@app.get("/api/pseudotrader/versions")
+def api_pseudotrader_versions(limit: int = 50):
+    """D18 version history -- parameter evolution timeline."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT version_id, component, trigger, state,
+                          model_hash, ts
+                   FROM p3_d18_version_history
+                   ORDER BY ts DESC LIMIT %s""",
+                (limit,),
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return JSONResponse(_make_json_safe({"versions": rows}))
+    except Exception as exc:
+        logger.error("Pseudotrader versions failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
+@app.get("/api/pseudotrader/forecasts")
+def api_pseudotrader_forecasts():
+    """D27 latest pseudotrader forecasts (Forecast A and B)."""
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT forecast_id, forecast_type, account_id, version,
+                          run_date, window_start, window_end,
+                          metrics, equity_curve, system_state, ts
+                   FROM p3_d27_pseudotrader_forecasts
+                   ORDER BY ts DESC LIMIT 20"""
+            )
+            cols = [desc[0] for desc in cur.description]
+            raw = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        import json as _json
+        for row in raw:
+            for field in ("metrics", "equity_curve", "system_state"):
+                val = row.get(field)
+                if isinstance(val, str):
+                    try:
+                        row[field] = _json.loads(val)
+                    except (ValueError, TypeError):
+                        pass
+
+        return JSONResponse(_make_json_safe({"forecasts": raw}))
+    except Exception as exc:
+        logger.error("Pseudotrader forecasts failed: %s", exc, exc_info=True)
         return JSONResponse({"error": "Internal server error"})

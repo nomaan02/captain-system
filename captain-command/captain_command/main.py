@@ -26,6 +26,7 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
+from shared.process_logger import ProcessLogger
 
 ROLE = os.environ.get("CAPTAIN_ROLE", "COMMAND")
 
@@ -299,20 +300,30 @@ def main():
 
     verify_connections()
 
+    plog = ProcessLogger("COMMAND", get_redis_client())
+
     last = get_last_checkpoint(ROLE)
     if last:
         logger.info("Resuming from: %s — next: %s",
                      last["checkpoint"], last["next_action"])
 
     write_checkpoint(ROLE, "STARTUP", "initialization", "loading_tsm")
+    plog.info("QuestDB + Redis verified", source="main")
 
     # Load TSM files
     tsm_results = load_tsm_files()
+    valid = sum(1 for r in tsm_results if r["validation"]["valid"])
+    plog.info(f"TSM files loaded \u2014 {valid} account state(s)", source="main")
 
     write_checkpoint(ROLE, "TSM_LOADED", "tsm_ready", "starting_telegram")
 
     # Start Telegram bot (Phase 6)
     telegram_bot = start_telegram_bot()
+
+    plog.info(
+        "Telegram bot: ACTIVE" if telegram_bot else "Telegram bot: DISABLED",
+        source="telegram",
+    )
 
     # Ensure TELEGRAM_CHAT_ID from env is written to QuestDB D16 + prefs
     _ensure_telegram_chat_id()
@@ -322,8 +333,18 @@ def main():
     # Connect to TopstepX API + start user stream
     topstep_streams = _init_topstep()
 
-    # Auto-link discovered account to matching TSM → writes to P3-D08
+    # Emit TopstepX connection status to terminal
     topstep_account = topstep_streams.get("account") if topstep_streams else None
+    if topstep_account:
+        plog.info(
+            f"TopstepX auth success \u2014 account {topstep_account.get('name')} "
+            f"(${topstep_account.get('balance', 0):,.2f})",
+            source="topstep",
+        )
+    else:
+        plog.warn("TopstepX: no account resolved", source="topstep")
+
+    # Auto-link discovered account to matching TSM → writes to P3-D08
     logger.info("TSM link check: account=%s, tsm_count=%d",
                 topstep_account.get("name") if topstep_account else None,
                 len(tsm_results) if tsm_results else 0)
@@ -351,6 +372,7 @@ def main():
     orch_thread.start()
 
     write_checkpoint(ROLE, "ORCHESTRATOR_STARTED", "running", "starting_api_server")
+    plog.info("Command orchestrator started (scheduler + signal reader)", source="orchestrator")
 
     # Shutdown is handled by FastAPI lifespan in api.py (orchestrator.stop + telegram_bot.stop).
     # No signal.signal() calls here — uvicorn manages SIGTERM/SIGINT via its own event loop.
@@ -359,6 +381,7 @@ def main():
     import uvicorn
     from captain_command.api import app
 
+    plog.info("FastAPI server listening on 0.0.0.0:8000", source="api")
     logger.info("Starting API server on port 8000...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 

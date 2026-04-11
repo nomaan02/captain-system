@@ -26,6 +26,7 @@ from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +410,7 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
         topstep_state,
         json.dumps(tsm.get("fee_schedule", {})),
         json.dumps(tsm.get("payout_rules", {})),
-        datetime.now().isoformat(),
+        now_et().isoformat(),
     )
 
     sql = """INSERT INTO p3_d08_tsm_state(

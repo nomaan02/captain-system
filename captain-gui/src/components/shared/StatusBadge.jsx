@@ -24,7 +24,7 @@ const StatusBadge = ({ status, colorMap }) => {
   const colors = map[key] || DEFAULT_STYLE;
 
   return (
-    <span className={`px-2 py-0.5 text-[10px] font-mono border border-solid uppercase whitespace-nowrap ${colors.bg} ${colors.border} ${colors.text}`}>
+    <span className={`px-2 py-0.5 text-[11px] font-mono border border-solid uppercase whitespace-nowrap ${colors.bg} ${colors.border} ${colors.text}`}>
       {status}
     </span>
   );

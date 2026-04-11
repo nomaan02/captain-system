@@ -27,6 +27,13 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+  // Listen for 401 auth-expired events from API client (soft redirect)
+  useEffect(() => {
+    const handleExpired = () => setToken(null);
+    window.addEventListener("auth:expired", handleExpired);
+    return () => window.removeEventListener("auth:expired", handleExpired);
+  }, []);
+
   const login = useCallback(async (apiKey) => {
     const res = await fetch("/auth/token", {
       method: "POST",

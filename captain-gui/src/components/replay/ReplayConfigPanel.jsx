@@ -6,12 +6,13 @@ const SESSIONS = ["NY", "LON", "APAC", "NY_PRE"];
 const RISK_GOALS = ["PASS_EVAL", "GROW_CAPITAL", "PRESERVE_CAPITAL"];
 const SPEED_OPTIONS = [1, 10, 50, 100];
 
-const Label = ({ children }) => (
-  <label className="text-[8px] uppercase tracking-[0.8px] leading-[10px] text-[#64748b] font-mono">{children}</label>
+const Label = ({ children, htmlFor }) => (
+  <label htmlFor={htmlFor} className="text-[10px] uppercase tracking-[0.8px] leading-[12px] text-[#64748b] font-mono">{children}</label>
 );
 
-const NumberInput = ({ value, onChange, step = 1, min, max, testId, disabled = false }) => (
+const NumberInput = ({ value, onChange, step = 1, min, max, testId, disabled = false, id }) => (
   <input
+    id={id}
     data-testid={testId}
     type="number"
     value={value}
@@ -150,8 +151,9 @@ const ReplayConfigPanel = () => {
 
         {config.mode === "single" ? (
           <div>
-            <Label>Date</Label>
+            <Label htmlFor="replay-date">Date</Label>
             <input
+              id="replay-date"
               data-testid="replay-config-date"
               type="date"
               value={config.date}
@@ -164,8 +166,9 @@ const ReplayConfigPanel = () => {
           <div className="space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>From</Label>
+                <Label htmlFor="replay-date-from">From</Label>
                 <input
+                  id="replay-date-from"
                   data-testid="replay-config-date-from"
                   type="date"
                   value={config.dateFrom}
@@ -175,8 +178,9 @@ const ReplayConfigPanel = () => {
                 />
               </div>
               <div>
-                <Label>To</Label>
+                <Label htmlFor="replay-date-to">To</Label>
                 <input
+                  id="replay-date-to"
                   data-testid="replay-config-date-to"
                   type="date"
                   value={config.dateTo}
@@ -234,26 +238,27 @@ const ReplayConfigPanel = () => {
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label>Capital ($)</Label>
-            <NumberInput testId="replay-config-capital" value={config.capital} onChange={(v) => setConfig({ capital: v })} step={1000} min={0} disabled={isRunning} />
+            <Label htmlFor="replay-capital">Capital ($)</Label>
+            <NumberInput id="replay-capital" testId="replay-config-capital" value={config.capital} onChange={(v) => setConfig({ capital: v })} step={1000} min={0} disabled={isRunning} />
           </div>
           <div>
-            <Label>Budget Divisor</Label>
-            <NumberInput testId="replay-config-budget-divisor" value={config.budgetDivisor} onChange={(v) => setConfig({ budgetDivisor: v })} min={1} disabled={isRunning} />
+            <Label htmlFor="replay-budget-divisor">Budget Divisor</Label>
+            <NumberInput id="replay-budget-divisor" testId="replay-config-budget-divisor" value={config.budgetDivisor} onChange={(v) => setConfig({ budgetDivisor: v })} min={1} disabled={isRunning} />
           </div>
           <div>
-            <Label>MDD Limit ($)</Label>
-            <NumberInput testId="replay-config-mdd" value={config.mddLimit} onChange={(v) => setConfig({ mddLimit: v })} step={100} min={0} disabled={isRunning} />
+            <Label htmlFor="replay-mdd">MDD Limit ($)</Label>
+            <NumberInput id="replay-mdd" testId="replay-config-mdd" value={config.mddLimit} onChange={(v) => setConfig({ mddLimit: v })} step={100} min={0} disabled={isRunning} />
           </div>
           <div>
-            <Label>MLL Limit ($)</Label>
-            <NumberInput testId="replay-config-mll" value={config.mllLimit} onChange={(v) => setConfig({ mllLimit: v })} step={100} min={0} disabled={isRunning} />
+            <Label htmlFor="replay-mll">MLL Limit ($)</Label>
+            <NumberInput id="replay-mll" testId="replay-config-mll" value={config.mllLimit} onChange={(v) => setConfig({ mllLimit: v })} step={100} min={0} disabled={isRunning} />
           </div>
         </div>
 
         <div>
-          <Label>Risk Goal</Label>
+          <Label htmlFor="replay-risk-goal">Risk Goal</Label>
           <select
+            id="replay-risk-goal"
             data-testid="replay-config-risk-goal"
             value={config.riskGoal}
             onChange={(e) => setConfig({ riskGoal: e.target.value })}
@@ -271,20 +276,20 @@ const ReplayConfigPanel = () => {
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label>Max Positions</Label>
-            <NumberInput testId="replay-config-max-positions" value={config.maxPositions} onChange={(v) => setConfig({ maxPositions: v })} min={1} max={20} disabled={isRunning} />
+            <Label htmlFor="replay-max-positions">Max Positions</Label>
+            <NumberInput id="replay-max-positions" testId="replay-config-max-positions" value={config.maxPositions} onChange={(v) => setConfig({ maxPositions: v })} min={1} max={20} disabled={isRunning} />
           </div>
           <div>
-            <Label>Max Contracts</Label>
-            <NumberInput testId="replay-config-max-contracts" value={config.maxContracts} onChange={(v) => setConfig({ maxContracts: v })} min={1} max={100} disabled={isRunning} />
+            <Label htmlFor="replay-max-contracts">Max Contracts</Label>
+            <NumberInput id="replay-max-contracts" testId="replay-config-max-contracts" value={config.maxContracts} onChange={(v) => setConfig({ maxContracts: v })} min={1} max={100} disabled={isRunning} />
           </div>
           <div>
-            <Label>TP Multiple</Label>
-            <NumberInput testId="replay-config-tp" value={config.tpMultiple} onChange={(v) => setConfig({ tpMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
+            <Label htmlFor="replay-tp">TP Multiple</Label>
+            <NumberInput id="replay-tp" testId="replay-config-tp" value={config.tpMultiple} onChange={(v) => setConfig({ tpMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
           </div>
           <div>
-            <Label>SL Multiple</Label>
-            <NumberInput testId="replay-config-sl" value={config.slMultiple} onChange={(v) => setConfig({ slMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
+            <Label htmlFor="replay-sl">SL Multiple</Label>
+            <NumberInput id="replay-sl" testId="replay-config-sl" value={config.slMultiple} onChange={(v) => setConfig({ slMultiple: v })} step={0.05} min={0} max={5} disabled={isRunning} />
           </div>
         </div>
 
@@ -298,9 +303,10 @@ const ReplayConfigPanel = () => {
             className="cursor-pointer border-none bg-transparent p-0"
             role="switch"
             aria-checked={config.cbEnabled}
+            aria-label="Circuit breaker L1 enabled"
           >
-            <div className={`h-[16px] w-[32px] relative rounded-full transition-colors ${config.cbEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
-              <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[12px] h-[12px] transition-all ${config.cbEnabled ? "left-[18px]" : "left-[2px]"}`} />
+            <div className={`h-[20px] w-[40px] relative rounded-full transition-colors ${config.cbEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
+              <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[16px] h-[16px] transition-all ${config.cbEnabled ? "left-[22px]" : "left-[2px]"}`} />
             </div>
           </button>
         </div>
@@ -315,9 +321,10 @@ const ReplayConfigPanel = () => {
             className="cursor-pointer border-none bg-transparent p-0"
             role="switch"
             aria-checked={config.aimEnabled}
+            aria-label="AIM scoring enabled"
           >
-            <div className={`h-[16px] w-[32px] relative rounded-full transition-colors ${config.aimEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
-              <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[12px] h-[12px] transition-all ${config.aimEnabled ? "left-[18px]" : "left-[2px]"}`} />
+            <div className={`h-[20px] w-[40px] relative rounded-full transition-colors ${config.aimEnabled ? "bg-[#10b981]" : "bg-[#374151]"}`}>
+              <div className={`absolute top-[2px] rounded-full bg-[#fff] w-[16px] h-[16px] transition-all ${config.aimEnabled ? "left-[22px]" : "left-[2px]"}`} />
             </div>
           </button>
         </div>
@@ -350,6 +357,7 @@ const ReplayConfigPanel = () => {
         <div className="text-[9px] uppercase tracking-[1px] text-[#0faf7a] font-mono border-b border-[#1e293b] pb-1">Presets</div>
         {presets.length > 0 && (
           <select
+            aria-label="Load preset"
             data-testid="replay-preset-select"
             onChange={(e) => {
               const p = presets.find((pr) => pr.name === e.target.value);
@@ -363,6 +371,7 @@ const ReplayConfigPanel = () => {
         )}
         <div className="flex gap-1">
           <input
+            aria-label="Preset name"
             data-testid="replay-preset-name"
             type="text"
             placeholder="Preset name"
@@ -387,7 +396,7 @@ const ReplayConfigPanel = () => {
           data-testid="replay-run-btn"
           onClick={handleRun}
           disabled={isRunning}
-          className={`w-full py-[6px] text-[11px] font-mono font-semibold tracking-[0.5px] border border-solid cursor-pointer transition-colors ${
+          className={`w-full min-h-[36px] py-[6px] text-[12px] font-mono font-semibold tracking-[0.5px] border border-solid cursor-pointer transition-colors ${
             isRunning
               ? "bg-[rgba(100,116,139,0.1)] border-[#374151] text-[#64748b] cursor-not-allowed"
               : "bg-[#0faf7a] border-[#0faf7a] text-[#080e0d] hover:bg-[#10b981]"

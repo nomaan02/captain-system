@@ -30,7 +30,14 @@ const BatchPnlReport = () => {
           )}
         </div>
         {/* Progress bar */}
-        <div className="h-[3px] bg-[#1e293b] rounded-full overflow-hidden">
+        <div
+          role="progressbar"
+          aria-valuenow={batchCompletedDays}
+          aria-valuemin={0}
+          aria-valuemax={batchTotalDays}
+          aria-label={`Batch progress: ${batchCompletedDays} of ${batchTotalDays} days`}
+          className="h-[3px] bg-[#1e293b] rounded-full overflow-hidden"
+        >
           <div
             className="h-full bg-[#0faf7a] transition-all duration-300"
             style={{
@@ -42,7 +49,7 @@ const BatchPnlReport = () => {
         </div>
         {/* Live day-by-day rows */}
         {batchDayResults.length > 0 && (
-          <div className="max-h-[200px] overflow-y-auto border-t border-[#1e293b] pt-1">
+          <div className="max-h-[200px] overflow-y-auto border-t border-[#1e293b] pt-1 [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-track]:bg-[#0d1117] [&::-webkit-scrollbar-thumb]:bg-[#374151] [&::-webkit-scrollbar-thumb]:rounded">
             {batchDayResults.map((d) => (
               <div
                 key={d.date}
@@ -79,7 +86,8 @@ const BatchPnlReport = () => {
               key={v}
               data-testid={`batch-view-${v}`}
               onClick={() => setView(v)}
-              className={`px-2 py-[2px] text-[8px] font-mono border border-solid cursor-pointer transition-colors ${
+              aria-pressed={view === v}
+              className={`px-2 py-[2px] text-[10px] font-mono border border-solid cursor-pointer transition-colors ${
                 view === v
                   ? "bg-[rgba(15,175,122,0.2)] border-[rgba(15,175,122,0.4)] text-[#0faf7a]"
                   : "bg-[#111827] border-[#1e293b] text-[#64748b]"
@@ -90,8 +98,9 @@ const BatchPnlReport = () => {
           ))}
           <button
             data-testid="batch-download-csv"
+            aria-label="Download batch results as CSV"
             onClick={() => handleDownloadCSV(batchDayResults)}
-            className="px-2 py-[2px] text-[8px] font-mono border border-solid bg-[#111827] border-[#1e293b] text-[#64748b] cursor-pointer hover:text-[#e2e8f0] transition-colors"
+            className="px-2 py-[2px] text-[10px] font-mono border border-solid bg-[#111827] border-[#1e293b] text-[#64748b] cursor-pointer hover:text-[#e2e8f0] transition-colors"
           >
             CSV
           </button>
@@ -117,7 +126,7 @@ const DailyView = ({ days }) => (
       <span className="text-right">P&L</span>
       <span className="text-right">Cum</span>
     </div>
-    <div className="max-h-[300px] overflow-y-auto">
+    <div className="max-h-[300px] overflow-y-auto [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-track]:bg-[#0d1117] [&::-webkit-scrollbar-thumb]:bg-[#374151] [&::-webkit-scrollbar-thumb]:rounded">
       {days.map((d) => (
         <div
           key={d.date}

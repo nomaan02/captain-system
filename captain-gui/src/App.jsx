@@ -19,12 +19,19 @@ import ReportsPage from "./pages/ReportsPage";
 import ProcessesPage from "./pages/ProcessesPage";
 import SystemOverviewPage from "./pages/SystemOverviewPage";
 import ReplayPage from "./pages/ReplayPage";
+import PseudotraderPage from "./pages/PseudotraderPage";
 
 function RequireAuth({ children }) {
   const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
 
-  if (loading) return null;
+  if (loading) return (
+    <div className="h-screen w-full bg-[#080e0d] flex items-center justify-center">
+      <div className="w-5 h-5 border-2 border-[#00ad74] border-t-transparent rounded-full animate-spin" role="status">
+        <span className="sr-only">Loading</span>
+      </div>
+    </div>
+  );
   if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
   return children;
 }
@@ -80,6 +87,18 @@ function App() {
       case "/replay":
         title = "Captain Replay";
         break;
+      case "/pseudotrader":
+        title = "Captain Pseudotrader";
+        break;
+      case "/login":
+        title = "Captain Login";
+        break;
+      case "/models":
+        title = "Captain Models";
+        break;
+      case "/config":
+        title = "Captain Config";
+        break;
     }
 
     if (title) {
@@ -109,6 +128,7 @@ function App() {
         <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/system" element={<SystemOverviewPage />} />
         <Route path="/replay" element={<ReplayPage />} />
+        <Route path="/pseudotrader" element={<PseudotraderPage />} />
       </Route>
     </Routes>
   );

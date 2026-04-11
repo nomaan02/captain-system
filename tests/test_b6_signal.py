@@ -18,13 +18,8 @@ from tests.fixtures.user_fixtures import make_user_silo, make_tsm_configs
 
 
 REQUIRED_SIGNAL_FIELDS = [
-    "signal_id", "user_id", "asset", "session", "timestamp",
-    "direction", "tp_level", "sl_level", "sl_method", "entry_conditions",
-    "per_account", "aim_breakdown", "combined_modifier", "regime_state",
-    "regime_probs", "expected_edge", "win_rate", "payoff_ratio",
-    "user_total_capital", "user_daily_pnl",
-    "quality_score", "quality_multiplier", "data_maturity",
-    "confidence_tier",
+    "signal_id", "asset", "direction", "size", "tp_level", "sl_level",
+    "timestamp", "user_id", "session", "per_account", "_context",
 ]
 
 

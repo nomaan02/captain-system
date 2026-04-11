@@ -39,6 +39,7 @@ from shared.constants import (
     NOTIFICATION_PRIORITY_VALUES,
     PROHIBITED_EXTERNAL_FIELDS,
     SYSTEM_TIMEZONE,
+    now_et,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,10 +75,10 @@ def route_signal_batch(payload: dict, gui_push_fn: Callable, api_route_fn: Calla
         # --- Store in P3-D17 session_log ---
         _log_signal_received(signal_id, user_id, signal)
 
-        # --- Push full signal context to GUI ---
+        # --- Push sanitised signal to GUI (strip PROHIBITED_EXTERNAL_FIELDS) ---
         gui_push_fn(user_id, {
             "type": "signal",
-            "signal": signal,
+            "signal": sanitise_for_gui(signal),
         })
 
         # --- Route to API adapters (per-account, sanitised) ---
@@ -100,6 +101,16 @@ def route_signal_batch(payload: dict, gui_push_fn: Callable, api_route_fn: Calla
         })
 
 
+def sanitise_for_gui(signal: dict) -> dict:
+    """Strip PROHIBITED_EXTERNAL_FIELDS before GUI WebSocket push.
+
+    Spec: Doc 20 PG-26.  The GUI may display signal metadata (asset,
+    direction, confidence tier, quality score, etc.) but must never
+    receive proprietary model internals.
+    """
+    return {k: v for k, v in signal.items() if k not in PROHIBITED_EXTERNAL_FIELDS}
+
+
 def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
     """Return the 6-field sanitised order — nothing else leaves Captain.
 
@@ -111,7 +122,7 @@ def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
         "size": ac_detail.get("contracts", 0),
         "tp": signal.get("tp_level"),
         "sl": signal.get("sl_level"),
-        "timestamp": signal.get("timestamp", datetime.now().isoformat()),
+        "timestamp": signal.get("timestamp", now_et().isoformat()),
     }
 
 
@@ -305,7 +316,7 @@ def route_notification(notif: dict, gui_push_fn: Callable,
     user_id = notif.get("user_id")
     message = notif.get("message", "")
     notif_id = notif.get("notif_id", f"NOTIF-{uuid.uuid4().hex[:12].upper()}")
-    ts = notif.get("timestamp", datetime.now().isoformat())
+    ts = notif.get("timestamp", now_et().isoformat())
 
     if user_id:
         target_users = [user_id]
@@ -350,7 +361,7 @@ def handle_status_message(data: dict, process_health: dict):
     role = data.get("role", "UNKNOWN")
     process_health[role] = {
         "status": data.get("status", "unknown"),
-        "timestamp": data.get("timestamp", datetime.now().isoformat()),
+        "timestamp": data.get("timestamp", now_et().isoformat()),
         "details": data.get("details", {}),
     }
 
@@ -370,13 +381,16 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
                        asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     user_id,
                     "SIGNAL_RECEIVED",
                     signal_id,
                     signal.get("asset", ""),
                     json.dumps({
                         "direction": signal.get("direction"),
+                        "entry_price": signal.get("entry_price"),
+                        "tp_level": signal.get("tp_level"),
+                        "sl_level": signal.get("sl_level"),
                         "confidence_tier": signal.get("confidence_tier"),
                         "quality_score": signal.get("quality_score"),
                     }),
@@ -384,6 +398,29 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
             )
     except Exception as exc:
         logger.error("Failed to log signal %s: %s", signal_id, exc, exc_info=True)
+
+
+def mark_signals_cleared(user_id: str, signal_ids: list[str]):
+    """Insert SIGNAL_CLEARED events so cleared signals don't reappear on refresh."""
+    try:
+        with get_cursor() as cur:
+            for sid in signal_ids:
+                cur.execute(
+                    """INSERT INTO p3_session_event_log(
+                           ts, user_id, event_type, event_id,
+                           asset, details
+                       ) VALUES(%s, %s, %s, %s, %s, %s)""",
+                    (
+                        now_et().isoformat(),
+                        user_id,
+                        "SIGNAL_CLEARED",
+                        sid,
+                        "",
+                        "{}",
+                    ),
+                )
+    except Exception as exc:
+        logger.error("Failed to mark signals cleared: %s", exc, exc_info=True)
 
 
 def _log_trade_confirmation(signal_id: str, user_id: str, action: str, data: dict):
@@ -396,7 +433,7 @@ def _log_trade_confirmation(signal_id: str, user_id: str, action: str, data: dic
                        asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     user_id,
                     f"TRADE_{action}",
                     signal_id,
@@ -441,7 +478,7 @@ def _handle_tsm_switch(data: dict):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), user_id, "TSM_SWITCH",
+                    now_et().isoformat(), user_id, "TSM_SWITCH",
                     account_id, "", json.dumps({"tsm_name": tsm_name}),
                 ),
             )
@@ -459,7 +496,7 @@ def _handle_concentration_response(event_id: str, decision: str, user_id: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), user_id,
+                    now_et().isoformat(), user_id,
                     "CONCENTRATION_RESPONSE", event_id, "",
                     json.dumps({"decision": decision}),
                 ),
@@ -478,7 +515,7 @@ def _confirm_contract_roll(asset: str, new_contract: str, user_id: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), user_id, "ROLL_CONFIRMED",
+                    now_et().isoformat(), user_id, "ROLL_CONFIRMED",
                     f"ROLL-{asset}", asset,
                     json.dumps({"new_contract": new_contract}),
                 ),
@@ -497,7 +534,7 @@ def _update_action_item(user_id: str, action_id: str, new_status: str, notes: st
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     user_id,
                     "ACTION_ITEM_UPDATE",
                     action_id,
@@ -522,7 +559,7 @@ def _set_asset_pause(asset: str, paused: bool, user_id: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(), user_id,
+                    now_et().isoformat(), user_id,
                     "MANUAL_PAUSE" if paused else "MANUAL_RESUME",
                     f"PAUSE-{asset}", asset,
                     json.dumps({"paused": paused}),

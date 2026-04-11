@@ -49,6 +49,7 @@ const SettingsPage = () => {
             </div>
             <button
               onClick={toggleTheme}
+              aria-pressed={theme === "dark"}
               className="px-3 py-1.5 text-[10px] font-mono border border-solid cursor-pointer bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981] hover:bg-[rgba(16,185,129,0.25)] transition-colors"
             >
               {theme === "dark" ? "Switch to Light" : "Switch to Dark"}

@@ -21,6 +21,7 @@ from datetime import datetime
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def run_concentration_monitor(
         if user_concentration >= concentration_threshold:
             alert = {
                 "session": session_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now_et().isoformat(),
                 "asset": asset,
                 "direction": direction,
                 "user_count": len(exposure["users"]),
@@ -121,7 +122,7 @@ def _notify_admins(message: str):
             "message": message,
             "source": "ONLINE_B8",
             "action_required": True,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
         })
         client.publish(CH_ALERTS, payload)
     except Exception as e:

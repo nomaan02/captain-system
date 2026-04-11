@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from shared.questdb_client import get_cursor
-from shared.constants import SYSTEM_TIMEZONE
+from shared.constants import SYSTEM_TIMEZONE, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -654,7 +654,7 @@ def _log_bot_interaction(chat_id: str, interaction_type: str, details: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     f"TG:{chat_id}",
                     f"TELEGRAM_{interaction_type}",
                     "",

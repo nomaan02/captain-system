@@ -33,7 +33,8 @@ from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
 
-MIN_OBSERVATIONS = 100
+MIN_OBS_REGRESSION = 10   # Below this: skip regression, use conservative defaults
+MIN_OBS_WARM = 100        # Below this: cold_start=True (layers 3-4 conservative)
 SIGNIFICANCE_THRESHOLD = 0.05
 
 
@@ -134,19 +135,26 @@ def _compute_same_day_correlation(trades: list[dict]) -> float:
 def estimate_cb_params(account_id: str, model_m: int):
     """Execute P3-PG-16C: estimate circuit breaker parameters.
 
+    Two-tier cold start (Doc 32 PG-16C):
+      n < 10:  skip regression, use conservative defaults, cold_start=True
+      10 <= n < 100: run regression, cold_start=True (layers 3-4 conservative)
+      n >= 100: full estimation, cold_start=False
+
     Args:
         account_id: Account to estimate for
         model_m: Model/basket ID
     """
     trades = _load_trades_by_account_model(account_id, model_m)
+    n = len(trades)
 
-    if len(trades) < MIN_OBSERVATIONS:
-        # Cold start: beta_b = 0, rho_bar = 0
-        logger.info("CB params cold start for %s/m=%d: %d trades < %d min",
-                     account_id, model_m, len(trades), MIN_OBSERVATIONS)
+    if n < MIN_OBS_REGRESSION:
+        # Tier 1: insufficient data — skip regression entirely
+        logger.info("CB params skip for %s/m=%d: %d trades < %d min",
+                     account_id, model_m, n, MIN_OBS_REGRESSION)
         _save_params(account_id, model_m, {
             "r_bar": 0.0, "beta_b": 0.0, "sigma": 0.0,
-            "rho_bar": 0.0, "n_observations": len(trades), "p_value": 1.0,
+            "rho_bar": 0.0, "n_observations": n, "p_value": 1.0,
+            "l_star": None, "cold_start": True,
         })
         return
 
@@ -176,7 +184,7 @@ def estimate_cb_params(account_id: str, model_m: int):
     reg = _ols_regression(x_arr, y_arr)
 
     # Significance gate
-    if reg["p_value"] > SIGNIFICANCE_THRESHOLD or reg["n_obs"] < MIN_OBSERVATIONS:
+    if reg["p_value"] > SIGNIFICANCE_THRESHOLD or reg["n_obs"] < MIN_OBS_WARM:
         reg["beta_b"] = 0.0
 
     # Per-trade volatility
@@ -189,22 +197,34 @@ def estimate_cb_params(account_id: str, model_m: int):
     # Same-day correlation
     rho_bar = _compute_same_day_correlation(trades)
 
+    # L_star breakeven: mu_b = r_bar + beta_b * L_b = 0 => L* = -r_bar / beta_b
+    # Only meaningful when beta_b < 0 (mean-reverting losses)
+    beta_b = reg["beta_b"]
+    if beta_b < 0:
+        l_star = -reg["r_bar"] / beta_b
+    else:
+        l_star = None
+
+    cold_start = n < MIN_OBS_WARM
+
     params = {
         "r_bar": reg["r_bar"],
-        "beta_b": reg["beta_b"],
+        "beta_b": beta_b,
         "sigma": sigma,
         "rho_bar": rho_bar,
         "n_observations": reg["n_obs"],
         "p_value": reg["p_value"],
+        "l_star": l_star,
+        "cold_start": cold_start,
     }
 
     _save_params(account_id, model_m, params)
 
     logger.info("CB params estimated for %s/m=%d: r_bar=%.2f, beta_b=%.4f (p=%.3f), "
-                "sigma=%.2f, rho_bar=%.3f, n=%d",
+                "sigma=%.2f, rho_bar=%.3f, l_star=%s, cold_start=%s, n=%d",
                 account_id, model_m, params["r_bar"], params["beta_b"],
                 params["p_value"], params["sigma"], params["rho_bar"],
-                params["n_observations"])
+                params.get("l_star"), cold_start, params["n_observations"])
 
 
 def _save_params(account_id: str, model_m: int, params: dict):
@@ -213,9 +233,10 @@ def _save_params(account_id: str, model_m: int, params: dict):
         cur.execute(
             """INSERT INTO p3_d25_circuit_breaker_params
                (account_id, model_m, r_bar, beta_b, sigma, rho_bar,
-                n_observations, p_value, last_updated)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                n_observations, p_value, l_star, cold_start, last_updated)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
             (account_id, model_m, params["r_bar"], params["beta_b"],
              params["sigma"], params["rho_bar"],
-             params["n_observations"], params["p_value"]),
+             params["n_observations"], params["p_value"],
+             params.get("l_star"), params.get("cold_start", True)),
         )

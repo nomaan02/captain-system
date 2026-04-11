@@ -6,6 +6,8 @@ const SignalCards = ({ className = "" }) => {
   const pendingSignals = useDashboardStore((s) => s.pendingSignals);
   const dailyTradeStats = useDashboardStore((s) => s.dailyTradeStats);
   const clearSignals = useDashboardStore((s) => s.clearSignals);
+  const selectedSignalId = useDashboardStore((s) => s.selectedSignalId);
+  const setSelectedSignalId = useDashboardStore((s) => s.setSelectedSignalId);
 
   return (
     <div
@@ -13,16 +15,31 @@ const SignalCards = ({ className = "" }) => {
       className={`w-full flex flex-col items-start overflow-y-auto text-left text-[10px] text-[#64748b] font-['JetBrains_Mono'] ${className}`}
     >
       {pendingSignals.length > 0 ? (
-        pendingSignals.map((sig, idx) => (
+        pendingSignals.map((sig, idx) => {
+          const isSelected = sig.signal_id != null && sig.signal_id === selectedSignalId;
+          return (
           <div
             data-testid="signal-card"
             key={sig.signal_id ?? idx}
-            className="self-stretch border-[#1e293b] border-solid border-b flex items-center justify-between px-3 py-[5px] gap-2"
+            role="button"
+            tabIndex={0}
+            onClick={() => sig.signal_id && setSelectedSignalId(sig.signal_id)}
+            onKeyDown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && sig.signal_id) {
+                e.preventDefault();
+                setSelectedSignalId(sig.signal_id);
+              }
+            }}
+            className={`self-stretch border-solid border-b flex items-center justify-between px-3 py-[5px] gap-2 cursor-pointer transition-colors duration-100 ${
+              isSelected
+                ? "bg-[rgba(6,182,212,0.06)] border-[rgba(6,182,212,0.25)]"
+                : "border-[#1e293b] hover:bg-[rgba(226,232,240,0.02)]"
+            }`}
           >
             {/* Left: direction + asset + strategy */}
             <div className="flex items-center gap-2 shrink-0">
               <span
-                className={`px-1.5 py-[1px] text-[8px] leading-[12px] border border-solid ${
+                className={`px-1.5 py-[1px] text-[10px] leading-[14px] border border-solid ${
                   sig.direction === "LONG"
                     ? "bg-[rgba(16,185,129,0.2)] border-[rgba(16,185,129,0.4)] text-[#10b981]"
                     : sig.direction === "NEUTRAL"
@@ -33,11 +50,11 @@ const SignalCards = ({ className = "" }) => {
                 {sig.direction}
               </span>
               <span className="text-[11px] text-[#06b6d4]">{sig.asset ?? "—"}</span>
-              <span className="text-[9px] text-[#4a5568]">{sig.strategy_name ?? ""}</span>
+              <span className="text-[10px] text-[#4a5568]">{sig.strategy_name ?? ""}</span>
             </div>
 
             {/* Center: Entry / SL / TP inline */}
-            <div className="flex items-center gap-3 text-[9px]">
+            <div className="flex items-center gap-3 text-[10px]">
               <span>
                 <span className="text-[#4a5568]">E </span>
                 <span className="text-[#e2e8f0]">{formatPrice(sig.entry_price)}</span>
@@ -61,14 +78,14 @@ const SignalCards = ({ className = "" }) => {
               >
                 {sig.pnl != null ? formatCurrency(sig.pnl, { showSign: true }) : "—"}
               </span>
-              <span className="text-[9px] text-[#94a3b8]">
+              <span className="text-[10px] text-[#94a3b8]">
                 {sig.quality_score != null
                   ? `${Math.round(sig.quality_score * 100)}%`
                   : ""}
               </span>
               {sig.confidence_tier && (
                 <span
-                  className={`px-1 py-[1px] text-[7px] leading-[10px] border border-solid ${
+                  className={`px-1 py-[1px] text-[10px] leading-[14px] border border-solid ${
                     sig.confidence_tier === "HIGH"
                       ? "border-[rgba(16,185,129,0.4)] text-[#10b981]"
                       : sig.confidence_tier === "LOW"
@@ -81,7 +98,8 @@ const SignalCards = ({ className = "" }) => {
               )}
             </div>
           </div>
-        ))
+          );
+        })
       ) : (
         <div className="self-stretch flex items-center justify-center py-4 text-[10px] text-[#64748b]">
           No pending signals
@@ -89,7 +107,7 @@ const SignalCards = ({ className = "" }) => {
       )}
 
       {/* Session summary footer — compact single row */}
-      <div data-testid="signal-session-footer" className="self-stretch bg-[#0a1614] flex items-center justify-between px-3 py-[4px] text-[9px] shrink-0">
+      <div data-testid="signal-session-footer" className="self-stretch bg-[#0a1614] flex items-center justify-between px-3 py-[4px] text-[10px] shrink-0">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             <span className="text-[#64748b]">P&L</span>
@@ -101,7 +119,7 @@ const SignalCards = ({ className = "" }) => {
             <button
               data-testid="clear-signals-btn"
               onClick={clearSignals}
-              className="px-[6px] py-[1px] text-[8px] font-mono border border-solid border-[#2e4e5a] bg-[#111827] text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#547380] cursor-pointer transition-colors"
+              className="min-h-[28px] px-2 text-[10px] inline-flex items-center font-mono border border-solid border-[#2e4e5a] bg-[#111827] text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#547380] cursor-pointer transition-colors"
             >
               Clear
             </button>

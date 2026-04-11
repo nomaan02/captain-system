@@ -1,5 +1,7 @@
 # Captain System -- Claude Code Reference
 
+> **Before implementing any Captain or MOST work**, check the Obsidian spec vault via `mcp__obsidian__get_note` for the relevant spec documents. The vault at `~/obsidian-spec/` is the single source of truth for Isaac's specifications. Start with `_claude/SPEC_INDEX.md` for the full system map, then read the specific doc for the block/PG you're working on. See `_claude/OBSIDIAN_ACCESS.md` for tool usage patterns and tag taxonomy.
+
 ## Who You Are Helping
 
 Nomaan -- strong Python/SWE, limited trading knowledge. Explain quant concepts in plain language with engineering analogies. Show complete code. Break problems into smaller pieces when stuck.
@@ -8,7 +10,7 @@ Nomaan -- strong Python/SWE, limited trading knowledge. Explain quant concepts i
 
 **Captain Function** is a continuous 24/7 automated trading system built as part of the MOST (Market Open Short-Term) project. It executes Opening Range Breakout strategies on futures via the TopstepX brokerage API.
 
-The system is a 3-process Docker pipeline with 28 blocks total, backed by QuestDB (29 tables) and Redis (5 pub/sub channels). It receives market data, runs regime detection and AIM (Adaptive Intelligence Module) scoring, sizes positions via Kelly criterion, and routes trade signals to the brokerage.
+The system is a 3-process Docker pipeline with 43 blocks total, backed by QuestDB (29 tables) and Redis (5 pub/sub channels). It receives market data, runs regime detection and AIM (Adaptive Intelligence Module) scoring, sizes positions via Kelly criterion, and routes trade signals to the brokerage.
 
 **This is a standalone repository.** P1/P2 research pipelines live separately in the original `most-production` repo and are not part of this codebase.
 
@@ -20,9 +22,9 @@ The system is a 3-process Docker pipeline with 28 blocks total, backed by QuestD
 
 | Process | Role | Blocks | Trigger |
 |---------|------|--------|---------|
-| Captain Offline | Strategic brain (AIM training, decay detection, Kelly) | 9 + orchestrator | Event-driven + scheduled |
-| Captain Online | Signal engine (data -> regime -> AIM -> sizing -> signal) | 9 + orchestrator | Session-open (NY/LON/APAC) |
-| Captain Command | Linking layer (routing, GUI, API, reconciliation) | 10 + orchestrator | Always-on |
+| Captain Offline | Strategic brain (AIM training, decay detection, Kelly) | 17 + orchestrator | Event-driven + scheduled |
+| Captain Online | Signal engine (data -> regime -> AIM -> sizing -> signal) | 14 + orchestrator | Session-open (NY/LON/APAC) |
+| Captain Command | Linking layer (routing, GUI, API, reconciliation) | 12 + orchestrator | Always-on |
 
 ### Critical Feedback Loop
 
@@ -50,7 +52,7 @@ captain-system/
 |   |-- requirements.txt
 |-- captain-online/            # Signal engine process
 |   |-- captain_online/
-|   |   |-- blocks/            # b1_data_ingestion, b2_regime_probability, b3_aim_aggregation, ...
+|   |   |-- blocks/            # b1_data_ingestion, b2_regime_probability, b4_kelly_sizing, ...
 |   |   |-- main.py
 |   |-- Dockerfile
 |   |-- requirements.txt
@@ -61,10 +63,18 @@ captain-system/
 |   |   |-- main.py
 |   |-- Dockerfile
 |   |-- requirements.txt
-|-- captain-gui/               # React/Vue SPA (builds static assets into shared volume)
+|-- captain-gui/               # React 18 SPA (builds static assets into shared volume)
 |   |-- src/
-|   |-- dist/
+|   |   |-- api/               # API client
+|   |   |-- auth/              # Authentication
+|   |   |-- components/        # UI components (aim/, chart/, layout/, replay/, risk/, signals/, system/, terminal/, trading/)
+|   |   |-- constants/         # Block registry, config
+|   |   |-- pages/             # Page components
+|   |   |-- stores/            # Zustand state stores
+|   |   |-- utils/             # Utilities
+|   |   |-- ws/                # WebSocket client
 |   |-- package.json
+|   |-- vite.config.mjs
 |   |-- Dockerfile
 |-- shared/                    # Code shared across all 3 processes (mounted read-only)
 |   |-- topstep_client.py      # REST client (18 endpoints)
@@ -80,9 +90,17 @@ captain-system/
 |   |-- signal_replay.py       # Signal replay for debugging
 |   |-- trade_source.py        # Trade data source abstraction
 |   |-- vix_provider.py        # VIX/VXV data provider
+|   |-- aim_compute.py         # AIM aggregation logic (extracted from b3)
+|   |-- aim_feature_loader.py  # AIM feature loading utilities
+|   |-- bar_cache.py           # Bar data caching for replay
+|   |-- json_helpers.py        # JSON serialization helpers
+|   |-- process_logger.py      # Centralized process log forwarder
+|   |-- replay_engine.py       # Session replay engine
 |-- config/                    # Configuration files
 |   |-- compliance_gate.json   # Compliance rules
 |   |-- contract_ids.json      # TopstepX contract ID mappings
+|   |-- session_registry.json  # Trading session definitions per asset
+|   |-- economic_calendar_2026.json # Economic calendar
 |   |-- tsm/                   # Trade State Machine configs
 |   |-- stress_tests/          # Stress test scenarios
 |   |-- test_scenarios/        # Test scenario definitions
@@ -119,7 +137,7 @@ captain-system/
 
 ## Docker Workflow
 
-The system runs 6 containers: QuestDB, Redis, captain-offline, captain-online, captain-command, captain-gui, and nginx.
+The system runs 9 containers: QuestDB, Redis, captain-offline, captain-online, captain-command, captain-gui, gui-dist, nginx, and vault-backup.
 
 **Always use both compose files locally** (base + local override):
 
@@ -196,12 +214,12 @@ All brokerage integration code lives in `shared/`:
 |-------|-----------|
 | Database | QuestDB (29 tables, PostgreSQL wire) |
 | Message Queue | Redis (AOF, 5 pub/sub channels) |
-| Deployment | Docker Compose (6 containers) |
+| Deployment | Docker Compose (9 containers) |
 | Crash Recovery | SQLite WAL (1 per process) |
 | API Gateway | nginx (TLS 1.3 for prod, HTTP for local) |
 | Encryption | AES-256-GCM (API key vault) |
 | Timezone | America/New_York (system-wide) |
-| GUI | React/Vue SPA + WebSocket |
+| GUI | React 18 SPA (JSX + Tailwind CSS) + WebSocket |
 | Notifications | Telegram Bot API |
 | Streaming | pysignalr (TopstepX SignalR WebSocket) |
 
@@ -221,21 +239,21 @@ These files are locked by spec. If a task requires changing them, STOP and ask N
 
 ## Rules
 
-1. **Isaac's spec is law** -- if code would differ from spec, follow spec and flag for Nomaan
-2. **One block at a time** -- never implement two blocks simultaneously
-3. **Ask, don't assume** -- if any spec requirement is ambiguous, STOP and ask
-4. **Timezone is always America/New_York** -- all timestamps, all processes, no exceptions
-5. **Multi-user from day one** -- never hardcode single-user assumptions
-6. **Never commit secrets** -- `.env`, vault keys, API tokens stay out of git
-7. **Spec files:** V3 amendments (in `docs/CAPTAIN-FUNCTION-DOCS-NEW-AMENDMENTS/`) SUPERSEDE original specs where conflicts exist
+1. **Check the Obsidian vault first** -- before any implementation work, read the relevant spec via `mcp__obsidian__get_note`. Start with `_claude/SPEC_INDEX.md` to find the right doc/PG reference
+2. **Isaac's spec is law** -- if code would differ from spec, follow spec and flag for Nomaan
+3. **One block at a time** -- never implement two blocks simultaneously
+4. **Ask, don't assume** -- if any spec requirement is ambiguous, STOP and ask
+5. **Timezone is always America/New_York** -- all timestamps, all processes, no exceptions
+6. **Multi-user from day one** -- never hardcode single-user assumptions
+7. **Never commit secrets** -- `.env`, vault keys, API tokens stay out of git
 
 ---
 
-## Current System State (2026-03-27)
+## Current System State (2026-04-11)
 
 **Status: DATA BOOTSTRAPPED -- ready for live session evaluation at NY open (09:30 ET).**
 
-All 28 blocks implemented. All 6 containers healthy. Data bootstrap complete:
+All 43 blocks implemented. All 9 containers healthy. Data bootstrap complete:
 
 | Table | State | Details |
 |-------|-------|---------|
@@ -410,12 +428,14 @@ PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
 
 ## Spec Files
 
-**V3 Authoritative specs (55 files):** `docs/CAPTAIN-FUNCTION-DOCS-NEW-AMENDMENTS/`
-- Start with `Nomaan_Master_Build_Guide.md`, then `Cross_Reference_PreDeploy_vs_V3.md`
+**All authoritative specs live in the Obsidian vault** at `~/obsidian-spec/` (symlink to `/mnt/c/Users/nomaa/Documents/Quant_Project/`).
 
-**Original specs:** `docs/completion-validation-docs/Step 1 - Original Specs/`
-- `03_Program3_Architecture.md` -- Architecture
-- `04_Program3_Offline.md` -- Offline blocks
-- `05_Program3_Online.md` -- Online blocks
-- `06_Program3_Command.md` -- Command blocks
-- `07_P3_Dataset_Schemas.md` -- QuestDB table schemas
+- **Start here:** `_claude/SPEC_INDEX.md` — full system map with every block, data store, feedback loop, and PG reference
+- **Access patterns:** `_claude/OBSIDIAN_ACCESS.md` — MCP tool usage, tag taxonomy, filesystem paths
+- **35 spec documents** in `System 1/Direct Information/` (docs 00-34) — the canonical reference for all implementation work
+- **24 canvas files** in `System 1/Backend/`, `Functional/`, `Pseudocode/` — visual architecture diagrams (open in Obsidian)
+- **Tags:** Search by `#P1`, `#P2`, `#P3-offline`, `#P3-online`, `#P3-command`, `#system2`
+
+Use `mcp__obsidian__get_note` to read any spec doc, or `mcp__obsidian__search_by_tag` to find docs by program area.
+
+**Note:** The old `docs/completion-validation-docs/` and `docs/CAPTAIN-FUNCTION-DOCS-NEW-AMENDMENTS/` directories referenced in earlier versions of this file no longer exist in this repo. All specs have been consolidated into the Obsidian vault.

@@ -6,7 +6,7 @@ except ImportError:
 # endregion
 """Captain Command — Block 6: Discretionary Reports (P3-PG-36).
 
-11 report types (RPT-01 through RPT-11).  RPT-01/07 render in-app;
+12 report types (RPT-01 through RPT-12).  RPT-01/07 render in-app;
 others are downloadable CSV/JSON.
 
 Spec: Program3_Command.md lines 558-616
@@ -22,6 +22,7 @@ from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ REPORT_TYPES = {
     "RPT-09": {"name": "Parameter Change Audit", "trigger": "on_demand", "render": "csv"},
     "RPT-10": {"name": "Annual Performance Report", "trigger": "annually", "render": "csv"},
     "RPT-11": {"name": "Financial Summary Export", "trigger": "monthly", "render": "csv"},
+    "RPT-12": {"name": "Alpha Decomposition", "trigger": "monthly", "render": "csv"},
 }
 
 
@@ -50,7 +52,7 @@ def generate_report(report_type: str, user_id: str, params: dict | None = None) 
     Parameters
     ----------
     report_type : str
-        One of RPT-01 through RPT-11.
+        One of RPT-01 through RPT-12.
     user_id : str
         The requesting user.
     params : dict or None
@@ -85,6 +87,7 @@ def generate_report(report_type: str, user_id: str, params: dict | None = None) 
         "RPT-09": _rpt09_parameter_audit,
         "RPT-10": _rpt10_annual_performance,
         "RPT-11": _rpt11_financial_export,
+        "RPT-12": _rpt12_alpha_decomposition,
     }
 
     gen_fn = generators.get(report_type)
@@ -96,7 +99,7 @@ def generate_report(report_type: str, user_id: str, params: dict | None = None) 
         "name": meta["name"],
         "format": meta["render"],
         "data": data,
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": now_et().isoformat(),
     }
 
     _archive_report(report_id, report_type, user_id, result)
@@ -456,7 +459,7 @@ def _rpt09_parameter_audit(user_id: str, params: dict) -> str:
 
 def _rpt10_annual_performance(user_id: str, params: dict) -> str:
     """Full-year performance, AIM value-add, decay events, injection history."""
-    year = params.get("year", datetime.now().year)
+    year = params.get("year", now_et().year)
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -512,6 +515,135 @@ def _rpt11_financial_export(user_id: str, params: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# RPT-12: Alpha Decomposition (CSV)
+# ---------------------------------------------------------------------------
+
+
+def _rpt12_alpha_decomposition(user_id: str, params: dict) -> str:
+    """RPT-12: Alpha Decomposition — PnL attribution by strategy component.
+
+    Decomposes each trade's P&L into four components:
+      - base_strategy: raw 1-contract signal quality
+      - regime_effect: edge deviation from regime conditioning
+      - aim_effect: position scaling from AIM modifiers
+      - kelly_effect: position scaling from Kelly sizing
+
+    Sources: D03 (trades), D02 (AIM weights), D05 (EWMA), D12 (Kelly).
+    """
+    days = params.get("days", 30)
+    try:
+        with get_cursor() as cur:
+            # D03: Trade outcomes with modifier and edge info
+            cur.execute(
+                """SELECT asset, direction, outcome, pnl, expected_edge,
+                          combined_modifier, regime_state, contracts, timestamp
+                   FROM p3_d03_trade_outcome_log
+                   WHERE user_id = %s
+                     AND timestamp > dateadd('d', -%s, now())
+                   ORDER BY timestamp""",
+                (user_id, days),
+            )
+            trades = cur.fetchall()
+
+            # D05: EWMA stats per asset (baseline edge for regime attribution)
+            cur.execute(
+                """SELECT asset_id, win_rate, avg_win, avg_loss
+                   FROM p3_d05_ewma_states
+                   LATEST ON timestamp PARTITION BY asset_id"""
+            )
+            ewma_map = {}
+            for r in cur.fetchall():
+                wr = r[1] or 0.5
+                aw = r[2] or 0.0
+                al = abs(r[3] or 0.0)
+                ewma_map[r[0]] = {
+                    "win_rate": wr,
+                    "baseline_edge": wr * aw - (1 - wr) * al,
+                }
+
+        rows = []
+        totals = {"base_strategy": 0.0, "regime_effect": 0.0,
+                  "aim_effect": 0.0, "kelly_effect": 0.0, "total_pnl": 0.0}
+
+        for (asset, direction, outcome, pnl, expected_edge,
+             combined_mod, regime, contracts, ts) in trades:
+            if pnl is None:
+                continue
+
+            combined_mod = combined_mod if combined_mod and combined_mod > 0 else 1.0
+            contracts = max(contracts or 1, 1)
+            per_contract = pnl / contracts
+
+            # Base strategy: raw 1-contract P&L (signal quality)
+            base_pnl = per_contract
+
+            # Kelly effect: additional P&L from multi-contract sizing
+            pnl_no_aim = pnl / combined_mod
+            kelly_effect = pnl_no_aim - per_contract
+
+            # AIM modifier effect: what AIM scaling added/removed
+            aim_effect = pnl - pnl_no_aim
+
+            # Regime effect: portion of base attributable to edge deviation
+            ewma = ewma_map.get(asset, {"baseline_edge": 0})
+            baseline_edge = ewma["baseline_edge"]
+            if (baseline_edge and expected_edge
+                    and abs(baseline_edge) > 1e-6):
+                regime_ratio = ((expected_edge - baseline_edge)
+                                / abs(baseline_edge))
+                regime_effect = base_pnl * regime_ratio
+                base_pnl -= regime_effect
+            else:
+                regime_effect = 0.0
+
+            # Percentages (guard against pnl=0)
+            abs_pnl = abs(pnl) if abs(pnl) > 1e-6 else 1.0
+            rows.append((
+                asset, direction, outcome, round(pnl, 2),
+                round(base_pnl, 2), round(regime_effect, 2),
+                round(aim_effect, 2), round(kelly_effect, 2),
+                round(base_pnl / abs_pnl * 100, 1),
+                round(regime_effect / abs_pnl * 100, 1),
+                round(aim_effect / abs_pnl * 100, 1),
+                round(kelly_effect / abs_pnl * 100, 1),
+                regime, str(ts),
+            ))
+
+            totals["base_strategy"] += base_pnl
+            totals["regime_effect"] += regime_effect
+            totals["aim_effect"] += aim_effect
+            totals["kelly_effect"] += kelly_effect
+            totals["total_pnl"] += pnl
+
+        # Summary row
+        t_abs = abs(totals["total_pnl"]) if abs(totals["total_pnl"]) > 1e-6 else 1.0
+        rows.append((
+            "TOTAL", "", "", round(totals["total_pnl"], 2),
+            round(totals["base_strategy"], 2),
+            round(totals["regime_effect"], 2),
+            round(totals["aim_effect"], 2),
+            round(totals["kelly_effect"], 2),
+            round(totals["base_strategy"] / t_abs * 100, 1),
+            round(totals["regime_effect"] / t_abs * 100, 1),
+            round(totals["aim_effect"] / t_abs * 100, 1),
+            round(totals["kelly_effect"] / t_abs * 100, 1),
+            "", "",
+        ))
+
+        return _to_csv(
+            ["asset", "direction", "outcome", "total_pnl",
+             "base_strategy_pnl", "regime_effect_pnl",
+             "aim_effect_pnl", "kelly_effect_pnl",
+             "base_pct", "regime_pct", "aim_pct", "kelly_pct",
+             "regime_state", "timestamp"],
+            rows,
+        )
+    except Exception as exc:
+        logger.error("RPT-12 failed: %s", exc, exc_info=True)
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -536,7 +668,7 @@ def _archive_report(report_id: str, report_type: str, user_id: str, result: dict
                        name, format, generated_at
                    ) VALUES(%s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     report_id,
                     report_type,
                     user_id,

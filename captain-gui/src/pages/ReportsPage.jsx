@@ -53,10 +53,11 @@ const ReportsPage = () => {
     <div className="h-full bg-surface p-4 overflow-y-auto">
       <h1 className="text-lg font-mono text-white tracking-[2px] uppercase mb-6">Reports</h1>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Left panel - Report type selector */}
         <div className="col-span-1">
           <h2 className="text-sm font-mono text-captain-green tracking-[1.5px] uppercase mb-3">Report Types</h2>
+          {/* 140px = page padding (32px) + title row (52px) + section heading (32px) + breathing room */}
           <div className="bg-surface-card border border-border-subtle overflow-y-auto max-h-[calc(100vh-140px)]">
             {loading ? (
               <div className="p-4 text-[#64748b] text-xs font-mono">Loading report types...</div>
@@ -72,6 +73,7 @@ const ReportsPage = () => {
                   <button
                     key={id}
                     onClick={() => selectType(rt)}
+                    aria-current={isSelected ? "true" : undefined}
                     className={`w-full text-left px-3 py-2.5 border-b border-border-subtle cursor-pointer transition-colors ${
                       isSelected
                         ? "bg-[rgba(16,185,129,0.1)] border-l-2 border-l-[#10b981]"
@@ -100,7 +102,7 @@ const ReportsPage = () => {
         </div>
 
         {/* Right panel - Generation area */}
-        <div className="col-span-2">
+        <div className="col-span-1 md:col-span-2">
           <h2 className="text-sm font-mono text-captain-green tracking-[1.5px] uppercase mb-3">Generate Report</h2>
           <div className="bg-surface-card border border-border-subtle p-4">
             {selectedType ? (

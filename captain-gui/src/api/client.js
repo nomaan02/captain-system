@@ -9,7 +9,7 @@ async function fetchJson(url, options = {}) {
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
     localStorage.removeItem("captain_jwt");
-    window.location.href = "/login";
+    window.dispatchEvent(new Event("auth:expired"));
     throw new Error("Session expired");
   }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -87,8 +87,26 @@ const api = {
   aimActivate: (aimId) => post(`${BASE}/aim/${aimId}/activate`, {}),
   aimDeactivate: (aimId) => post(`${BASE}/aim/${aimId}/deactivate`, {}),
 
+  // Signals
+  clearSignals: (userId, signalIds) =>
+    post(`${BASE}/signals/clear`, { user_id: userId, signal_ids: signalIds }),
+
   // System
   gitPull: () => post(`${BASE}/system/git-pull`, {}),
+
+  // Pseudotrader
+  pseudotraderDecisions: (limit = 200) =>
+    fetchJson(`${BASE}/pseudotrader/decisions?limit=${limit}`),
+  pseudotraderParameters: () =>
+    fetchJson(`${BASE}/pseudotrader/parameters`),
+  pseudotraderHealth: () =>
+    fetchJson(`${BASE}/pseudotrader/health`),
+  pseudotraderTrends: (days = 30) =>
+    fetchJson(`${BASE}/pseudotrader/trends?days=${days}`),
+  pseudotraderVersions: (limit = 50) =>
+    fetchJson(`${BASE}/pseudotrader/versions?limit=${limit}`),
+  pseudotraderForecasts: () =>
+    fetchJson(`${BASE}/pseudotrader/forecasts`),
 };
 
 export default api;

@@ -78,7 +78,7 @@ const TradingViewWidget = memo(() => {
   }, [selectedAsset, timeframe]);
 
   return (
-    <div className="tradingview-widget-container w-full h-full" ref={containerRef}>
+    <div className="tradingview-widget-container w-full h-full min-h-[200px]" ref={containerRef}>
       <div className="tradingview-widget-container__widget w-full h-full" />
     </div>
   );

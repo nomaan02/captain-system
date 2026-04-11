@@ -1,0 +1,46 @@
+You are executing BATCH 8 — Replay Panels of the captain-gui UX audit.
+
+## Step 1 — Invoke Skill
+Use the Skill tool FIRST, before making any manual changes:
+  skill: "baseline-ui"
+  args: "review src/components/replay/PipelineStepper.jsx src/components/replay/BatchPnlReport.jsx src/components/replay/AssetCard.jsx src/components/replay/BlockDetail.jsx src/components/replay/ReplaySummary.jsx"
+Wait for the skill to complete, then proceed to Step 2.
+
+## Step 2 — Apply Targeted Fixes
+Read each file before editing. Minimal changes only.
+
+### Rules
+- PRESERVE Bloomberg Terminal aesthetic exactly
+- DO NOT change layout structure, routing, or add new dependencies
+
+### Fixes
+
+1. src/components/replay/PipelineStepper.jsx (FIX-094..097):
+   - Convert stage divs to `<button>`
+   - Add aria-expanded on expandable stages
+   - Add sr-only text to circle indicators
+   - Increase circle size to min 20px
+
+2. src/components/replay/BatchPnlReport.jsx (FIX-084..088):
+   - Add aria-pressed on Daily/Overall toggle
+   - Add role="progressbar" on batch progress bar
+   - Increase toggle text to min 10px
+   - Style scrollbar for visibility (dark theme scrollbar)
+   - Add descriptive aria-label on CSV export button
+
+3. src/components/replay/AssetCard.jsx (FIX-129..130):
+   - Increase direction badge to min text-[10px]
+   - Increase session badge to min text-[8px]
+   - Add aria-busy="true" during loading shimmer
+
+4. src/components/replay/BlockDetail.jsx (FIX-133..134):
+   - Flatten nested scroll to single scroll container
+   - Add title attribute or tooltip on truncated reason column
+
+5. src/components/replay/ReplaySummary.jsx (FIX-135..136):
+   - Increase button touch targets to min h-[32px]
+   - Increase trades table max-h from 160px to 240px
+
+## Output
+List what you changed (one line per fix). Flag anything you couldn't fix and why.
+Do NOT create git commits — the orchestrator handles that.

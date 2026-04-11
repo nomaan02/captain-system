@@ -28,8 +28,8 @@ from datetime import datetime
 from typing import Any
 
 from shared.questdb_client import get_cursor
-from shared.redis_client import get_redis_client
-from shared.constants import SYSTEM_TIMEZONE
+from shared.redis_client import get_redis_client, REDIS_KEY_QUOTES
+from shared.constants import SYSTEM_TIMEZONE, now_et
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
@@ -116,7 +116,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
 
     return {
         "type": "dashboard",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "user_id": user_id,
         "capital_silo": _get_capital_silo(user_id, stream),
         "open_positions": _get_open_positions(user_id),
@@ -129,7 +129,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "notifications": _get_recent_notifications(user_id, limit=100),
         "payout_panel": _get_payout_panel(user_id),
         "scaling_display": _get_scaling_display(user_id),
-        "live_market": _get_live_market_data(),
+        "live_market": _get_all_live_market_data(),
         "api_status": _get_api_connection_status(stream, acct),
         "pipeline_stage": stage,
         "service_health": _get_service_health(),
@@ -151,7 +151,7 @@ def build_system_overview() -> dict:
     """
     return {
         "type": "system_overview",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "network_concentration": _get_network_concentration(),
         "signal_quality": _get_signal_quality_summary(),
         "capacity_state": _get_capacity_state(),
@@ -182,7 +182,8 @@ def _get_payout_panel(user_id: str) -> list[dict]:
                 """SELECT account_id, name, current_balance, starting_balance,
                           max_drawdown_limit, topstep_state
                    FROM p3_d08_tsm_state
-                   WHERE user_id = %s AND topstep_optimisation = true""",
+                   WHERE user_id = %s AND topstep_optimisation = true
+                   LATEST ON last_updated PARTITION BY account_id""",
                 (user_id,),
             )
             rows = cur.fetchall()
@@ -247,7 +248,8 @@ def _get_scaling_display(user_id: str) -> list[dict]:
                 """SELECT account_id, current_balance, starting_balance,
                           topstep_state
                    FROM p3_d08_tsm_state
-                   WHERE user_id = %s AND scaling_plan_active = true""",
+                   WHERE user_id = %s AND scaling_plan_active = true
+                   LATEST ON last_updated PARTITION BY account_id""",
                 (user_id,),
             )
             rows = cur.fetchall()
@@ -371,10 +373,10 @@ def _get_pending_signals(user_id: str) -> list[dict]:
     """Fetch recent unacted signals from P3-D17 session_log."""
     try:
         with get_cursor() as cur:
-            # Find signal IDs that have been acted on (TRADE_TAKEN / TRADE_SKIPPED)
+            # Find signal IDs that have been acted on or cleared
             cur.execute(
                 """SELECT DISTINCT event_id FROM p3_session_event_log
-                   WHERE user_id = %s AND event_type IN ('TRADE_TAKEN', 'TRADE_SKIPPED')""",
+                   WHERE user_id = %s AND event_type IN ('TRADE_TAKEN', 'TRADE_SKIPPED', 'SIGNAL_CLEARED')""",
                 (user_id,),
             )
             actioned_ids = {row[0] for row in cur.fetchall()}
@@ -937,52 +939,51 @@ def build_live_market_update() -> dict:
 
     Called every ~1 second by the orchestrator to stream market data
     to the GUI without the overhead of a full dashboard snapshot.
+    Reads quote data from Redis (published by captain-online).
     """
     return {
         "type": "live_market",
-        **_get_live_market_data(),
+        "assets": _get_all_live_market_data(),
     }
 
 
-def _get_live_market_data(asset_id: str = "ES") -> dict:
-    """Get live market data from TopstepX stream cache for an asset.
+def _get_all_live_market_data() -> dict:
+    """Read all live quotes from Redis hash (published by captain-online).
 
-    Parameters
-    ----------
-    asset_id : str
-        Asset identifier (e.g. "ES", "NQ").  Defaults to "ES".
-
-    Returns price, bid/ask, volume, and change data when market
-    stream is connected and receiving quotes.
+    Returns dict keyed by asset symbol, e.g. {"ES": {...}, "MES": {...}}.
     """
-    contract_id = resolve_contract_id(asset_id) or _CONTRACT_ID
-    quote = quote_cache.get(contract_id)
-    if not quote:
-        return {"connected": False, "contract_id": contract_id}
-
-    return {
-        "connected": True,
-        "contract_id": contract_id,
-        "last_price": quote.get("lastPrice") or (
-            round((quote["bestBid"] + quote["bestAsk"]) / 2, 2)
-            if quote.get("bestBid") and quote.get("bestAsk")
-            else None
-        ),
-        "best_bid": quote.get("bestBid"),
-        "best_ask": quote.get("bestAsk"),
-        "spread": (
-            round(quote["bestAsk"] - quote["bestBid"], 2)
-            if quote.get("bestAsk") and quote.get("bestBid")
-            else None
-        ),
-        "change": quote.get("change"),
-        "change_pct": quote.get("changePercent"),
-        "open": quote.get("open"),
-        "high": quote.get("high"),
-        "low": quote.get("low"),
-        "volume": quote.get("volume"),
-        "timestamp": quote.get("timestamp"),
-    }
+    try:
+        r = get_redis_client()
+        raw = r.hgetall(REDIS_KEY_QUOTES)
+        if not raw:
+            return {}
+        result = {}
+        for asset, data_str in raw.items():
+            try:
+                quote = json.loads(data_str)
+                bid = quote.get("best_bid")
+                ask = quote.get("best_ask")
+                result[asset] = {
+                    "connected": True,
+                    "last_price": quote.get("last_price") or (
+                        round((bid + ask) / 2, 2) if bid and ask else None
+                    ),
+                    "best_bid": bid,
+                    "best_ask": ask,
+                    "spread": round(ask - bid, 2) if ask and bid else None,
+                    "change": quote.get("change"),
+                    "change_pct": quote.get("change_pct"),
+                    "open": quote.get("open"),
+                    "high": quote.get("high"),
+                    "low": quote.get("low"),
+                    "volume": quote.get("volume"),
+                    "timestamp": quote.get("timestamp"),
+                }
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return result
+    except Exception:
+        return {}
 
 
 def _get_api_connection_status(user_stream=None, account_data=None) -> dict:
@@ -1019,11 +1020,13 @@ def _get_api_connection_status(user_stream=None, account_data=None) -> dict:
         result["account_id"] = str(account_data.get("id", ""))
         result["account_name"] = account_data.get("name", "")
 
-    # Market stream state is tracked by quote_cache freshness
-    contract_id = resolve_contract_id("ES") or _CONTRACT_ID
-    quote = quote_cache.get(contract_id)
-    if quote:
-        result["market_stream"] = "CONNECTED"
+    # Market stream state is tracked by Redis quotes freshness
+    try:
+        r = get_redis_client()
+        if r.exists(REDIS_KEY_QUOTES):
+            result["market_stream"] = "CONNECTED"
+    except Exception:
+        pass
 
     return result
 
@@ -1475,7 +1478,7 @@ def build_processes_status(process_health: dict, api_connections: dict) -> dict:
         API adapter connection state from api module.
     """
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "processes": {
             role: {
                 "status": info.get("status", "unknown"),

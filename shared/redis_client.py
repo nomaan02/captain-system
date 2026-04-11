@@ -24,11 +24,13 @@ REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", None) or None
 
 # Channel constants
+REDIS_KEY_QUOTES = "captain:quotes"
 CH_SIGNALS = "captain:signals:{user_id}"
 CH_TRADE_OUTCOMES = "captain:trade_outcomes"
 CH_COMMANDS = "captain:commands"
 CH_ALERTS = "captain:alerts"
 CH_STATUS = "captain:status"
+CH_PROCESS_LOGS = "captain:process_logs"
 
 _client = None
 _client_lock = threading.Lock()

@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS
-from shared.constants import NOTIFICATION_PRIORITY_VALUES, SYSTEM_TIMEZONE
+from shared.constants import NOTIFICATION_PRIORITY_VALUES, SYSTEM_TIMEZONE, now_et
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,11 @@ DEFAULT_PREFERENCES = {
     "gui_notifications": True,           # Always on, cannot disable
     "telegram_enabled": True,
     "telegram_chat_id": None,
-    "email_enabled": False,              # Future v2
+    "email_enabled": False,              # Deferred: email channel not yet implemented (spec §1 requires for P1_CRITICAL ALL channels)
     "email_address": None,
     "min_telegram_priority": "HIGH",     # Receive HIGH + CRITICAL
     "min_email_priority": "MEDIUM",
-    "gui_min_priority": "LOW",           # Everything in GUI
+    "gui_min_priority": "MEDIUM",        # LOW = log-only per spec §7
     "quiet_hours_enabled": True,
     "quiet_hours_start": 22,             # 10 PM
     "quiet_hours_end": 6,                # 6 AM (spec: 06:00)
@@ -182,7 +182,7 @@ def route_notification(
     """
     event_type = notif.get("event_type", notif.get("source", ""))
     notif_id = notif.get("notif_id", f"NOTIF-{uuid.uuid4().hex[:12].upper()}")
-    ts = notif.get("timestamp", datetime.now().isoformat())
+    ts = notif.get("timestamp", now_et().isoformat())
 
     # Resolve priority and message from event registry
     registry_entry = EVENT_REGISTRY.get(event_type)
@@ -263,7 +263,8 @@ def route_notification(
             if (chat_id and
                     PRIORITY_ORDER.get(priority, 3) <= PRIORITY_ORDER.get(tg_min, 3)):
 
-                if _is_in_quiet_hours(prefs) and priority != "CRITICAL":
+                if (_is_in_quiet_hours(prefs) and priority != "CRITICAL"
+                        and not notif.get("quiet_hours_override")):
                     # Queue for later delivery
                     _enqueue_quiet(uid, {
                         "priority": priority,
@@ -341,7 +342,7 @@ def _is_in_quiet_hours(prefs: dict) -> bool:
         tz = zoneinfo.ZoneInfo(tz_name)
         now = datetime.now(tz)
     except Exception:
-        now = datetime.now()
+        now = now_et()
 
     hour = now.hour
     quiet_start = prefs.get("quiet_hours_start", 22)
@@ -402,7 +403,7 @@ def save_user_preferences(user_id: str, prefs: dict):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     user_id,
                     "NOTIFICATION_PREFS",
                     f"PREFS-{user_id}",
@@ -446,7 +447,7 @@ def _get_users_by_roles(roles: list[str]) -> list[str]:
                 )
             else:
                 # Query by role tags — parameterized to prevent SQL injection
-                placeholders = ",".join(f"${i + 1}" for i in range(len(roles)))
+                placeholders = ",".join("%s" for _ in roles)
                 cur.execute(
                     f"SELECT DISTINCT user_id FROM p3_d16_user_capital_silos "
                     f"WHERE status = 'ACTIVE' AND role IN ({placeholders})",
@@ -527,7 +528,7 @@ def _log_notification_full(
 def log_notification_response(notif_id: str, user_id: str,
                               response: str):
     """Log a user's response to an actionable notification (P3-D10 §6)."""
-    ts = datetime.now().isoformat()
+    ts = now_et().isoformat()
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -552,7 +553,7 @@ def log_notification_response(notif_id: str, user_id: str,
 
 def mark_gui_read(notif_id: str, user_id: str):
     """Record that a GUI notification was read (append-only, P3-D10 §6)."""
-    ts = datetime.now().isoformat()
+    ts = now_et().isoformat()
     try:
         with get_cursor() as cur:
             cur.execute(

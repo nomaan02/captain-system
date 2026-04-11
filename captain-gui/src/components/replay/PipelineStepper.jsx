@@ -80,15 +80,17 @@ const PipelineStepper = () => {
                 data-testid={`pipeline-stage-${stage.id}`}
                 data-status={stageStatus}
                 onClick={() => setExpandedStage(stage.id)}
+                aria-expanded={isExpanded}
                 className={`flex flex-col items-center gap-[4px] px-[10px] py-2 border-none bg-transparent cursor-pointer min-w-[72px] transition-colors ${
                   hasData ? "hover:bg-[rgba(255,255,255,0.05)]" : ""
                 } ${isExpanded ? "bg-[rgba(6,182,212,0.1)]" : ""}`}
               >
                 {/* Circle indicator */}
-                <div className={`w-[14px] h-[14px] rounded-full border-[1.5px] border-solid ${styles.circle}`}>
+                <div className={`size-[20px] rounded-full border-[1.5px] border-solid ${styles.circle} flex items-center justify-center`}>
                   {stageStatus === "complete" && (
-                    <div className="w-full h-full flex items-center justify-center text-[8px] text-[#10b981]">&#10003;</div>
+                    <span className="text-[10px] text-[#10b981]">&#10003;</span>
                   )}
+                  <span className="sr-only">{stage.id} – {stageStatus}</span>
                 </div>
                 {/* Label */}
                 <div className={`text-[10px] font-mono font-semibold leading-[13px] tracking-[0.5px] ${styles.text}`}>
@@ -107,7 +109,7 @@ const PipelineStepper = () => {
 
               {/* Connector line */}
               {idx < PIPELINE_STAGES.length - 1 && (
-                <div className="flex items-center pt-[9px]">
+                <div className="flex items-center pt-[12px]">
                   <div className={`w-[12px] h-[2px] ${
                     getStageStatus(PIPELINE_STAGES[idx + 1].id) !== "pending"
                       ? "bg-[#10b981]"

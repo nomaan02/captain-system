@@ -23,6 +23,7 @@ from typing import Callable
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_COMMANDS
 from shared.journal import write_checkpoint
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def notify_new_candidate(asset: str, candidate_id: str,
         "priority": "HIGH",
         "message": f"New strategy candidate available for {asset}",
         "source": "INJECTION",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_et().isoformat(),
         "data": {
             "candidate_id": candidate_id,
             "asset": asset,
@@ -249,7 +250,7 @@ def _log_injection_decision(candidate_id: str, decision: str, user_id: str):
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
-                    datetime.now().isoformat(),
+                    now_et().isoformat(),
                     user_id,
                     "INJECTION_DECISION",
                     candidate_id,

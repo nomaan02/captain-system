@@ -87,6 +87,15 @@ def get_all_contract_ids() -> dict[str, str]:
     return dict(_cache)
 
 
+def get_asset_for_contract(contract_id: str) -> str | None:
+    """Reverse lookup: contract ID → asset symbol."""
+    with _cache_lock:
+        for asset, cid in _cache.items():
+            if cid == contract_id:
+                return asset
+    return None
+
+
 def invalidate(asset_id: str | None = None):
     """Clear cache for one asset or all (e.g., after contract roll)."""
     with _cache_lock:

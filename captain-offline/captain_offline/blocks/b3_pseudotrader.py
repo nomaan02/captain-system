@@ -19,9 +19,12 @@ Reads: P3-D03 (trade outcomes), P3-D25 (CB params)
 Writes: P3-D11 (pseudotrader results)
 """
 
+import hashlib
 import json
 import math
 import logging
+import os
+import struct
 import uuid
 from collections import defaultdict
 
@@ -81,6 +84,95 @@ def _compute_dsr(sharpe: float, n_trials: int, skew: float,
     """DSR (Paper 150). Delegates to shared.statistics."""
     from shared.statistics import compute_dsr
     return compute_dsr(sharpe, n_trials, skew, kurtosis, T)
+
+
+# ---------------------------------------------------------------------------
+# Replay modes (Doc 28 §8)
+# ---------------------------------------------------------------------------
+
+REPLAY_MODE_IDEAL = "IDEAL"     # Full account-aware: DLL, scaling, hours, consistency
+REPLAY_MODE_LEGACY = "LEGACY"   # Fixed MDD only; results labelled non-production
+
+
+# ---------------------------------------------------------------------------
+# SHA256 deterministic tick stream (Doc 28 §7)
+# ---------------------------------------------------------------------------
+
+class SHA256TickStream:
+    """Deterministic tick stream generator seeded by SHA256.
+
+    Given the same seed inputs, produces bitwise-identical tick sequences
+    for synthetic regression testing. Uses log-price GBM for mid-price
+    with a bid/ask spread overlay.
+    """
+
+    def __init__(self, seed: str):
+        self._seed = seed
+        self._counter = 0
+
+    def _next_uniform(self) -> float:
+        """Generate next deterministic uniform [0, 1) from SHA256 chain."""
+        data = f"{self._seed}:{self._counter}".encode()
+        h = hashlib.sha256(data).digest()
+        self._counter += 1
+        # Use first 8 bytes as uint64, normalise to [0, 1)
+        val = struct.unpack(">Q", h[:8])[0]
+        return val / (2**64)
+
+    def _next_normal(self) -> float:
+        """Box-Muller transform for deterministic standard normal."""
+        u1 = max(1e-15, self._next_uniform())
+        u2 = self._next_uniform()
+        return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+
+    def generate(self, n_ticks: int, initial_price: float = 4500.0,
+                 mu: float = 0.0, sigma: float = 0.0002,
+                 spread_bps: float = 2.0) -> list[dict]:
+        """Generate deterministic tick stream via log-price GBM.
+
+        Args:
+            n_ticks: Number of ticks to generate
+            initial_price: Starting mid price
+            mu: GBM drift per tick
+            sigma: GBM volatility per tick
+            spread_bps: Half-spread in basis points
+
+        Returns:
+            List of tick dicts with mid, bid, ask, tick_id fields.
+        """
+        ticks = []
+        log_price = math.log(initial_price)
+        half_spread = initial_price * spread_bps * 1e-4
+
+        for i in range(n_ticks):
+            z = self._next_normal()
+            log_price += mu - 0.5 * sigma**2 + sigma * z
+            mid = math.exp(log_price)
+
+            # Spread widens slightly with volatility (microstructure)
+            spread_noise = 1.0 + 0.2 * abs(z)
+            effective_half = half_spread * spread_noise
+
+            ticks.append({
+                "tick_id": i,
+                "mid": round(mid, 2),
+                "bid": round(mid - effective_half, 2),
+                "ask": round(mid + effective_half, 2),
+            })
+
+        return ticks
+
+
+def generate_deterministic_ticks(asset_id: str, date_str: str,
+                                 n_ticks: int = 5000,
+                                 initial_price: float = 4500.0) -> list[dict]:
+    """Generate SHA256-seeded deterministic tick stream for regression tests.
+
+    Same (asset_id, date_str) always produces the identical tick sequence.
+    """
+    seed = f"{asset_id}:{date_str}"
+    stream = SHA256TickStream(seed)
+    return stream.generate(n_ticks, initial_price=initial_price)
 
 
 # ---------------------------------------------------------------------------
@@ -168,24 +260,32 @@ def _check_dll(daily_pnl: float, max_daily_loss: float | None) -> bool:
 
 def run_account_aware_replay(asset_id: str, update_type: str,
                               trades: list[dict],
-                              account_config: dict | None = None) -> dict:
+                              account_config: dict | None = None,
+                              mode: str = REPLAY_MODE_IDEAL) -> dict:
     """Execute P3-PG-09 with account-type constraint enforcement.
 
     Replays trade-level data while enforcing DLL, MDD, contract scaling,
     trading hours, and consistency rules per the account's TSM config.
-    When account_config is None, replays with only a basic $4,500 MDD check.
 
-    Spec: Pseudotrader_Account_Awareness_Amendment.md sections 1-4.
+    Modes (Doc 28 §8):
+      IDEAL:  Full account-aware replay (DLL, scaling, hours, consistency).
+              Default for go/no-go decisions.
+      LEGACY: Single fixed MDD treatment only. Results labelled non-production.
 
     Args:
         asset_id: Asset being evaluated
         update_type: "AIM_WEIGHT_CHANGE" | "MODEL_RETRAIN" | "STRATEGY_INJECTION"
         trades: List of trade dicts with keys: day, pnl, contracts, ts, model
         account_config: TSM config dict (or None for legacy behavior)
+        mode: REPLAY_MODE_IDEAL or REPLAY_MODE_LEGACY
 
     Returns:
-        Replay result dict with metrics and constraint breach counts.
+        Replay result dict with metrics, constraint breach counts, and mode label.
     """
+    # LEGACY mode: strip account constraints, use fixed MDD only (Doc 28 §8)
+    if mode == REPLAY_MODE_LEGACY:
+        account_config = None
+
     # Extract constraints from account_config
     if account_config:
         mdd_limit = account_config.get("max_drawdown_limit", 4500)
@@ -255,6 +355,8 @@ def run_account_aware_replay(asset_id: str, update_type: str,
         "capital_unlock_events": 0,
         "total_trades_taken": 0,
         "total_trades_blocked": 0,
+        "bankruptcy": False,
+        "bankruptcy_day": None,
     }
 
     mdd_breached = False
@@ -329,6 +431,15 @@ def run_account_aware_replay(asset_id: str, update_type: str,
             max_balance = max(max_balance, running_balance)
             breach_counts["total_trades_taken"] += 1
 
+            # Bankruptcy check (G-OFF-020): stop if balance depleted
+            if running_balance <= 0:
+                breach_counts["bankruptcy"] = True
+                breach_counts["bankruptcy_day"] = day
+                mdd_breached = True  # reuse flag to halt all further days
+                logger.warning("Bankruptcy during replay %s on %s: balance=%.2f",
+                               asset_id, day, running_balance)
+                break
+
             # Post-trade MDD check (skip for Live accounts with no trailing MLL)
             if mdd_limit is not None:
                 post_mdd = max_balance - running_balance
@@ -391,6 +502,8 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     result = {
         "asset_id": asset_id,
         "update_type": update_type,
+        "mode": mode,
+        "production": mode == REPLAY_MODE_IDEAL,
         "account_type": (account_config or {}).get("classification", {}).get("category", "UNKNOWN"),
         "sharpe": sharpe,
         "max_drawdown": max_dd,
@@ -438,21 +551,328 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     return result
 
 
+# ---------------------------------------------------------------------------
+# Per-account-type iteration (G-OFF-019: Doc 28 §5)
+# ---------------------------------------------------------------------------
+
+def fetch_active_accounts() -> list[dict]:
+    """Load all active accounts from D08 (tsm_state).
+
+    Returns:
+        List of account config dicts suitable for run_account_aware_replay().
+    """
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT account_id, account_name, current_balance,
+                          starting_balance, max_drawdown_limit, max_daily_loss,
+                          profit_target, status, classification, scaling_plan,
+                          consistency_rule, trading_hours, capital_unlock
+                   FROM p3_d08_tsm_state
+                   WHERE status = 'ACTIVE'"""
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("Failed to load active accounts from D08: %s", exc)
+        return []
+
+    configs = []
+    for row in rows:
+        # Parse JSON fields that may be stored as strings
+        for json_field in ("classification", "scaling_plan",
+                           "consistency_rule", "trading_hours", "capital_unlock"):
+            val = row.get(json_field)
+            if isinstance(val, str):
+                try:
+                    row[json_field] = json.loads(val)
+                except (json.JSONDecodeError, TypeError):
+                    row[json_field] = None
+
+        config = {
+            "account_id": row.get("account_id"),
+            "account_name": row.get("account_name"),
+            "starting_balance": row.get("starting_balance", 150000),
+            "max_drawdown_limit": row.get("max_drawdown_limit"),
+            "max_daily_loss": row.get("max_daily_loss"),
+            "profit_target": row.get("profit_target"),
+            "classification": row.get("classification") or {},
+            "scaling_plan": row.get("scaling_plan"),
+            "scaling_plan_active": bool(row.get("scaling_plan")),
+            "consistency_rule": row.get("consistency_rule"),
+            "trading_hours": row.get("trading_hours"),
+            "capital_unlock": row.get("capital_unlock"),
+        }
+        configs.append(config)
+
+    return configs
+
+
+def run_pseudotrader_all_accounts(asset_id: str, update_type: str,
+                                   trades: list[dict]) -> dict:
+    """Run pseudotrader replay across all active accounts from D08.
+
+    Spec: Doc 28 §5 — separate replay per active account configuration.
+    Aggregates results and produces per-account ADOPT/REJECT plus an
+    overall recommendation.
+
+    Args:
+        asset_id: Asset being evaluated
+        update_type: Update type identifier
+        trades: Trade history for replay
+
+    Returns:
+        Dict with per_account results list and overall recommendation.
+    """
+    accounts = fetch_active_accounts()
+
+    if not accounts:
+        logger.warning("No active accounts in D08; falling back to unconstrained replay")
+        result = run_account_aware_replay(asset_id, update_type, trades)
+        return {
+            "asset_id": asset_id,
+            "update_type": update_type,
+            "per_account": [result],
+            "accounts_tested": 0,
+            "overall_recommendation": result.get("recommendation", "REJECT")
+                                      if "recommendation" in result
+                                      else ("ADOPT" if result.get("pbo", 1.0) < PBO_THRESHOLD
+                                            else "REJECT"),
+        }
+
+    per_account = []
+    for acct in accounts:
+        logger.info("Running account-aware replay for %s [%s] account=%s",
+                    asset_id, update_type, acct.get("account_id"))
+        result = run_account_aware_replay(asset_id, update_type, trades,
+                                          account_config=acct)
+        # Per-account ADOPT/REJECT (Doc 28 §5)
+        pbo = result.get("pbo", 1.0)
+        sharpe = result.get("sharpe", 0.0)
+        bankrupt = result.get("bankruptcy", False)
+        mdd_breach = result.get("mdd_breach", False)
+
+        if bankrupt or mdd_breach:
+            acct_recommendation = "REJECT"
+        elif sharpe > 0 and pbo < PBO_THRESHOLD:
+            acct_recommendation = "ADOPT"
+        else:
+            acct_recommendation = "REJECT"
+
+        result["account_id"] = acct.get("account_id")
+        result["account_recommendation"] = acct_recommendation
+        per_account.append(result)
+
+    # Overall: ADOPT only if ALL accounts pass
+    all_adopt = all(r["account_recommendation"] == "ADOPT" for r in per_account)
+    overall = "ADOPT" if all_adopt else "REJECT"
+
+    logger.info("Multi-account pseudotrader %s [%s]: %d accounts, %d ADOPT, overall=%s",
+                asset_id, update_type, len(per_account),
+                sum(1 for r in per_account if r["account_recommendation"] == "ADOPT"),
+                overall)
+
+    return {
+        "asset_id": asset_id,
+        "update_type": update_type,
+        "per_account": per_account,
+        "accounts_tested": len(per_account),
+        "overall_recommendation": overall,
+    }
+
+
+# ---------------------------------------------------------------------------
+# D03 data source + full pipeline replay (G-OFF-016, G-OFF-024)
+# ---------------------------------------------------------------------------
+
+def fetch_d03_trade_outcomes(user_id: str, asset_id: str,
+                              limit: int = 60) -> list[dict]:
+    """Fetch historical trade outcomes from P3-D03 (trade_outcome_log).
+
+    Spec: Doc 32 PG-09 — actual_trade_outcome(d) data source.
+
+    Args:
+        user_id: User identifier (e.g. "primary_user")
+        asset_id: Asset symbol (e.g. "ES")
+        limit: Maximum rows to return
+
+    Returns:
+        List of trade outcome dicts ordered by timestamp descending.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT trade_id, user_id, account_id, asset, direction,
+                      entry_price, exit_price, contracts, pnl, slippage,
+                      outcome, entry_time, exit_time, regime_at_entry,
+                      aim_modifier_at_entry, session, ts
+               FROM p3_d03_trade_outcome_log
+               WHERE user_id = %s AND asset = %s
+               ORDER BY ts DESC
+               LIMIT %s""",
+            (user_id, asset_id, limit),
+        )
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def captain_online_replay(target_date, asset_id: str,
+                           params: dict | None = None,
+                           cached_bars: dict | None = None,
+                           baseline_result: dict | None = None) -> dict:
+    """Replay B1-B6 online pipeline for a single day with optional param overrides.
+
+    Spec: Doc 32 PG-09 §1-2 — captain_online_replay(d, using=params).
+    Uses shared/replay_engine for full pipeline replay. When cached_bars
+    and baseline_result are provided, uses run_whatif() for zero API calls.
+
+    Args:
+        target_date: date object for the day to replay
+        asset_id: Asset to extract results for
+        params: Optional config overrides for load_replay_config()
+        cached_bars: Pre-fetched bars from a prior run_replay() call
+        baseline_result: Full result dict from a prior run_replay() call
+
+    Returns:
+        Dict with signal details and theoretical P&L for the target asset,
+        plus cached_bars and _full_result for efficient whatif chaining.
+    """
+    from shared.replay_engine import load_replay_config, run_replay, run_whatif
+
+    config = load_replay_config(overrides=params)
+
+    if cached_bars is not None and baseline_result is not None:
+        full = run_whatif(config, cached_bars, baseline_result,
+                          target_date=target_date)
+        results_list = full.get("whatif_results", [])
+    else:
+        full = run_replay(config, target_date=target_date)
+        results_list = full.get("results", [])
+
+    for r in results_list:
+        if r.get("asset") == asset_id:
+            return {
+                "asset": asset_id,
+                "date": str(target_date),
+                "direction": r.get("direction", 0),
+                "contracts": r.get("contracts", 0),
+                "pnl": r.get("total_pnl", 0.0),
+                "pnl_per_contract": r.get("pnl_per_contract", 0.0),
+                "exit_reason": r.get("exit_reason", ""),
+                "aim_modifier": r.get("aim_modifier"),
+                "quality_score": r.get("quality_score"),
+                "sizing": r.get("sizing"),
+                "cached_bars": full.get("cached_bars"),
+                "_full_result": full,
+            }
+
+    return {
+        "asset": asset_id,
+        "date": str(target_date),
+        "direction": 0,
+        "contracts": 0,
+        "pnl": 0.0,
+        "exit_reason": "NO_BREAKOUT",
+        "cached_bars": full.get("cached_bars"),
+        "_full_result": full,
+    }
+
+
 def run_pseudotrader(asset_id: str, update_type: str,
-                      baseline_pnl: list[float],
-                      proposed_pnl: list[float]) -> dict:
+                      baseline_pnl: list[float] | None = None,
+                      proposed_pnl: list[float] | None = None,
+                      *,
+                      current_params: dict | None = None,
+                      proposed_params: dict | None = None,
+                      user_id: str = os.environ.get("BOOTSTRAP_USER_ID", "primary_user"),
+                      lookback_days: int = 30,
+                      n_trials: int = 1,
+                      mode: str = REPLAY_MODE_IDEAL) -> dict:
     """Execute P3-PG-09: counterfactual replay comparison.
+
+    Modes (Doc 28 §8):
+      IDEAL:  Full account-aware replay — default for go/no-go decisions.
+      LEGACY: Fixed MDD only, results labelled non-production.
+
+    PRIMARY PATH (spec Doc 32 PG-09 §1-2): When baseline_pnl/proposed_pnl
+    are not provided, replays B1-B6 via captain_online_replay() for each
+    day in the historical window from D03, then compares outcomes.
+
+    FAST FALLBACK: When baseline_pnl/proposed_pnl are provided directly,
+    skips replay and computes comparison metrics from pre-computed P&L.
 
     Args:
         asset_id: Asset being evaluated
         update_type: "AIM_WEIGHT_CHANGE" | "MODEL_RETRAIN" | "STRATEGY_INJECTION"
-        baseline_pnl: Daily P&L under current parameters
-        proposed_pnl: Daily P&L under proposed parameters
+        baseline_pnl: [FALLBACK] Daily P&L under current parameters
+        proposed_pnl: [FALLBACK] Daily P&L under proposed parameters
+        current_params: [PRIMARY] Config overrides for baseline replay
+        proposed_params: [PRIMARY] Config overrides for proposed replay
+        user_id: User ID for D03 queries (default: "primary_user")
+        lookback_days: Number of trading days to replay (default: 30)
 
     Returns:
         Comparison dict with recommendation
     """
-    # Compute metrics
+    # ── PRIMARY PATH: Full B1-B6 pipeline replay (G-OFF-016) ─────────
+    if baseline_pnl is None and proposed_pnl is None:
+        from datetime import date as _date_cls
+
+        d03_outcomes = fetch_d03_trade_outcomes(user_id, asset_id, lookback_days)
+
+        if not d03_outcomes:
+            logger.warning("No D03 outcomes for %s/%s; cannot run replay path",
+                          asset_id, user_id)
+            return {
+                "update_type": update_type,
+                "sharpe_improvement": 0.0,
+                "drawdown_change": 0.0,
+                "winrate_delta": 0.0,
+                "pbo": 1.0,
+                "dsr": 0.0,
+                "recommendation": "REJECT",
+                "reason": "NO_HISTORICAL_DATA",
+            }
+
+        # Determine unique trading days from D03 timestamps
+        trading_days = sorted({
+            outcome["ts"].date() if hasattr(outcome["ts"], "date")
+            else _date_cls.fromisoformat(str(outcome["ts"])[:10])
+            for outcome in d03_outcomes
+        })
+
+        logger.info("Pseudotrader replay %s [%s]: %d trading days from D03",
+                    asset_id, update_type, len(trading_days))
+
+        # Phase 1: Baseline replay (CURRENT parameters) — fetches bars
+        baseline_pnl = []
+        cached_bars_by_day = {}
+        baseline_results_by_day = {}
+
+        for day in trading_days:
+            result = captain_online_replay(day, asset_id, params=current_params)
+            baseline_pnl.append(result["pnl"])
+            cached_bars_by_day[str(day)] = result.get("cached_bars")
+            baseline_results_by_day[str(day)] = result.get("_full_result")
+
+        # Phase 2: Proposed replay (reuses cached bars — zero API calls)
+        proposed_pnl = []
+        for day in trading_days:
+            day_key = str(day)
+            result = captain_online_replay(
+                day, asset_id,
+                params=proposed_params,
+                cached_bars=cached_bars_by_day.get(day_key),
+                baseline_result=baseline_results_by_day.get(day_key),
+            )
+            proposed_pnl.append(result["pnl"])
+
+        logger.info("Replay complete %s: baseline_total=%.2f, proposed_total=%.2f",
+                    asset_id, sum(baseline_pnl), sum(proposed_pnl))
+    else:
+        # ── FAST FALLBACK: Pre-computed P&L (not the default path) ───
+        logger.debug("Pseudotrader %s: using pre-computed P&L fallback", asset_id)
+
+    # ── Phase 3-5: Comparison metrics (shared by both paths) ─────────
     sharpe_base = _compute_sharpe(baseline_pnl)
     sharpe_prop = _compute_sharpe(proposed_pnl)
     sharpe_improvement = sharpe_prop - sharpe_base
@@ -472,7 +892,7 @@ def run_pseudotrader(asset_id: str, update_type: str,
     arr = np.array(proposed_pnl)
     skew = float(np.mean((arr - arr.mean()) ** 3) / max(arr.std() ** 3, 1e-10)) if len(arr) > 2 else 0.0
     kurt = float(np.mean((arr - arr.mean()) ** 4) / max(arr.std() ** 4, 1e-10)) if len(arr) > 2 else 3.0
-    dsr = _compute_dsr(sharpe_prop, 1, skew, kurt, len(proposed_pnl))
+    dsr = _compute_dsr(sharpe_prop, max(n_trials, 1), skew, kurt, len(proposed_pnl))
 
     # Decision
     if sharpe_improvement > 0 and pbo < PBO_THRESHOLD and dsr > DSR_THRESHOLD:
@@ -482,6 +902,8 @@ def run_pseudotrader(asset_id: str, update_type: str,
 
     result = {
         "update_type": update_type,
+        "mode": mode,
+        "production": mode == REPLAY_MODE_IDEAL,
         "sharpe_improvement": sharpe_improvement,
         "drawdown_change": drawdown_change,
         "winrate_delta": winrate_delta,
@@ -617,22 +1039,67 @@ def run_signal_replay_comparison(asset_id: str, proposed_update: dict) -> dict:
 
 
 def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
-                         cb_params: dict, basket_params: dict) -> dict:
+                         cb_params: dict, basket_params: dict,
+                         account_config: dict | None = None) -> dict:
     """Execute P3-PG-09B: circuit breaker pseudotrader at intraday resolution.
+
+    Implements the Doc 28 section 4 eleven-step per-day replay loop with
+    account constraints (DLL, MDD, scaling, hours, consistency, capital
+    unlock) applied before CB layer checks.
 
     Args:
         account_id: Account to evaluate
         historical_trades: List of trade dicts with: day, pnl, contracts, model, ts
         cb_params: {p, e, c, lambda_threshold}
         basket_params: {model_m: {r_bar, beta_b, sigma, rho_bar}}
+        account_config: TSM config dict (or None for unconstrained replay)
 
     Returns:
-        Comparison dict with per-layer breakdown
+        Comparison dict with per-layer breakdown and account constraint breaches
     """
     p = cb_params.get("p", 0.02)
     e = cb_params.get("e", 0.05)
     c = cb_params.get("c", 0.5)
     lambda_threshold = cb_params.get("lambda_threshold", 0.0)
+
+    # Extract account constraints (G-OFF-021: Doc 28 §3)
+    if account_config:
+        mdd_limit = account_config.get("max_drawdown_limit")
+        max_daily_loss = account_config.get("max_daily_loss")
+        trading_hours = account_config.get("trading_hours")
+        scaling_plan = account_config.get("scaling_plan")
+        scaling_active = account_config.get("scaling_plan_active", False)
+        consistency_rule = account_config.get("consistency_rule")
+        starting_balance = account_config.get("starting_balance", 150000)
+        max_contracts = account_config.get("max_contracts", 15)
+        capital_unlock = account_config.get("capital_unlock")
+    else:
+        mdd_limit = None
+        max_daily_loss = None
+        trading_hours = None
+        scaling_plan = None
+        scaling_active = False
+        consistency_rule = None
+        starting_balance = cb_params.get("account_balance", 150000)
+        max_contracts = None
+        capital_unlock = None
+
+    # Capital unlock state (Live accounts)
+    if capital_unlock:
+        unlock_profit = capital_unlock.get("unlock_profit", 9000)
+        unlock_levels = capital_unlock.get("unlock_levels", 4)
+        tradable_cap = capital_unlock.get("tradable_cap", 30000)
+        tradable_balance = min(starting_balance, tradable_cap)
+        reserve_balance = max(starting_balance - tradable_cap, 0.0)
+        reserve_per_block = (reserve_balance / unlock_levels
+                             if reserve_balance > 0 else 0.0)
+        unlocks_remaining = unlock_levels if reserve_balance > 0 else 0
+    else:
+        unlock_profit = 0
+        tradable_balance = 0.0
+        reserve_balance = 0.0
+        reserve_per_block = 0.0
+        unlocks_remaining = 0
 
     # Group trades by day
     by_day = defaultdict(list)
@@ -645,18 +1112,52 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
     total_taken = 0
     blocks_by_reason = defaultdict(int)
 
+    # Account-level running state
+    running_balance = starting_balance
+    max_balance = starting_balance
+    account_breached = False
+
     for day in sorted(by_day.keys()):
+        if account_breached:
+            baseline_daily_pnl.append(0.0)
+            cb_daily_pnl.append(0.0)
+            continue
+
         trades = sorted(by_day[day], key=lambda t: t.get("ts", ""))
 
         # Baseline: all trades taken
         baseline_day_pnl = sum(t["pnl"] for t in trades)
         baseline_daily_pnl.append(baseline_day_pnl)
 
-        # CB replay
-        account_balance = cb_params.get("account_balance", 150000)
-        mdd = cb_params.get("mdd", cb_params.get("max_drawdown_limit", 4500))
-        n_max = int(e * account_balance / max(mdd * p, 1))
-        l_halt = c * e * account_balance
+        # ── Doc 28 §4 Step 1: SOD reset ──
+        daily_pnl = 0.0
+        daily_profit = 0.0
+        dll_hit = False
+
+        # ── Step 2: Load state (balance, peak, scaling tier) ──
+        if scaling_active and scaling_plan:
+            contract_limit_micros = _lookup_scaling_tier(
+                running_balance, starting_balance, scaling_plan)
+        elif max_contracts is not None:
+            contract_limit_micros = max_contracts * 10
+        else:
+            contract_limit_micros = None  # no contract constraint
+
+        # ── Step 4: Pre-trade MDD check ──
+        if mdd_limit is not None:
+            current_mdd = max_balance - running_balance
+            if current_mdd >= mdd_limit:
+                account_breached = True
+                blocks_by_reason["ACCOUNT_MDD_BREACH"] += len(trades)
+                total_blocked += len(trades)
+                cb_daily_pnl.append(0.0)
+                continue
+
+        # CB per-day state
+        account_balance_for_cb = cb_params.get("account_balance", running_balance)
+        mdd_for_cb = cb_params.get("mdd", cb_params.get("max_drawdown_limit", 4500))
+        n_max = int(e * account_balance_for_cb / max(mdd_for_cb * p, 1))
+        l_halt = c * e * account_balance_for_cb
 
         l_t = 0.0
         n_t = 0
@@ -667,21 +1168,47 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
         for trade in trades:
             model_m = trade.get("model", 0)
             pnl = trade["pnl"]
+            trade_contracts = trade.get("contracts", 1)
             bp = basket_params.get(str(model_m), basket_params.get(model_m, {}))
 
-            # Layer 1: Hard halt
+            # ── Step 5: DLL check ──
+            if _check_dll(daily_pnl, max_daily_loss):
+                if not dll_hit:
+                    blocks_by_reason["ACCOUNT_DLL_BREACH"] += 1
+                    dll_hit = True
+                total_blocked += 1
+                continue
+
+            # ── Step 6: Trading hours ──
+            hours_block = _enforce_trading_hours(
+                trade.get("ts", ""), trading_hours)
+            if hours_block:
+                blocks_by_reason["ACCOUNT_HOURS_BLOCK"] += 1
+                total_blocked += 1
+                continue
+
+            # ── Step 7: Size constraint ──
+            effective_pnl = pnl
+            if contract_limit_micros is not None:
+                trade_micros = trade_contracts * 10
+                if trade_micros > contract_limit_micros:
+                    blocks_by_reason["ACCOUNT_SCALING_CAP"] += 1
+                    scale_factor = contract_limit_micros / trade_micros
+                    effective_pnl = pnl * scale_factor
+
+            # ── CB Layer 1: Hard halt ──
             if abs(l_t) >= l_halt:
                 blocks_by_reason["HARD_HALT"] += 1
                 total_blocked += 1
                 continue
 
-            # Layer 2: Budget
+            # ── CB Layer 2: Budget ──
             if n_t >= n_max:
                 blocks_by_reason["BUDGET_EXHAUSTED"] += 1
                 total_blocked += 1
                 continue
 
-            # Layer 3: Conditional expectancy
+            # ── CB Layer 3: Conditional expectancy ──
             r_bar = bp.get("r_bar", 0.0)
             beta_b = bp.get("beta_b", 0.0)
             mu_b = r_bar + beta_b * l_b[model_m]
@@ -690,7 +1217,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
                 total_blocked += 1
                 continue
 
-            # Layer 4: Correlation-adjusted Sharpe
+            # ── CB Layer 4: Correlation-adjusted Sharpe ──
             sigma = bp.get("sigma", 1.0)
             rho_bar = bp.get("rho_bar", 0.0)
             denom = sigma * math.sqrt(max(1 + 2 * n_t * rho_bar, 0.01))
@@ -700,15 +1227,58 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
                 total_blocked += 1
                 continue
 
-            # Trade taken
-            cb_day_pnl += pnl
-            l_t += pnl
+            # ── Step 8: Execute with constrained size ──
+            cb_day_pnl += effective_pnl
+            daily_pnl += effective_pnl
+            l_t += effective_pnl
             n_t += 1
-            l_b[model_m] += pnl
+            l_b[model_m] += effective_pnl
             n_b[model_m] += 1
             total_taken += 1
 
+            if effective_pnl > 0:
+                daily_profit += effective_pnl
+
+            # ── Step 9: Post-trade update ──
+            running_balance += effective_pnl
+            max_balance = max(max_balance, running_balance)
+
+            # Bankruptcy check (G-OFF-020 for CB path)
+            if running_balance <= 0:
+                account_breached = True
+                blocks_by_reason["BANKRUPTCY"] += 1
+                logger.warning("CB pseudotrader bankruptcy %s on %s: balance=%.2f",
+                               account_id, day, running_balance)
+                break
+
+            # Post-trade MDD check
+            if mdd_limit is not None:
+                post_mdd = max_balance - running_balance
+                if post_mdd >= mdd_limit:
+                    account_breached = True
+                    blocks_by_reason["ACCOUNT_MDD_BREACH"] += 1
+                    break
+
         cb_daily_pnl.append(cb_day_pnl)
+
+        # ── Step 10: Consistency check (end of day, XFA) ──
+        if consistency_rule and isinstance(consistency_rule, dict):
+            max_daily_profit = consistency_rule.get("max_daily_profit")
+            if max_daily_profit and daily_profit > max_daily_profit:
+                blocks_by_reason["CONSISTENCY_VIOLATION"] += 1
+
+        # ── Step 11: Capital unlock (Live only) ──
+        if capital_unlock and unlocks_remaining > 0 and reserve_per_block > 0:
+            cumulative_profit = running_balance - starting_balance
+            unlocks_earned = int(max(cumulative_profit, 0) // unlock_profit)
+            unlocks_already = (capital_unlock.get("unlock_levels", 4)
+                               - unlocks_remaining)
+            new_unlocks = max(unlocks_earned - unlocks_already, 0)
+            if new_unlocks > 0:
+                actual_unlocks = min(new_unlocks, unlocks_remaining)
+                tradable_balance += actual_unlocks * reserve_per_block
+                reserve_balance -= actual_unlocks * reserve_per_block
+                unlocks_remaining -= actual_unlocks
 
     # Compare
     sharpe_base = _compute_sharpe(baseline_daily_pnl)
@@ -717,6 +1287,12 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
     dd_cb = _compute_max_drawdown(list(np.cumsum(cb_daily_pnl)))
 
     pbo = _compute_pbo(cb_daily_pnl)
+
+    # Compute DSR (G-OFF-023) instead of hardcoding 0.0
+    cb_arr = np.array(cb_daily_pnl)
+    cb_skew = float(np.mean((cb_arr - cb_arr.mean()) ** 3) / max(cb_arr.std() ** 3, 1e-10)) if len(cb_arr) > 2 else 0.0
+    cb_kurt = float(np.mean((cb_arr - cb_arr.mean()) ** 4) / max(cb_arr.std() ** 4, 1e-10)) if len(cb_arr) > 2 else 3.0
+    dsr = _compute_dsr(sharpe_cb, 1, cb_skew, cb_kurt, len(cb_daily_pnl))
 
     result = {
         "update_type": "CIRCUIT_BREAKER",
@@ -730,6 +1306,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
         "block_rate": total_blocked / max(total_taken + total_blocked, 1),
         "blocks_by_reason": dict(blocks_by_reason),
         "pbo": pbo,
+        "dsr": dsr,
         "recommendation": "ADOPT" if (sharpe_cb - sharpe_base > 0 and dd_base - dd_cb > 0 and pbo < PBO_THRESHOLD) else "REVIEW",
     }
 
@@ -743,7 +1320,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
             (
                 f"CB-{account_id}",
                 "CIRCUIT_BREAKER", result["sharpe_delta"], -result["dd_improvement"],
-                0.0, pbo, 0.0, result["recommendation"],
+                0.0, pbo, dsr, result["recommendation"],
             ),
         )
 
@@ -758,7 +1335,8 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
 def run_cb_grid_search(account_id: str, historical_trades: list[dict],
                         basket_params: dict, base_params: dict,
                         c_values: list[float] | None = None,
-                        lambda_values: list[float] | None = None) -> dict:
+                        lambda_values: list[float] | None = None,
+                        account_config: dict | None = None) -> dict:
     """Execute P3-PG-09C: grid search over circuit breaker parameters.
 
     Tests all combinations of (c, lambda), selects the best set with pbo < 0.5.
@@ -784,7 +1362,7 @@ def run_cb_grid_search(account_id: str, historical_trades: list[dict],
     for c in c_values:
         for lam in lambda_values:
             params = {**base_params, "c": c, "lambda_threshold": lam}
-            result = run_cb_pseudotrader(account_id, historical_trades, params, basket_params)
+            result = run_cb_pseudotrader(account_id, historical_trades, params, basket_params, account_config=account_config)
             result["params"] = {"c": c, "lambda_threshold": lam}
             results.append(result)
 

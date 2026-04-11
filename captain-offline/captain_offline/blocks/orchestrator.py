@@ -36,10 +36,15 @@ from shared.redis_client import (
     ensure_consumer_group, read_stream, ack_message,
     STREAM_TRADE_OUTCOMES, STREAM_COMMANDS, STREAM_SIGNAL_OUTCOMES,
     GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS, GROUP_OFFLINE_SIGNAL_OUTCOMES,
+    CH_STATUS,
 )
 from shared.journal import write_checkpoint
+from shared.process_logger import ProcessLogger
 
 logger = logging.getLogger(__name__)
+
+# Pseudotrader gate: skip replay when max absolute param change < epsilon
+PSEUDOTRADER_EPSILON = 1e-4
 
 
 class OfflineOrchestrator:
@@ -50,6 +55,91 @@ class OfflineOrchestrator:
         self._detectors = {}  # {asset_id: (bocpd_detector, cusum_detector)}
         self._active_transitions = {}  # {asset_id: TransitionPhaser}
         self._redis_thread = None  # Stored for graceful shutdown join
+        self._last_heartbeat_time = 0
+        self.plog = ProcessLogger("OFFLINE", get_redis_client())
+
+    def _pseudotrader_gate(self, asset_id: str, update_type: str,
+                           proposed_aim_weights: dict | None = None,
+                           proposed_kelly_params: dict | None = None) -> bool:
+        """Run pseudotrader validation on proposed parameter changes.
+
+        Fail-safe: if the pseudotrader crashes, returns False (reject the update).
+
+        Args:
+            asset_id: Asset being updated
+            update_type: "AIM_WEIGHT_CHANGE" or "KELLY_UPDATE"
+            proposed_aim_weights: {aim_id: inclusion_probability} for DMA updates
+            proposed_kelly_params: {regime: {session: kelly_full}} for Kelly updates
+
+        Returns:
+            True if the update should be committed, False if rejected.
+        """
+        try:
+            from captain_offline.blocks.b3_pseudotrader import run_signal_replay_comparison
+
+            proposed_update = {"update_type": update_type}
+            if proposed_aim_weights is not None:
+                proposed_update["proposed_aim_weights"] = proposed_aim_weights
+            if proposed_kelly_params is not None:
+                proposed_update["proposed_kelly_params"] = proposed_kelly_params
+
+            result = run_signal_replay_comparison(asset_id, proposed_update)
+            recommendation = result.get("recommendation", "REJECT")
+
+            if recommendation == "ADOPT":
+                logger.info("Pseudotrader ADOPT for %s [%s]: sharpe_delta=%.4f, pbo=%.3f",
+                            asset_id, update_type,
+                            result.get("sharpe_improvement", 0),
+                            result.get("pbo", 0))
+                return True
+            else:
+                logger.warning("Pseudotrader REJECT for %s [%s]: sharpe_delta=%.4f, "
+                               "pbo=%.3f, dsr=%.3f",
+                               asset_id, update_type,
+                               result.get("sharpe_improvement", 0),
+                               result.get("pbo", 0),
+                               result.get("dsr", 0))
+                self.plog.warn(
+                    f"Pseudotrader REJECTED {update_type} for {asset_id} "
+                    f"(sharpe_delta={result.get('sharpe_improvement', 0):.4f})",
+                    source="b3_pseudotrader",
+                )
+                return False
+
+        except Exception as exc:
+            # Fail-safe: pseudotrader crash -> reject the update
+            logger.error("Pseudotrader gate crashed for %s [%s]: %s — "
+                         "REJECTING update (fail-safe)",
+                         asset_id, update_type, exc, exc_info=True)
+            self.plog.error(
+                f"Pseudotrader CRASHED for {asset_id} [{update_type}]: {exc} — "
+                f"update blocked (fail-safe)",
+                source="b3_pseudotrader",
+            )
+            return False
+
+    @staticmethod
+    def _is_trivial_dma_change(current: dict, proposed: dict) -> bool:
+        """Check if DMA weight changes are below epsilon (trivial)."""
+        if not current or not proposed:
+            return False
+        for aid in proposed:
+            cur_val = current.get(aid, 0.0)
+            if abs(proposed[aid] - cur_val) >= PSEUDOTRADER_EPSILON:
+                return False
+        return True
+
+    @staticmethod
+    def _is_trivial_kelly_change(current_ewma: dict, proposed_ewma: dict) -> bool:
+        """Check if EWMA/Kelly changes are below epsilon (trivial)."""
+        if not current_ewma or not proposed_ewma:
+            return False
+        for key in ("win_rate", "avg_win", "avg_loss"):
+            cur_val = current_ewma.get(key, 0.0)
+            prop_val = proposed_ewma.get(key, 0.0)
+            if abs(prop_val - cur_val) >= PSEUDOTRADER_EPSILON:
+                return False
+        return True
 
     def start(self):
         """Start the orchestrator event loop."""
@@ -59,6 +149,12 @@ class OfflineOrchestrator:
 
         # Resume any active transitions from persistence
         self._resume_transitions()
+
+        # G-OFF-011: Restore BOCPD/CUSUM detector state from D04
+        self._restore_detectors()
+
+        # G-OFF-010: Run init-time CUSUM calibration for detectors with empty limits
+        self._init_cusum_calibration()
 
         # Start Redis subscriber in background thread
         self._redis_thread = threading.Thread(target=self._redis_listener, daemon=True)
@@ -129,21 +225,47 @@ class OfflineOrchestrator:
         Triggers: DMA, BOCPD, CUSUM, Level escalation, Kelly, TSM sim, CB params.
         """
         asset_id = outcome.get("asset", "")
-        logger.info("Trade outcome received: %s pnl=%.2f", asset_id, outcome.get("pnl", 0))
+        pnl = outcome.get("pnl", 0)
+        logger.info("Trade outcome received: %s pnl=%.2f", asset_id, pnl)
+        self.plog.info(
+            f"Trade outcome received: {asset_id} {'+'if pnl>=0 else ''}"
+            f"${pnl:.2f}",
+            source="orchestrator",
+        )
 
         write_checkpoint("OFFLINE", "TRADE_OUTCOME", "processing",
                          "dma_bocpd_cusum_kelly", {"asset": asset_id})
 
         try:
-            # 1. DMA meta-weight update
+            # 1. DMA meta-weight update (gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
-            run_dma_update(outcome)
+            dma_proposed = run_dma_update(outcome, commit=False)
+            if dma_proposed and dma_proposed.get("proposed_weights"):
+                if self._is_trivial_dma_change(
+                    dma_proposed["current_weights"],
+                    dma_proposed["proposed_weights"],
+                ):
+                    # Trivial change \u2014 skip pseudotrader, commit directly
+                    run_dma_update(outcome, commit=True)
+                    self.plog.info(f"B1: DMA update (trivial) \u2014 {asset_id}", source="b1_dma")
+                elif self._pseudotrader_gate(
+                    asset_id, "AIM_WEIGHT_CHANGE",
+                    proposed_aim_weights=dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                    self.plog.info(f"B1: DMA update (pseudotrader ADOPT) \u2014 {asset_id}", source="b1_dma")
+                else:
+                    self.plog.warn(f"B1: DMA update REJECTED by pseudotrader \u2014 {asset_id}", source="b1_dma")
 
             # 2. BOCPD decay detection
             from captain_offline.blocks.b2_bocpd import run_bocpd_update
             pnl_pc = outcome.get("pnl", 0) / max(outcome.get("contracts", 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
+            if cp_prob and cp_prob > 0.5:
+                self.plog.warn(f"B2: BOCPD changepoint detected for {asset_id} (p={cp_prob:.2f})", source="b2_bocpd")
+            else:
+                self.plog.info(f"B2: BOCPD \u2014 no changepoint ({asset_id})", source="b2_bocpd")
 
             # 3. CUSUM decay detection
             from captain_offline.blocks.b2_cusum import run_cusum_update
@@ -157,9 +279,25 @@ class OfflineOrchestrator:
             cp_history = bocpd_det.cp_history if bocpd_det else []
             check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
 
-            # 5. Kelly parameter update
+            # 5. Kelly parameter update (gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
-            run_kelly_update(outcome)
+            kelly_proposed = run_kelly_update(outcome, commit=False)
+            if kelly_proposed and kelly_proposed.get("proposed_ewma"):
+                if self._is_trivial_kelly_change(
+                    kelly_proposed["current_ewma"],
+                    kelly_proposed["proposed_ewma"],
+                ):
+                    # Trivial change \u2014 skip pseudotrader, commit directly
+                    run_kelly_update(outcome, commit=True)
+                    self.plog.info(f"B8: Kelly update (trivial) \u2014 {asset_id}", source="b8_kelly")
+                elif self._pseudotrader_gate(
+                    asset_id, "KELLY_UPDATE",
+                    proposed_kelly_params=kelly_proposed["proposed_kelly"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                    self.plog.info(f"B8: Kelly update (pseudotrader ADOPT) \u2014 {asset_id}", source="b8_kelly")
+                else:
+                    self.plog.warn(f"B8: Kelly update REJECTED by pseudotrader \u2014 {asset_id}", source="b8_kelly")
 
             # 6. CB parameter estimation (if sufficient data)
             from captain_offline.blocks.b8_cb_params import estimate_cb_params
@@ -197,9 +335,23 @@ class OfflineOrchestrator:
                          "category_a_only", {"asset": asset_id, "theoretical": True})
 
         try:
-            # 1. DMA meta-weight update (Category A)
+            # 1. DMA meta-weight update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
-            run_dma_update(outcome)
+            dma_proposed = run_dma_update(outcome, commit=False)
+            if dma_proposed and dma_proposed.get("proposed_weights"):
+                if self._is_trivial_dma_change(
+                    dma_proposed["current_weights"],
+                    dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                elif self._pseudotrader_gate(
+                    asset_id, "AIM_WEIGHT_CHANGE",
+                    proposed_aim_weights=dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                else:
+                    logger.warning("Signal outcome DMA update REJECTED by pseudotrader for %s",
+                                   asset_id)
 
             # 2. BOCPD decay detection (Category A)
             from captain_offline.blocks.b2_bocpd import run_bocpd_update
@@ -219,9 +371,23 @@ class OfflineOrchestrator:
             cp_history = bocpd_det.cp_history if bocpd_det else []
             check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
 
-            # 5. Kelly/EWMA parameter update (Category A)
+            # 5. Kelly/EWMA parameter update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
-            run_kelly_update(outcome)
+            kelly_proposed = run_kelly_update(outcome, commit=False)
+            if kelly_proposed and kelly_proposed.get("proposed_ewma"):
+                if self._is_trivial_kelly_change(
+                    kelly_proposed["current_ewma"],
+                    kelly_proposed["proposed_ewma"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                elif self._pseudotrader_gate(
+                    asset_id, "KELLY_UPDATE",
+                    proposed_kelly_params=kelly_proposed["proposed_kelly"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                else:
+                    logger.warning("Signal outcome Kelly update REJECTED by pseudotrader for %s",
+                                   asset_id)
 
             # NOTE: CB params (b8_cb_params) and TSM simulation are INTENTIONALLY
             # SKIPPED here — they are Category B (account-specific) and must only
@@ -349,6 +515,122 @@ class OfflineOrchestrator:
                              len(active), [p.asset_id for p in active])
         except Exception as e:
             logger.error("Failed to resume transitions: %s", e)
+
+    def _restore_detectors(self):
+        """G-OFF-011: Restore BOCPD and CUSUM detector state from P3-D04 on startup.
+
+        Calls from_dict() deserializers so accumulated detector state survives restarts.
+        """
+        try:
+            from captain_offline.blocks.b2_bocpd import BOCPDDetector
+            from captain_offline.blocks.b2_cusum import CUSUMDetector
+            from shared.questdb_client import get_cursor
+
+            with get_cursor() as cur:
+                cur.execute(
+                    """SELECT asset_id, bocpd_run_length_posterior,
+                              cusum_c_up_prev, cusum_c_down_prev,
+                              cusum_sprint_length, cusum_allowance,
+                              cusum_sequential_limits
+                       FROM p3_d04_decay_detector_states
+                       LATEST ON last_updated PARTITION BY asset_id"""
+                )
+                rows = cur.fetchall()
+
+            for row in rows:
+                asset_id = row[0]
+
+                # Restore BOCPD from full serialized state
+                bocpd_det = None
+                if row[1]:
+                    try:
+                        bocpd_state = json.loads(row[1])
+                        bocpd_det = BOCPDDetector.from_dict(bocpd_state)
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        logger.warning("BOCPD restore failed for %s: %s", asset_id, exc)
+
+                # Restore CUSUM from individual columns
+                cusum_det = None
+                cusum_state = {
+                    "c_up": row[2] if row[2] is not None else 0.0,
+                    "c_down": row[3] if row[3] is not None else 0.0,
+                    "sprint_length": row[4] if row[4] is not None else 0,
+                    "allowance": row[5] if row[5] is not None else 0.0,
+                    "sequential_limits": {},
+                }
+                if row[6]:
+                    try:
+                        cusum_state["sequential_limits"] = json.loads(row[6])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                cusum_det = CUSUMDetector.from_dict(cusum_state)
+
+                self._detectors[asset_id] = (bocpd_det, cusum_det)
+
+            if self._detectors:
+                logger.info("Restored detector state for %d assets: %s",
+                            len(self._detectors), list(self._detectors.keys()))
+        except Exception as e:
+            logger.error("Failed to restore detector states: %s", e)
+
+    def _init_cusum_calibration(self):
+        """G-OFF-010: Run bootstrap calibration for CUSUM detectors with empty limits at init.
+
+        Spec requires calibration at init AND quarterly. This fills the gap
+        where sequential_limits would otherwise be empty until the first
+        quarterly boundary, forcing fallback to the hardcoded default_limit.
+        """
+        try:
+            from captain_offline.blocks.b2_cusum import (
+                calibrate_cusum_limits, calibrate_and_persist, CUSUMDetector,
+            )
+            from shared.questdb_client import get_cursor
+
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT asset_id FROM p3_d00_asset_universe "
+                    "WHERE captain_status = 'ACTIVE'"
+                )
+                assets = [r[0] for r in cur.fetchall()]
+
+            calibrated = 0
+            for asset_id in assets:
+                # Skip if detector already has calibrated limits
+                bocpd_det, cusum_det = self._detectors.get(asset_id, (None, None))
+                if cusum_det and cusum_det.sequential_limits:
+                    continue
+
+                # Load trade history for calibration
+                with get_cursor() as cur:
+                    cur.execute(
+                        "SELECT pnl, contracts FROM p3_d03_trade_outcome_log "
+                        "WHERE asset = %s",
+                        (asset_id,),
+                    )
+                    rows = cur.fetchall()
+
+                returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
+                if len(returns) < 20:
+                    continue
+
+                # Calibrate and persist to D04
+                calibrate_and_persist(asset_id, returns)
+
+                # Update in-memory detector
+                limits = calibrate_cusum_limits(returns)
+                if cusum_det is None:
+                    cusum_det = CUSUMDetector()
+                cusum_det.sequential_limits = limits
+                cusum_det.initialize(returns)
+                self._detectors[asset_id] = (bocpd_det, cusum_det)
+                calibrated += 1
+                logger.info("Init-time CUSUM calibration for %s: %d sprint lengths",
+                            asset_id, len(limits))
+
+            if calibrated:
+                logger.info("Init CUSUM calibration complete: %d assets calibrated", calibrated)
+        except Exception as e:
+            logger.error("Init CUSUM calibration error: %s", e)
 
     def _advance_transitions(self):
         """Advance all active transitions by one day. Called from daily schedule."""
@@ -534,6 +816,12 @@ class OfflineOrchestrator:
         while self.running:
             now = now_et()
 
+            # Heartbeat every 30s
+            current_time = time.monotonic()
+            if current_time - self._last_heartbeat_time >= 30:
+                self._publish_heartbeat()
+                self._last_heartbeat_time = current_time
+
             # Daily close (after 16:00 ET, run once)
             if now.hour >= 16 and last_daily != now.date():
                 last_daily = now.date()
@@ -554,11 +842,24 @@ class OfflineOrchestrator:
                 last_quarterly = now.month
                 self._run_quarterly()
 
-            time.sleep(60)  # check every minute
+            time.sleep(30)
+
+    def _publish_heartbeat(self):
+        """Publish Offline process heartbeat to Redis."""
+        try:
+            client = get_redis_client()
+            client.publish(CH_STATUS, json.dumps({
+                "role": "OFFLINE",
+                "status": "ok",
+                "timestamp": now_et().isoformat(),
+            }))
+        except Exception as exc:
+            logger.error("Heartbeat publish failed: %s", exc)
 
     def _run_daily(self):
         """Daily tasks: drift detection, AIM lifecycle, warmup check."""
         logger.info("Running daily offline tasks...")
+        self.plog.info("Daily offline tasks starting (drift, lifecycle, warmup)", source="scheduler")
         write_checkpoint("OFFLINE", "DAILY_CLOSE", "starting", "drift_lifecycle_warmup")
 
         try:
@@ -611,6 +912,7 @@ class OfflineOrchestrator:
     def _run_weekly(self):
         """Weekly tasks: Tier 1 AIM retrain, HDWM diversity, diagnostic."""
         logger.info("Running weekly offline tasks...")
+        self.plog.info("Weekly offline tasks starting (retrain, HDWM, diagnostic)", source="scheduler")
 
         try:
             from captain_offline.blocks.b1_aim_lifecycle import run_tier_retrain, TIER_1_AIMS

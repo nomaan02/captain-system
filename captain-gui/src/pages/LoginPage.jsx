@@ -42,12 +42,12 @@ const LoginPage = () => {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="Enter API key"
-            autoFocus
+            aria-describedby={error ? "login-error" : undefined}
             className="w-full bg-surface border border-border-subtle text-white font-mono text-xs px-3 py-2 mb-4 outline-none focus:border-captain-green"
           />
 
           {error && (
-            <div className="text-captain-red text-[10px] font-mono mb-3">
+            <div id="login-error" role="alert" className="text-captain-red text-[10px] font-mono mb-3">
               {error}
             </div>
           )}
@@ -55,7 +55,7 @@ const LoginPage = () => {
           <button
             type="submit"
             disabled={submitting || !apiKey}
-            className="w-full py-2 text-[10px] font-mono uppercase tracking-wider border border-solid cursor-pointer bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981] hover:bg-[rgba(16,185,129,0.25)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full min-h-[44px] py-2 text-[10px] font-mono uppercase tracking-wider border border-solid cursor-pointer bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)] text-[#10b981] hover:bg-[rgba(16,185,129,0.25)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {submitting ? "Authenticating..." : "Login"}
           </button>

@@ -32,6 +32,7 @@ def run_quality_gate(
     regime_probs: dict,
     user_silo: dict,
     session_id: int,
+    final_contracts: dict = None,
 ) -> dict:
     """P3-PG-25B: Signal quality gate for one user.
 
@@ -58,16 +59,29 @@ def run_quality_gate(
         modifier = combined_modifier.get(u, 1.0)
         quality_score = edge * modifier * data_maturity
 
-        # Gate logic
-        if quality_score < hard_floor:
+        # Dollar per contract (spec PG-25B): score / contracts
+        total_contracts = 0
+        if final_contracts:
+            asset_contracts = final_contracts.get(u, {})
+            if isinstance(asset_contracts, dict):
+                total_contracts = sum(v for v in asset_contracts.values() if isinstance(v, (int, float)))
+            elif isinstance(asset_contracts, (int, float)):
+                total_contracts = int(asset_contracts)
+
+        dollar_per_contract = quality_score / total_contracts if total_contracts > 0 else quality_score
+
+        # Gate logic on dollar_per_contract
+        if dollar_per_contract < hard_floor:
             quality_multiplier = 0.0
             passes_gate = False
         else:
-            quality_multiplier = min(1.0, quality_score / quality_ceiling) if quality_ceiling > 0 else 1.0
+            quality_multiplier = min(1.0, dollar_per_contract / quality_ceiling) if quality_ceiling > 0 else 1.0
             passes_gate = True
 
         quality_results[u] = {
             "quality_score": quality_score,
+            "dollar_per_contract": dollar_per_contract,
+            "total_contracts": total_contracts,
             "quality_multiplier": quality_multiplier,
             "passes_gate": passes_gate,
             "edge": edge,
@@ -77,8 +91,8 @@ def run_quality_gate(
         }
 
         if not passes_gate:
-            logger.info("ON-B5B: Asset %s quality_score %.6f below floor %.6f — AVAILABLE_NOT_RECOMMENDED",
-                        u, quality_score, hard_floor)
+            logger.info("ON-B5B: Asset %s dollar_per_contract %.6f below floor %.6f — AVAILABLE_NOT_RECOMMENDED",
+                        u, dollar_per_contract, hard_floor)
 
     # Split
     recommended_trades = [u for u in selected_trades if quality_results.get(u, {}).get("passes_gate", False)]
