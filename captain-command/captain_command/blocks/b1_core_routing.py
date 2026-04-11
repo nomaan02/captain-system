@@ -74,10 +74,10 @@ def route_signal_batch(payload: dict, gui_push_fn: Callable, api_route_fn: Calla
         # --- Store in P3-D17 session_log ---
         _log_signal_received(signal_id, user_id, signal)
 
-        # --- Push full signal context to GUI ---
+        # --- Push sanitised signal to GUI (strip PROHIBITED_EXTERNAL_FIELDS) ---
         gui_push_fn(user_id, {
             "type": "signal",
-            "signal": signal,
+            "signal": sanitise_for_gui(signal),
         })
 
         # --- Route to API adapters (per-account, sanitised) ---
@@ -98,6 +98,16 @@ def route_signal_batch(payload: dict, gui_push_fn: Callable, api_route_fn: Calla
             "type": "below_threshold",
             "items": below_threshold,
         })
+
+
+def sanitise_for_gui(signal: dict) -> dict:
+    """Strip PROHIBITED_EXTERNAL_FIELDS before GUI WebSocket push.
+
+    Spec: Doc 20 PG-26.  The GUI may display signal metadata (asset,
+    direction, confidence tier, quality score, etc.) but must never
+    receive proprietary model internals.
+    """
+    return {k: v for k, v in signal.items() if k not in PROHIBITED_EXTERNAL_FIELDS}
 
 
 def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:

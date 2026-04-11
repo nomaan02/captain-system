@@ -129,16 +129,18 @@ def run_kelly_sizing(
         shrinkage = _get_shrinkage(u, kelly_params, session_id)
         adjusted_kelly = blended_kelly * shrinkage
 
-        # Step 3: Robust Kelly fallback (Paper 218)
+        # Step 3: Robust Kelly fallback (PG-24 L4)
         if regime_uncertain.get(u, False):
             dominant_regime = max(r_probs, key=r_probs.get)
             ewma = get_ewma_for_regime(u, dominant_regime, ewma_states, session_id)
             if ewma:
-                from captain_online.blocks.b1_features import get_return_bounds, compute_robust_kelly
-                bounds = get_return_bounds(ewma)
-                std_kelly = adjusted_kelly
-                robust = compute_robust_kelly(bounds, std_kelly)
-                adjusted_kelly = min(adjusted_kelly, robust)
+                wr = ewma.get("win_rate", 0.5)
+                avg_win = ewma.get("avg_win", 0.0)
+                avg_loss = ewma.get("avg_loss", 0.0)
+                mu = avg_win * wr - avg_loss * (1 - wr)
+                var = avg_win ** 2 * wr + avg_loss ** 2 * (1 - wr) - mu ** 2
+                f_robust = mu / (mu ** 2 + var) if mu > 0 and (mu ** 2 + var) > 0 else 0.0
+                adjusted_kelly = min(adjusted_kelly, f_robust)
 
         # Step 4: AIM modifier
         modifier = combined_modifier.get(u, 1.0)

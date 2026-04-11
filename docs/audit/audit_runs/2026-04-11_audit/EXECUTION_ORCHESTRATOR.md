@@ -30,7 +30,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 
 | Phase | Title | Scope | Sessions | CRITICALs Resolved | Status |
 |-------|-------|-------|----------|---------------------|--------|
-| 0 | Quick Wins | Kelly L4 formula + GUI WebSocket sanitize | 1 | 2 | PENDING |
+| 0 | Quick Wins | Kelly L4 formula + GUI WebSocket sanitize | 1 | 2 | COMPLETE |
 | 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | PENDING |
 | 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | PENDING |
 | 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | PENDING |
@@ -1185,8 +1185,8 @@ Phase 0 ────────────────────────
 
 | # | Finding | Phase | Session | Status |
 |---|---------|-------|---------|--------|
-| 1 | G-ONL-017 (Kelly L4 formula) | 0 | 0.1 | PENDING |
-| 2 | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0 | 0.1 | PENDING |
+| 1 | G-ONL-017 (Kelly L4 formula) | 0 | 0.1 | RESOLVED |
+| 2 | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0 | 0.1 | RESOLVED |
 | 3 | G-OFF-015 (pseudotrader unwired) | 1 | 1.1 | PENDING |
 | 4 | G-OFF-016 (no pipeline replay) | 1 | 1.2 | PENDING |
 | 5 | G-ONL-042 (fill slippage) | 2 | 2.1 | PENDING |
