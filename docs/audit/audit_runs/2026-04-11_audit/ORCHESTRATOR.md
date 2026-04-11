@@ -15,7 +15,7 @@
 | 1 | Index & Scaffold | Directory structure, git history, mem-search context, file index | COMPLETE |
 | 2 | Spec Extraction | Obsidian vault tag search, wikilink traversal, spec-to-code mapping | COMPLETE |
 | 3 | P3-Offline Audit | All 17 offline blocks vs spec (AIM lifecycle, decay, Kelly, diagnostic) | COMPLETE |
-| 4 | P3-Online Audit | All 14 online blocks vs spec (data ingestion, regime, AIM, signal output) | PENDING |
+| 4 | P3-Online Audit | All 14 online blocks vs spec (data ingestion, regime, AIM, signal output) | COMPLETE |
 | 5 | P3-Command Audit | All 12 command blocks vs spec (routing, GUI, API, reconciliation) | PENDING |
 | 6 | Cross-Verification & Verdict | Regression check, unaudited file scan, final rollup, READY/NOT READY | PENDING |
 
@@ -887,9 +887,63 @@ These are spec requirements that may not have full code coverage. **Each must be
 
 ## Session 4 — P3-Online Audit
 
-**Status:** PENDING
+**Status:** COMPLETE
+**Completed:** 2026-04-11 04:15 GMT+1
+**Objective:** Audit all 16 Captain Online files + 2 shared AIM modules against Obsidian spec (Docs 20, 21, 23, 27, 31, 33)
 
-_(To be populated by Session 4)_
+### 4.1 Methodology
+
+6 parallel audit agents, each reading code files + spec pseudocode:
+- Agent 1: B1 (3 files) — data ingestion, features, aim_feature_loader
+- Agent 2: B2 + B3 (3 files) — regime probability, aim_compute, aim_feature_loader (AIM dispatch)
+- Agent 3: B4 + B5/B5B (3 files) — Kelly sizing, trade selection, quality gate
+- Agent 4: B5C + B6 (2 files) — circuit breaker, signal output
+- Agent 5: B7 + B8 (4 files) — position monitor, shadow monitor, concentration, OR tracker
+- Agent 6: B9 + support (4 files) — capacity evaluation, session controller, orchestrator, main
+
+### 4.2 Results Summary
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 3 |
+| HIGH | 14 |
+| MEDIUM | 22 |
+| LOW | 10 |
+| AMENDED | 8 |
+| **Total Findings** | **57** |
+
+~40 spec verification points confirmed as correctly implemented.
+
+### 4.3 CRITICAL Findings
+
+| ID | Block | Description |
+|----|-------|-------------|
+| G-ONL-017 | B4 | Kelly L4 robust formula algebraically wrong: spec `mu/(mu²+var)`, code `1/upper` — different sizing |
+| G-ONL-028 | B6 | Prohibited fields (aim_breakdown, regime_probs, combined_modifier) leak to GUI WebSocket unsanitized |
+| G-ONL-042 | B9 | Capacity evaluation implements entirely different algorithm (supply/demand planning vs spec's fill slippage analysis) |
+
+### 4.4 S2-Flagged Items Resolution
+
+| S2-ID | Finding | Resolution |
+|-------|---------|------------|
+| S2-04 | Signal Distribution priority rotation | **VALID**: Correctly deferred for V1 single-user; no distribution logic exists. |
+| S2-05 | AIM-05 Order Book deferred | **VALID**: dispatch.get() returns None → modifier=1.0, confidence=0.0. Status check skips non-ACTIVE. Both paths correct. |
+| S2-15 | AIM cascading dependencies | **G-ONL-014 MEDIUM**: No explicit cascade ordering. All AIMs read features independently; no inter-AIM deps currently exist. Risk is future-facing. |
+| S2-22 | Contract rollover roll_confirmed | **VALID**: roll_confirmed flag, ROLL_PENDING status, CRITICAL/HIGH alerts all implemented correctly. |
+
+### 4.5 Pattern Observations
+
+**System-wide patterns detected across Online blocks:**
+
+1. **Naive datetime.now() pervasive**: 9 findings (G-ONL-003, 031, 032, 034, 037, 041, 044, 049) across 7 files use `datetime.now()` without timezone. Most are cosmetic (log timestamps) but B7 time-exit (G-ONL-032) is HIGH-risk.
+
+2. **Feature data source stubs**: AIM-01 (overnight_range), AIM-02 (pcr, put_skew, trailing_pcr), AIM-03 (gex) have hard-stubbed data sources. Three AIMs are effectively dormant despite ACTIVE status. No options data pipeline exists.
+
+3. **Spec formula deviations in sizing pipeline**: B4 L4 robust (CRITICAL), B4 risk_per_contract (HIGH), B5B quality gate (HIGH) all implement different formulas than spec. The sizing pipeline from Kelly → trade selection → quality gate has three formula mismatches that compound.
+
+4. **Sanitization boundary mismatch**: B6 publishes full internal signal blob to Redis; sanitization deferred to Command B1 for API. GUI WebSocket receives unsanitized data including prohibited fields.
+
+5. **QuestDB query patterns**: Multiple queries (G-ONL-046, 047) lack `LATEST ON` deduplication, fetching full history and compensating with application-level `_seen` sets. Functional but inefficient and may fail with large historical data.
 
 ---
 
