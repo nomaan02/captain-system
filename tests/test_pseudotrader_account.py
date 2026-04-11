@@ -15,7 +15,10 @@ import sys
 sys.modules.setdefault("shared", MagicMock())
 sys.modules.setdefault("shared.questdb_client", MagicMock())
 sys.modules.setdefault("shared.journal", MagicMock())
-sys.modules.setdefault("shared.statistics", MagicMock())
+_stats_mock = MagicMock()
+_stats_mock.compute_pbo = MagicMock(return_value=0.3)
+_stats_mock.compute_dsr = MagicMock(return_value=0.6)
+sys.modules.setdefault("shared.statistics", _stats_mock)
 
 from captain_offline.blocks.b3_pseudotrader import (
     _enforce_trading_hours,
@@ -276,3 +279,151 @@ class TestAccountAwareReplay:
         result = run_account_aware_replay("ES", "MODEL_RETRAIN", trades, EVAL_CONFIG)
 
         assert result["eval_result"] == "FAIL_MDD"
+
+    def test_bankruptcy_halts_replay(self, mock_cursor):
+        """G-OFF-020: Balance hitting zero stops replay immediately."""
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Starting balance 150k, one massive loss wipes it out
+        config = {**EVAL_CONFIG, "max_drawdown_limit": None}
+        trades = _make_trades([-200000, 500])
+        result = run_account_aware_replay("ES", "MODEL_RETRAIN", trades, config)
+
+        assert result["bankruptcy"] is True
+        assert result["bankruptcy_day"] is not None
+        # Second trade should not have been taken
+        assert result["total_trades_taken"] == 1
+
+
+# ---------------------------------------------------------------------------
+# CB pseudotrader account constraint tests (G-OFF-021)
+# ---------------------------------------------------------------------------
+
+from captain_offline.blocks.b3_pseudotrader import run_cb_pseudotrader
+
+
+CB_PARAMS = {"p": 0.02, "e": 0.05, "c": 0.5, "lambda_threshold": 0.0,
+             "account_balance": 150000, "mdd": 4500}
+
+BASKET_PARAMS = {"4": {"r_bar": 10.0, "beta_b": 0.0, "sigma": 1.0, "rho_bar": 0.0}}
+
+
+@patch("captain_offline.blocks.b3_pseudotrader._compute_dsr", return_value=0.6)
+@patch("captain_offline.blocks.b3_pseudotrader._compute_pbo", return_value=0.3)
+@patch("captain_offline.blocks.b3_pseudotrader.get_cursor")
+class TestCBPseudotraderAccountConstraints:
+    """Test CB pseudotrader with account constraints (G-OFF-021)."""
+
+    def test_no_account_config_unconstrained(self, mock_cursor, _pbo, _dsr):
+        """Without account_config, CB replay applies only CB layers."""
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        trades = _make_trades([500, 300, -200])
+        result = run_cb_pseudotrader("acc1", trades, CB_PARAMS, BASKET_PARAMS)
+
+        assert result["total_taken"] == 3
+        assert "dsr" in result  # G-OFF-023: DSR should be computed
+
+    def test_dll_blocks_in_cb_replay(self, mock_cursor, _pbo, _dsr):
+        """DLL from account_config blocks trades in CB replay."""
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Two trades on same day: first loses $2500, second should be blocked by DLL=$3000
+        trades = [
+            {"day": "2026-03-01", "pnl": -2500, "contracts": 1, "ts": "2026-03-01T10:00:00", "model": 4},
+            {"day": "2026-03-01", "pnl": -600, "contracts": 1, "ts": "2026-03-01T10:30:00", "model": 4},
+            {"day": "2026-03-01", "pnl": 200, "contracts": 1, "ts": "2026-03-01T11:00:00", "model": 4},
+        ]
+        result = run_cb_pseudotrader("acc1", trades, CB_PARAMS, BASKET_PARAMS,
+                                      account_config=XFA_CONFIG)
+
+        # After -2500, daily_pnl = -2500. Then -600 would push to -3100 >= -3000 DLL.
+        # The second trade's daily_pnl check: daily_pnl=-2500, -2500 <= -3000 is False.
+        # The third trade after -3100: -3100 <= -3000 is True, blocked.
+        assert result["total_blocked"] > 0
+
+    def test_mdd_breach_halts_cb_replay(self, mock_cursor, _pbo, _dsr):
+        """MDD breach from account_config stops CB replay permanently."""
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Losses exceeding MDD across days
+        trades = _make_trades([-2000, -2000, -1000, 500])
+        result = run_cb_pseudotrader("acc1", trades, CB_PARAMS, BASKET_PARAMS,
+                                      account_config=XFA_CONFIG)
+
+        # MDD = 4500: after day1 -2000, day2 -2000 = 4000 drawdown, day3 -1000 = 5000 > 4500
+        assert "ACCOUNT_MDD_BREACH" in result.get("blocks_by_reason", {})
+
+    def test_dsr_computed_not_zero(self, mock_cursor, _pbo, mock_dsr):
+        """G-OFF-023: DSR should be computed, not hardcoded to 0."""
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        trades = _make_trades([500, 300, 200, 100, -50, 400, 350])
+        result = run_cb_pseudotrader("acc1", trades, CB_PARAMS, BASKET_PARAMS)
+
+        assert "dsr" in result
+        assert isinstance(result["dsr"], float)
+        # Verify _compute_dsr was actually called (not hardcoded)
+        mock_dsr.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Per-account iteration tests (G-OFF-019)
+# ---------------------------------------------------------------------------
+
+from captain_offline.blocks.b3_pseudotrader import (
+    fetch_active_accounts,
+    run_pseudotrader_all_accounts,
+)
+
+
+@patch("captain_offline.blocks.b3_pseudotrader._compute_dsr", return_value=0.6)
+@patch("captain_offline.blocks.b3_pseudotrader._compute_pbo", return_value=0.3)
+@patch("captain_offline.blocks.b3_pseudotrader.get_cursor")
+class TestPerAccountIteration:
+    """Test per-account-type iteration from D08 (G-OFF-019)."""
+
+    def test_no_active_accounts_fallback(self, mock_cursor, _pbo, _dsr):
+        """With no D08 accounts, falls back to unconstrained replay."""
+        cursor_mock = MagicMock()
+        cursor_mock.execute.side_effect = Exception("no table")
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=cursor_mock)
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        trades = _make_trades([500, 300])
+        result = run_pseudotrader_all_accounts("ES", "MODEL_RETRAIN", trades)
+
+        assert result["accounts_tested"] == 0
+        assert len(result["per_account"]) == 1  # fallback single run
+
+    def test_multiple_accounts_iteration(self, mock_cursor, _pbo, _dsr):
+        """Each active account gets its own replay."""
+        cursor_mock = MagicMock()
+
+        # Mock two active accounts
+        cursor_mock.description = [
+            ("account_id",), ("account_name",), ("current_balance",),
+            ("starting_balance",), ("max_drawdown_limit",), ("max_daily_loss",),
+            ("profit_target",), ("status",), ("classification",), ("scaling_plan",),
+            ("consistency_rule",), ("trading_hours",), ("capital_unlock",),
+        ]
+        cursor_mock.fetchall.return_value = [
+            ("acc1", "XFA Account", 155000, 150000, 4500, 3000,
+             None, "ACTIVE", '{"category": "PROP_FUNDED"}', None, None, None, None),
+            ("acc2", "Eval Account", 150000, 150000, 4500, 3000,
+             9000, "ACTIVE", '{"category": "PROP_EVAL"}', None, None, None, None),
+        ]
+        mock_cursor.return_value.__enter__ = MagicMock(return_value=cursor_mock)
+        mock_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        trades = _make_trades([500, 300, -100])
+        result = run_pseudotrader_all_accounts("ES", "MODEL_RETRAIN", trades)
+
+        assert result["accounts_tested"] == 2
+        assert len(result["per_account"]) == 2
+        assert all("account_recommendation" in r for r in result["per_account"])

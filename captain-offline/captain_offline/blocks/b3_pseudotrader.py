@@ -255,6 +255,8 @@ def run_account_aware_replay(asset_id: str, update_type: str,
         "capital_unlock_events": 0,
         "total_trades_taken": 0,
         "total_trades_blocked": 0,
+        "bankruptcy": False,
+        "bankruptcy_day": None,
     }
 
     mdd_breached = False
@@ -328,6 +330,15 @@ def run_account_aware_replay(asset_id: str, update_type: str,
             running_balance += trade_pnl
             max_balance = max(max_balance, running_balance)
             breach_counts["total_trades_taken"] += 1
+
+            # Bankruptcy check (G-OFF-020): stop if balance depleted
+            if running_balance <= 0:
+                breach_counts["bankruptcy"] = True
+                breach_counts["bankruptcy_day"] = day
+                mdd_breached = True  # reuse flag to halt all further days
+                logger.warning("Bankruptcy during replay %s on %s: balance=%.2f",
+                               asset_id, day, running_balance)
+                break
 
             # Post-trade MDD check (skip for Live accounts with no trailing MLL)
             if mdd_limit is not None:
@@ -439,6 +450,136 @@ def run_account_aware_replay(asset_id: str, update_type: str,
 
 
 # ---------------------------------------------------------------------------
+# Per-account-type iteration (G-OFF-019: Doc 28 §5)
+# ---------------------------------------------------------------------------
+
+def fetch_active_accounts() -> list[dict]:
+    """Load all active accounts from D08 (tsm_state).
+
+    Returns:
+        List of account config dicts suitable for run_account_aware_replay().
+    """
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT account_id, account_name, current_balance,
+                          starting_balance, max_drawdown_limit, max_daily_loss,
+                          profit_target, status, classification, scaling_plan,
+                          consistency_rule, trading_hours, capital_unlock
+                   FROM p3_d08_tsm_state
+                   WHERE status = 'ACTIVE'"""
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("Failed to load active accounts from D08: %s", exc)
+        return []
+
+    configs = []
+    for row in rows:
+        # Parse JSON fields that may be stored as strings
+        for json_field in ("classification", "scaling_plan",
+                           "consistency_rule", "trading_hours", "capital_unlock"):
+            val = row.get(json_field)
+            if isinstance(val, str):
+                try:
+                    row[json_field] = json.loads(val)
+                except (json.JSONDecodeError, TypeError):
+                    row[json_field] = None
+
+        config = {
+            "account_id": row.get("account_id"),
+            "account_name": row.get("account_name"),
+            "starting_balance": row.get("starting_balance", 150000),
+            "max_drawdown_limit": row.get("max_drawdown_limit"),
+            "max_daily_loss": row.get("max_daily_loss"),
+            "profit_target": row.get("profit_target"),
+            "classification": row.get("classification") or {},
+            "scaling_plan": row.get("scaling_plan"),
+            "scaling_plan_active": bool(row.get("scaling_plan")),
+            "consistency_rule": row.get("consistency_rule"),
+            "trading_hours": row.get("trading_hours"),
+            "capital_unlock": row.get("capital_unlock"),
+        }
+        configs.append(config)
+
+    return configs
+
+
+def run_pseudotrader_all_accounts(asset_id: str, update_type: str,
+                                   trades: list[dict]) -> dict:
+    """Run pseudotrader replay across all active accounts from D08.
+
+    Spec: Doc 28 §5 — separate replay per active account configuration.
+    Aggregates results and produces per-account ADOPT/REJECT plus an
+    overall recommendation.
+
+    Args:
+        asset_id: Asset being evaluated
+        update_type: Update type identifier
+        trades: Trade history for replay
+
+    Returns:
+        Dict with per_account results list and overall recommendation.
+    """
+    accounts = fetch_active_accounts()
+
+    if not accounts:
+        logger.warning("No active accounts in D08; falling back to unconstrained replay")
+        result = run_account_aware_replay(asset_id, update_type, trades)
+        return {
+            "asset_id": asset_id,
+            "update_type": update_type,
+            "per_account": [result],
+            "accounts_tested": 0,
+            "overall_recommendation": result.get("recommendation", "REJECT")
+                                      if "recommendation" in result
+                                      else ("ADOPT" if result.get("pbo", 1.0) < PBO_THRESHOLD
+                                            else "REJECT"),
+        }
+
+    per_account = []
+    for acct in accounts:
+        logger.info("Running account-aware replay for %s [%s] account=%s",
+                    asset_id, update_type, acct.get("account_id"))
+        result = run_account_aware_replay(asset_id, update_type, trades,
+                                          account_config=acct)
+        # Per-account ADOPT/REJECT (Doc 28 §5)
+        pbo = result.get("pbo", 1.0)
+        sharpe = result.get("sharpe", 0.0)
+        bankrupt = result.get("bankruptcy", False)
+        mdd_breach = result.get("mdd_breach", False)
+
+        if bankrupt or mdd_breach:
+            acct_recommendation = "REJECT"
+        elif sharpe > 0 and pbo < PBO_THRESHOLD:
+            acct_recommendation = "ADOPT"
+        else:
+            acct_recommendation = "REJECT"
+
+        result["account_id"] = acct.get("account_id")
+        result["account_recommendation"] = acct_recommendation
+        per_account.append(result)
+
+    # Overall: ADOPT only if ALL accounts pass
+    all_adopt = all(r["account_recommendation"] == "ADOPT" for r in per_account)
+    overall = "ADOPT" if all_adopt else "REJECT"
+
+    logger.info("Multi-account pseudotrader %s [%s]: %d accounts, %d ADOPT, overall=%s",
+                asset_id, update_type, len(per_account),
+                sum(1 for r in per_account if r["account_recommendation"] == "ADOPT"),
+                overall)
+
+    return {
+        "asset_id": asset_id,
+        "update_type": update_type,
+        "per_account": per_account,
+        "accounts_tested": len(per_account),
+        "overall_recommendation": overall,
+    }
+
+
+# ---------------------------------------------------------------------------
 # D03 data source + full pipeline replay (G-OFF-016, G-OFF-024)
 # ---------------------------------------------------------------------------
 
@@ -541,7 +682,8 @@ def run_pseudotrader(asset_id: str, update_type: str,
                       current_params: dict | None = None,
                       proposed_params: dict | None = None,
                       user_id: str = "primary_user",
-                      lookback_days: int = 30) -> dict:
+                      lookback_days: int = 30,
+                      n_trials: int = 1) -> dict:
     """Execute P3-PG-09: counterfactual replay comparison.
 
     PRIMARY PATH (spec Doc 32 PG-09 §1-2): When baseline_pnl/proposed_pnl
@@ -643,7 +785,7 @@ def run_pseudotrader(asset_id: str, update_type: str,
     arr = np.array(proposed_pnl)
     skew = float(np.mean((arr - arr.mean()) ** 3) / max(arr.std() ** 3, 1e-10)) if len(arr) > 2 else 0.0
     kurt = float(np.mean((arr - arr.mean()) ** 4) / max(arr.std() ** 4, 1e-10)) if len(arr) > 2 else 3.0
-    dsr = _compute_dsr(sharpe_prop, 1, skew, kurt, len(proposed_pnl))
+    dsr = _compute_dsr(sharpe_prop, max(n_trials, 1), skew, kurt, len(proposed_pnl))
 
     # Decision
     if sharpe_improvement > 0 and pbo < PBO_THRESHOLD and dsr > DSR_THRESHOLD:
@@ -788,22 +930,67 @@ def run_signal_replay_comparison(asset_id: str, proposed_update: dict) -> dict:
 
 
 def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
-                         cb_params: dict, basket_params: dict) -> dict:
+                         cb_params: dict, basket_params: dict,
+                         account_config: dict | None = None) -> dict:
     """Execute P3-PG-09B: circuit breaker pseudotrader at intraday resolution.
+
+    Implements the Doc 28 section 4 eleven-step per-day replay loop with
+    account constraints (DLL, MDD, scaling, hours, consistency, capital
+    unlock) applied before CB layer checks.
 
     Args:
         account_id: Account to evaluate
         historical_trades: List of trade dicts with: day, pnl, contracts, model, ts
         cb_params: {p, e, c, lambda_threshold}
         basket_params: {model_m: {r_bar, beta_b, sigma, rho_bar}}
+        account_config: TSM config dict (or None for unconstrained replay)
 
     Returns:
-        Comparison dict with per-layer breakdown
+        Comparison dict with per-layer breakdown and account constraint breaches
     """
     p = cb_params.get("p", 0.02)
     e = cb_params.get("e", 0.05)
     c = cb_params.get("c", 0.5)
     lambda_threshold = cb_params.get("lambda_threshold", 0.0)
+
+    # Extract account constraints (G-OFF-021: Doc 28 §3)
+    if account_config:
+        mdd_limit = account_config.get("max_drawdown_limit")
+        max_daily_loss = account_config.get("max_daily_loss")
+        trading_hours = account_config.get("trading_hours")
+        scaling_plan = account_config.get("scaling_plan")
+        scaling_active = account_config.get("scaling_plan_active", False)
+        consistency_rule = account_config.get("consistency_rule")
+        starting_balance = account_config.get("starting_balance", 150000)
+        max_contracts = account_config.get("max_contracts", 15)
+        capital_unlock = account_config.get("capital_unlock")
+    else:
+        mdd_limit = None
+        max_daily_loss = None
+        trading_hours = None
+        scaling_plan = None
+        scaling_active = False
+        consistency_rule = None
+        starting_balance = cb_params.get("account_balance", 150000)
+        max_contracts = None
+        capital_unlock = None
+
+    # Capital unlock state (Live accounts)
+    if capital_unlock:
+        unlock_profit = capital_unlock.get("unlock_profit", 9000)
+        unlock_levels = capital_unlock.get("unlock_levels", 4)
+        tradable_cap = capital_unlock.get("tradable_cap", 30000)
+        tradable_balance = min(starting_balance, tradable_cap)
+        reserve_balance = max(starting_balance - tradable_cap, 0.0)
+        reserve_per_block = (reserve_balance / unlock_levels
+                             if reserve_balance > 0 else 0.0)
+        unlocks_remaining = unlock_levels if reserve_balance > 0 else 0
+    else:
+        unlock_profit = 0
+        tradable_balance = 0.0
+        reserve_balance = 0.0
+        reserve_per_block = 0.0
+        unlocks_remaining = 0
 
     # Group trades by day
     by_day = defaultdict(list)
@@ -816,18 +1003,52 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
     total_taken = 0
     blocks_by_reason = defaultdict(int)
 
+    # Account-level running state
+    running_balance = starting_balance
+    max_balance = starting_balance
+    account_breached = False
+
     for day in sorted(by_day.keys()):
+        if account_breached:
+            baseline_daily_pnl.append(0.0)
+            cb_daily_pnl.append(0.0)
+            continue
+
         trades = sorted(by_day[day], key=lambda t: t.get("ts", ""))
 
         # Baseline: all trades taken
         baseline_day_pnl = sum(t["pnl"] for t in trades)
         baseline_daily_pnl.append(baseline_day_pnl)
 
-        # CB replay
-        account_balance = cb_params.get("account_balance", 150000)
-        mdd = cb_params.get("mdd", cb_params.get("max_drawdown_limit", 4500))
-        n_max = int(e * account_balance / max(mdd * p, 1))
-        l_halt = c * e * account_balance
+        # ── Doc 28 §4 Step 1: SOD reset ──
+        daily_pnl = 0.0
+        daily_profit = 0.0
+        dll_hit = False
+
+        # ── Step 2: Load state (balance, peak, scaling tier) ──
+        if scaling_active and scaling_plan:
+            contract_limit_micros = _lookup_scaling_tier(
+                running_balance, starting_balance, scaling_plan)
+        elif max_contracts is not None:
+            contract_limit_micros = max_contracts * 10
+        else:
+            contract_limit_micros = None  # no contract constraint
+
+        # ── Step 4: Pre-trade MDD check ──
+        if mdd_limit is not None:
+            current_mdd = max_balance - running_balance
+            if current_mdd >= mdd_limit:
+                account_breached = True
+                blocks_by_reason["ACCOUNT_MDD_BREACH"] += len(trades)
+                total_blocked += len(trades)
+                cb_daily_pnl.append(0.0)
+                continue
+
+        # CB per-day state
+        account_balance_for_cb = cb_params.get("account_balance", running_balance)
+        mdd_for_cb = cb_params.get("mdd", cb_params.get("max_drawdown_limit", 4500))
+        n_max = int(e * account_balance_for_cb / max(mdd_for_cb * p, 1))
+        l_halt = c * e * account_balance_for_cb
 
         l_t = 0.0
         n_t = 0
@@ -838,21 +1059,47 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
         for trade in trades:
             model_m = trade.get("model", 0)
             pnl = trade["pnl"]
+            trade_contracts = trade.get("contracts", 1)
             bp = basket_params.get(str(model_m), basket_params.get(model_m, {}))
 
-            # Layer 1: Hard halt
+            # ── Step 5: DLL check ──
+            if _check_dll(daily_pnl, max_daily_loss):
+                if not dll_hit:
+                    blocks_by_reason["ACCOUNT_DLL_BREACH"] += 1
+                    dll_hit = True
+                total_blocked += 1
+                continue
+
+            # ── Step 6: Trading hours ──
+            hours_block = _enforce_trading_hours(
+                trade.get("ts", ""), trading_hours)
+            if hours_block:
+                blocks_by_reason["ACCOUNT_HOURS_BLOCK"] += 1
+                total_blocked += 1
+                continue
+
+            # ── Step 7: Size constraint ──
+            effective_pnl = pnl
+            if contract_limit_micros is not None:
+                trade_micros = trade_contracts * 10
+                if trade_micros > contract_limit_micros:
+                    blocks_by_reason["ACCOUNT_SCALING_CAP"] += 1
+                    scale_factor = contract_limit_micros / trade_micros
+                    effective_pnl = pnl * scale_factor
+
+            # ── CB Layer 1: Hard halt ──
             if abs(l_t) >= l_halt:
                 blocks_by_reason["HARD_HALT"] += 1
                 total_blocked += 1
                 continue
 
-            # Layer 2: Budget
+            # ── CB Layer 2: Budget ──
             if n_t >= n_max:
                 blocks_by_reason["BUDGET_EXHAUSTED"] += 1
                 total_blocked += 1
                 continue
 
-            # Layer 3: Conditional expectancy
+            # ── CB Layer 3: Conditional expectancy ──
             r_bar = bp.get("r_bar", 0.0)
             beta_b = bp.get("beta_b", 0.0)
             mu_b = r_bar + beta_b * l_b[model_m]
@@ -861,7 +1108,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
                 total_blocked += 1
                 continue
 
-            # Layer 4: Correlation-adjusted Sharpe
+            # ── CB Layer 4: Correlation-adjusted Sharpe ──
             sigma = bp.get("sigma", 1.0)
             rho_bar = bp.get("rho_bar", 0.0)
             denom = sigma * math.sqrt(max(1 + 2 * n_t * rho_bar, 0.01))
@@ -871,15 +1118,58 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
                 total_blocked += 1
                 continue
 
-            # Trade taken
-            cb_day_pnl += pnl
-            l_t += pnl
+            # ── Step 8: Execute with constrained size ──
+            cb_day_pnl += effective_pnl
+            daily_pnl += effective_pnl
+            l_t += effective_pnl
             n_t += 1
-            l_b[model_m] += pnl
+            l_b[model_m] += effective_pnl
             n_b[model_m] += 1
             total_taken += 1
 
+            if effective_pnl > 0:
+                daily_profit += effective_pnl
+
+            # ── Step 9: Post-trade update ──
+            running_balance += effective_pnl
+            max_balance = max(max_balance, running_balance)
+
+            # Bankruptcy check (G-OFF-020 for CB path)
+            if running_balance <= 0:
+                account_breached = True
+                blocks_by_reason["BANKRUPTCY"] += 1
+                logger.warning("CB pseudotrader bankruptcy %s on %s: balance=%.2f",
+                               account_id, day, running_balance)
+                break
+
+            # Post-trade MDD check
+            if mdd_limit is not None:
+                post_mdd = max_balance - running_balance
+                if post_mdd >= mdd_limit:
+                    account_breached = True
+                    blocks_by_reason["ACCOUNT_MDD_BREACH"] += 1
+                    break
+
         cb_daily_pnl.append(cb_day_pnl)
+
+        # ── Step 10: Consistency check (end of day, XFA) ──
+        if consistency_rule and isinstance(consistency_rule, dict):
+            max_daily_profit = consistency_rule.get("max_daily_profit")
+            if max_daily_profit and daily_profit > max_daily_profit:
+                blocks_by_reason["CONSISTENCY_VIOLATION"] += 1
+
+        # ── Step 11: Capital unlock (Live only) ──
+        if capital_unlock and unlocks_remaining > 0 and reserve_per_block > 0:
+            cumulative_profit = running_balance - starting_balance
+            unlocks_earned = int(max(cumulative_profit, 0) // unlock_profit)
+            unlocks_already = (capital_unlock.get("unlock_levels", 4)
+                               - unlocks_remaining)
+            new_unlocks = max(unlocks_earned - unlocks_already, 0)
+            if new_unlocks > 0:
+                actual_unlocks = min(new_unlocks, unlocks_remaining)
+                tradable_balance += actual_unlocks * reserve_per_block
+                reserve_balance -= actual_unlocks * reserve_per_block
+                unlocks_remaining -= actual_unlocks
 
     # Compare
     sharpe_base = _compute_sharpe(baseline_daily_pnl)
@@ -888,6 +1178,12 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
     dd_cb = _compute_max_drawdown(list(np.cumsum(cb_daily_pnl)))
 
     pbo = _compute_pbo(cb_daily_pnl)
+
+    # Compute DSR (G-OFF-023) instead of hardcoding 0.0
+    cb_arr = np.array(cb_daily_pnl)
+    cb_skew = float(np.mean((cb_arr - cb_arr.mean()) ** 3) / max(cb_arr.std() ** 3, 1e-10)) if len(cb_arr) > 2 else 0.0
+    cb_kurt = float(np.mean((cb_arr - cb_arr.mean()) ** 4) / max(cb_arr.std() ** 4, 1e-10)) if len(cb_arr) > 2 else 3.0
+    dsr = _compute_dsr(sharpe_cb, 1, cb_skew, cb_kurt, len(cb_daily_pnl))
 
     result = {
         "update_type": "CIRCUIT_BREAKER",
@@ -901,6 +1197,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
         "block_rate": total_blocked / max(total_taken + total_blocked, 1),
         "blocks_by_reason": dict(blocks_by_reason),
         "pbo": pbo,
+        "dsr": dsr,
         "recommendation": "ADOPT" if (sharpe_cb - sharpe_base > 0 and dd_base - dd_cb > 0 and pbo < PBO_THRESHOLD) else "REVIEW",
     }
 
@@ -914,7 +1211,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
             (
                 f"CB-{account_id}",
                 "CIRCUIT_BREAKER", result["sharpe_delta"], -result["dd_improvement"],
-                0.0, pbo, 0.0, result["recommendation"],
+                0.0, pbo, dsr, result["recommendation"],
             ),
         )
 
@@ -929,7 +1226,8 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
 def run_cb_grid_search(account_id: str, historical_trades: list[dict],
                         basket_params: dict, base_params: dict,
                         c_values: list[float] | None = None,
-                        lambda_values: list[float] | None = None) -> dict:
+                        lambda_values: list[float] | None = None,
+                        account_config: dict | None = None) -> dict:
     """Execute P3-PG-09C: grid search over circuit breaker parameters.
 
     Tests all combinations of (c, lambda), selects the best set with pbo < 0.5.
@@ -955,7 +1253,7 @@ def run_cb_grid_search(account_id: str, historical_trades: list[dict],
     for c in c_values:
         for lam in lambda_values:
             params = {**base_params, "c": c, "lambda_threshold": lam}
-            result = run_cb_pseudotrader(account_id, historical_trades, params, basket_params)
+            result = run_cb_pseudotrader(account_id, historical_trades, params, basket_params, account_config=account_config)
             result["params"] = {"c": c, "lambda_threshold": lam}
             results.append(result)
 

@@ -31,7 +31,7 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 | Phase | Title | Scope | Sessions | CRITICALs Resolved | Status |
 |-------|-------|-------|----------|---------------------|--------|
 | 0 | Quick Wins | Kelly L4 formula + GUI WebSocket sanitize | 1 | 2 | COMPLETE |
-| 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | PENDING |
+| 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | COMPLETE |
 | 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | PENDING |
 | 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | PENDING |
 | 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | PENDING |
@@ -235,7 +235,7 @@ pre-computed data or JSON files.
 
 ---
 
-### Session 1.3 — Account-Aware Replay + Depth Fixes
+### Session 1.3 — Account-Aware Replay + Depth Fixes [COMPLETE]
 
 ````
 ## Execution Session 1.3 — Pseudotrader Account-Aware Replay + Depth Fixes
