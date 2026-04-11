@@ -70,3 +70,20 @@ captain-command/_config/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Audit worktrees (temporary git worktrees from audit runner)
+.audit-worktrees/
+
+# External tool data
+.voicetree/
+voicetree-*/
+.nogic/
+.mcp.json
+
+# Runtime logs
+logs/*.log
+
+# GUI build prompts / agent scaffolding (not production code)
+captain-gui/agent-skills/
+captain-gui/docs/
+captain-gui/PSEUDOTRADER_DASHBOARD_PROMPT.md
