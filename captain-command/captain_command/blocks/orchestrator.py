@@ -31,6 +31,7 @@ from shared.redis_client import (
     CH_ALERTS,
     CH_STATUS,
     CH_TRADE_OUTCOMES,
+    CH_PROCESS_LOGS,
     signals_channel,
     ensure_consumer_group,
     read_stream,
@@ -38,6 +39,7 @@ from shared.redis_client import (
     STREAM_SIGNALS,
     GROUP_COMMAND_SIGNALS,
 )
+from shared.process_logger import ProcessLogger
 from shared.journal import write_checkpoint
 from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, SYSTEM_TIMEZONE
 
@@ -98,6 +100,7 @@ class CommandOrchestrator:
     def __init__(self):
         self.running = False
         self.telegram_bot = None  # Injected by main.py after bot creation
+        self.plog = ProcessLogger("COMMAND", get_redis_client())
         self.process_health: dict = {
             "OFFLINE": {"status": "unknown", "timestamp": None},
             "ONLINE": {"status": "unknown", "timestamp": None},
@@ -109,6 +112,7 @@ class CommandOrchestrator:
         self._last_health_check: float = 0
         self._last_heartbeat: float = 0
         self._last_quiet_flush: float = 0
+        self._last_health_log: float = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -131,6 +135,12 @@ class CommandOrchestrator:
             target=self._redis_listener, daemon=True, name="cmd-redis"
         )
         self._redis_thread.start()
+
+        # Background thread 3: Process log forwarder (Live Terminal GUI)
+        self._plog_thread = threading.Thread(
+            target=self._process_log_forwarder, daemon=True, name="cmd-plog"
+        )
+        self._plog_thread.start()
 
         # Main loop: scheduler (runs in caller thread)
         self._run_scheduler()
@@ -225,6 +235,44 @@ class CommandOrchestrator:
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 30)
 
+    def _process_log_forwarder(self):
+        """Subscribe to process logs from all processes and forward to GUI.
+
+        Runs in a dedicated thread. Each log entry is pushed to all
+        connected WebSocket sessions as a ``process_log`` message.
+        """
+        logger.info("Process log forwarder started")
+        backoff = 1
+
+        while self.running:
+            try:
+                pubsub = get_redis_pubsub()
+                pubsub.subscribe(CH_PROCESS_LOGS)
+                backoff = 1
+
+                for message in pubsub.listen():
+                    if not self.running:
+                        return
+                    if message["type"] != "message":
+                        continue
+
+                    try:
+                        entry = json.loads(message["data"])
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    # Forward to all connected GUI users
+                    from captain_command.api import _ws_sessions
+                    for user_id in list(_ws_sessions.keys()):
+                        gui_push(user_id, {"type": "process_log", **entry})
+
+            except Exception as exc:
+                logger.error("Process log forwarder error: %s — reconnecting in %ds",
+                             exc, backoff)
+                if self.running:
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+
     # ------------------------------------------------------------------
     # Message handlers
     # ------------------------------------------------------------------
@@ -242,6 +290,13 @@ class CommandOrchestrator:
         ts = data.get("timestamp", datetime.now().isoformat())
 
         update_last_signal_time(ts)
+
+        signals = data.get("signals", [])
+        assets = [s.get("asset", "?") for s in signals]
+        self.plog.info(
+            f"Signal batch received \u2014 {len(signals)} signal(s) for {user_id}: {', '.join(assets)}",
+            source="b1_routing",
+        )
 
         # --- Parity filter (multi-instance trade alternation) ---
         instance_parity = os.environ.get("INSTANCE_PARITY", "").strip()
@@ -370,11 +425,23 @@ class CommandOrchestrator:
                      sanitised_order.get("size"), account_id,
                      sanitised_order.get("tp"), sanitised_order.get("sl"))
 
+        self.plog.info(
+            f"Bracket order: {sanitised_order.get('asset')} {direction} "
+            f"x{sanitised_order.get('size')} @ MKT, "
+            f"TP={sanitised_order.get('tp')}, SL={sanitised_order.get('sl')}",
+            source="b3_api",
+        )
+
         result = adapter.send_signal(sanitised_order)
         status = result.get("status", "UNKNOWN")
 
         if status == "PLACED":
             logger.info("AUTO-EXECUTE SUCCESS: order_id=%s", result.get("order_id"))
+            self.plog.info(
+                f"Order PLACED: {sanitised_order.get('asset')} {direction} "
+                f"x{sanitised_order.get('size')} (order_id={result.get('order_id')})",
+                source="b3_api",
+            )
             gui_push("primary_user", {
                 "type": "command_ack",
                 "command": "AUTO_EXECUTED",
@@ -383,6 +450,10 @@ class CommandOrchestrator:
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)
+            self.plog.error(
+                f"Order FAILED: {sanitised_order.get('asset')} \u2014 {status}",
+                source="b3_api",
+            )
             gui_push("primary_user", {
                 "type": "error",
                 "message": f"Auto-execute failed: {status}",
@@ -529,6 +600,17 @@ class CommandOrchestrator:
 
         summary = run_health_checks(notify_fn=_notify)
         update_api_connections(summary.get("details", {}))
+
+        # Log to terminal every 5 minutes (avoids spam)
+        now = time.time()
+        if now - self._last_health_log >= 300:
+            self._last_health_log = now
+            statuses = {
+                role: info.get("status", "unknown")
+                for role, info in self.process_health.items()
+            }
+            parts = ", ".join(f"{r}={s}" for r, s in statuses.items())
+            self.plog.info(f"Health check: {parts}", source="scheduler")
 
     def _publish_heartbeat(self):
         """Publish Command process heartbeat to Redis."""

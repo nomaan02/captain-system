@@ -98,6 +98,7 @@ def run_signal_output(
             "session": session_id,
             "timestamp": datetime.now().isoformat(),
             "direction": direction,
+            "entry_price": asset_features.get("entry_price"),
             "tp_level": tp_level,
             "sl_level": sl_level,
             "sl_method": strategy.get("sl_method", "OR_RANGE"),

@@ -25,6 +25,7 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
+from shared.process_logger import ProcessLogger
 from captain_online.blocks.b8_or_tracker import ORTracker
 
 ROLE = os.environ.get("CAPTAIN_ROLE", "ONLINE")
@@ -79,6 +80,7 @@ def _start_market_streams():
 
 def main():
     logger.info("Starting Captain Online...")
+    plog = ProcessLogger("ONLINE", get_redis_client())
 
     # Verify infrastructure
     try:
@@ -100,6 +102,7 @@ def main():
     # Initialize Redis Stream consumer groups
     ensure_consumer_group(STREAM_COMMANDS, GROUP_ONLINE_COMMANDS)
     logger.info("Redis Stream consumer groups initialized")
+    plog.info("QuestDB + Redis verified", source="main")
 
     last = get_last_checkpoint(ROLE)
     if last:
@@ -110,6 +113,10 @@ def main():
 
     # Start market data streams (populates quote_cache for B1, B1-features, B7)
     market_stream = _start_market_streams()
+    if market_stream:
+        plog.info("MarketStream started \u2014 live quotes active", source="stream")
+    else:
+        plog.warn("MarketStream failed to start", source="stream")
 
     write_checkpoint(ROLE, "STREAMS_STARTED", "streams_ready", "starting_orchestrator")
 
@@ -128,6 +135,7 @@ def main():
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
+    plog.info("Online orchestrator started \u2014 24/7 session loop", source="orchestrator")
     logger.info("Starting session orchestrator...")
     orchestrator.start()  # Blocks — runs 24/7 session loop
 

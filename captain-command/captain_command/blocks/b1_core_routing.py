@@ -377,6 +377,9 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
                     signal.get("asset", ""),
                     json.dumps({
                         "direction": signal.get("direction"),
+                        "entry_price": signal.get("entry_price"),
+                        "tp_level": signal.get("tp_level"),
+                        "sl_level": signal.get("sl_level"),
                         "confidence_tier": signal.get("confidence_tier"),
                         "quality_score": signal.get("quality_score"),
                     }),
@@ -384,6 +387,29 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
             )
     except Exception as exc:
         logger.error("Failed to log signal %s: %s", signal_id, exc, exc_info=True)
+
+
+def mark_signals_cleared(user_id: str, signal_ids: list[str]):
+    """Insert SIGNAL_CLEARED events so cleared signals don't reappear on refresh."""
+    try:
+        with get_cursor() as cur:
+            for sid in signal_ids:
+                cur.execute(
+                    """INSERT INTO p3_session_event_log(
+                           ts, user_id, event_type, event_id,
+                           asset, details
+                       ) VALUES(%s, %s, %s, %s, %s, %s)""",
+                    (
+                        datetime.now().isoformat(),
+                        user_id,
+                        "SIGNAL_CLEARED",
+                        sid,
+                        "",
+                        "{}",
+                    ),
+                )
+    except Exception as exc:
+        logger.error("Failed to mark signals cleared: %s", exc, exc_info=True)
 
 
 def _log_trade_confirmation(signal_id: str, user_id: str, action: str, data: dict):

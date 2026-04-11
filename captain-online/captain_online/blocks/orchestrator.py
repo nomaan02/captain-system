@@ -34,10 +34,11 @@ from shared.redis_client import (
     get_redis_client,
     ensure_consumer_group, read_stream, ack_message,
     STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
-    CH_STATUS,
+    CH_STATUS, REDIS_KEY_QUOTES,
 )
 from shared.journal import write_checkpoint
 from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE
+from shared.process_logger import ProcessLogger
 from captain_online.blocks.b9_session_controller import (
     get_session_open_times,
     is_session_opening as _sc_is_session_opening,
@@ -62,6 +63,7 @@ class OnlineOrchestrator:
         self._session_evaluated_today = {}  # {session_id: date} — prevent double-eval
         self._all_signals = []  # Collect signals for B8 concentration
         self._or_tracker = or_tracker
+        self.plog = ProcessLogger("ONLINE", get_redis_client())
         # Pending Phase A results awaiting OR breakout for Phase B (B6)
         # {session_id: {"data", "regime", "aim", "user_results", "resolved_assets"}}
         self._pending_sessions = {}
@@ -127,8 +129,42 @@ class OnlineOrchestrator:
                 except Exception as e:
                     logger.error("Shadow monitor error: %s", e, exc_info=True)
 
+            # Publish live quotes to Redis for captain-command GUI
+            self._publish_quotes_to_redis()
+
             # Heartbeat
             time.sleep(1)
+
+    def _publish_quotes_to_redis(self):
+        """Publish quote_cache snapshot to Redis for captain-command GUI."""
+        from shared.topstep_stream import quote_cache
+        from shared.contract_resolver import get_asset_for_contract
+        try:
+            all_quotes = quote_cache.all()
+            if not all_quotes:
+                return
+            r = get_redis_client()
+            pipe = r.pipeline(transaction=False)
+            for contract_id, quote in all_quotes.items():
+                asset = get_asset_for_contract(contract_id)
+                if not asset:
+                    continue
+                pipe.hset(REDIS_KEY_QUOTES, asset, json.dumps({
+                    "last_price": quote.get("lastPrice"),
+                    "best_bid": quote.get("bestBid"),
+                    "best_ask": quote.get("bestAsk"),
+                    "change": quote.get("change"),
+                    "change_pct": quote.get("changePercent"),
+                    "open": quote.get("open"),
+                    "high": quote.get("high"),
+                    "low": quote.get("low"),
+                    "volume": quote.get("volume"),
+                    "timestamp": quote.get("timestamp"),
+                }, default=str))
+            pipe.expire(REDIS_KEY_QUOTES, 10)
+            pipe.execute()
+        except Exception:
+            pass  # Non-critical — don't log every second
 
     def _is_session_opening(self, now: datetime, session_id: int, hour: int, minute: int) -> bool:
         """Check if we're within the session open window and haven't evaluated today."""
@@ -147,6 +183,7 @@ class OnlineOrchestrator:
         """
         session_name = SESSION_IDS.get(session_id, "UNKNOWN")
         logger.info("Session %s (%d) opening — beginning evaluation", session_name, session_id)
+        self.plog.info(f"Session {session_name} opening \u2014 beginning evaluation", source="orchestrator")
         write_checkpoint("ONLINE", f"SESSION_{session_name}", "start", "circuit_breaker")
 
         # Circuit breaker check
@@ -186,13 +223,18 @@ class OnlineOrchestrator:
             data = run_data_ingestion(session_id)
             if data is None:
                 logger.info("Session %s: no active assets — skipping", session_name)
+                self.plog.info(f"Session {session_name}: no active assets \u2014 skipping", source="b1_data")
                 self._session_evaluated_today[session_id] = datetime.now(_ET).date()
                 return
+
+            n_assets = len(data.get("active_assets", []))
+            self.plog.info(f"B1: Data ingestion \u2014 {n_assets} assets", source="b1_data")
 
             from captain_online.blocks.b2_regime_probability import run_regime_probability
             regime = run_regime_probability(
                 data["active_assets"], data["features"], data["regime_models"]
             )
+            self.plog.info(f"B2: Regime probability \u2014 {n_assets} assets classified", source="b2_regime")
 
             # Update B7 regime cache so position monitor can detect regime shifts
             from captain_online.blocks.b7_position_monitor import update_regime_cache
@@ -203,6 +245,7 @@ class OnlineOrchestrator:
                 data["active_assets"], data["features"],
                 data["aim_states"], data["aim_weights"]
             )
+            self.plog.info(f"B3: AIM aggregation \u2014 {n_assets} assets scored", source="b3_aim")
 
             write_checkpoint("ONLINE", f"SESSION_{session_name}", "shared_done", "per_user_loop")
 
@@ -251,6 +294,10 @@ class OnlineOrchestrator:
                 logger.info("Phase A complete for %s — %d assets tracked, "
                             "%d user(s) pending Phase B",
                             session_name, len(data["active_assets"]), len(user_results))
+                self.plog.info(
+                    f"Phase A complete \u2014 {len(data['active_assets'])} assets registered for OR tracking",
+                    source="orchestrator",
+                )
                 # Don't run B8/B9 yet — defer until Phase B completes
                 self._publish_pipeline_stage("OR_FORMING")
                 self._session_evaluated_today[session_id] = datetime.now(_ET).date()
@@ -336,12 +383,26 @@ class OnlineOrchestrator:
             # Run Phase B (B6) for newly resolved breakout assets
             if newly_resolved:
                 self._publish_pipeline_stage("SIGNAL_GEN")
+                for asset in newly_resolved:
+                    state = self._or_tracker.get_state(asset)
+                    direction = state.direction if state else "?"
+                    self.plog.info(
+                        f"BREAKOUT {direction}: {asset} (OR resolved)",
+                        source="or_tracker",
+                    )
                 for ur in pending["user_results"]:
                     signals = self._run_b6_for_user(
                         session_id, data, regime, aim, ur,
                         assets=newly_resolved,
                     )
                     self._all_signals.extend(signals)
+                    for sig in signals:
+                        self.plog.info(
+                            f"B6: Signal \u2014 {sig.get('asset')} {sig.get('direction')} "
+                            f"@ {sig.get('entry_price')} ({sig.get('size', '?')} cts, "
+                            f"conf={sig.get('quality_score', '?')})",
+                            source="b6_signal",
+                        )
                 logger.info("Phase B: generated signals for %s", newly_resolved)
                 self._publish_pipeline_stage("EXECUTED")
 

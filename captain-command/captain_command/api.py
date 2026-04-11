@@ -550,6 +550,17 @@ def api_dashboard(user_id: str):
     return JSONResponse(_make_json_safe(build_dashboard_snapshot(user_id)))
 
 
+@app.post("/api/signals/clear")
+def api_clear_signals(body: dict):
+    """Mark signals as cleared so they don't reappear on refresh."""
+    from captain_command.blocks.b1_core_routing import mark_signals_cleared
+    user_id = body.get("user_id", "primary_user")
+    signal_ids = body.get("signal_ids", [])
+    if signal_ids:
+        mark_signals_cleared(user_id, signal_ids)
+    return JSONResponse({"ok": True, "cleared": len(signal_ids)})
+
+
 @app.get("/api/aim/{aim_id}/detail")
 def api_aim_detail(aim_id: int):
     """AIM detail for the registry modal — per-asset breakdown + validation."""

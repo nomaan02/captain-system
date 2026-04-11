@@ -38,6 +38,7 @@ from shared.redis_client import (
     GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS, GROUP_OFFLINE_SIGNAL_OUTCOMES,
 )
 from shared.journal import write_checkpoint
+from shared.process_logger import ProcessLogger
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class OfflineOrchestrator:
         self._detectors = {}  # {asset_id: (bocpd_detector, cusum_detector)}
         self._active_transitions = {}  # {asset_id: TransitionPhaser}
         self._redis_thread = None  # Stored for graceful shutdown join
+        self.plog = ProcessLogger("OFFLINE", get_redis_client())
 
     def start(self):
         """Start the orchestrator event loop."""
@@ -129,7 +131,13 @@ class OfflineOrchestrator:
         Triggers: DMA, BOCPD, CUSUM, Level escalation, Kelly, TSM sim, CB params.
         """
         asset_id = outcome.get("asset", "")
-        logger.info("Trade outcome received: %s pnl=%.2f", asset_id, outcome.get("pnl", 0))
+        pnl = outcome.get("pnl", 0)
+        logger.info("Trade outcome received: %s pnl=%.2f", asset_id, pnl)
+        self.plog.info(
+            f"Trade outcome received: {asset_id} {'+'if pnl>=0 else ''}"
+            f"${pnl:.2f}",
+            source="orchestrator",
+        )
 
         write_checkpoint("OFFLINE", "TRADE_OUTCOME", "processing",
                          "dma_bocpd_cusum_kelly", {"asset": asset_id})
@@ -138,12 +146,17 @@ class OfflineOrchestrator:
             # 1. DMA meta-weight update
             from captain_offline.blocks.b1_dma_update import run_dma_update
             run_dma_update(outcome)
+            self.plog.info(f"B1: DMA meta-weight update \u2014 {asset_id}", source="b1_dma")
 
             # 2. BOCPD decay detection
             from captain_offline.blocks.b2_bocpd import run_bocpd_update
             pnl_pc = outcome.get("pnl", 0) / max(outcome.get("contracts", 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
+            if cp_prob and cp_prob > 0.5:
+                self.plog.warn(f"B2: BOCPD changepoint detected for {asset_id} (p={cp_prob:.2f})", source="b2_bocpd")
+            else:
+                self.plog.info(f"B2: BOCPD \u2014 no changepoint ({asset_id})", source="b2_bocpd")
 
             # 3. CUSUM decay detection
             from captain_offline.blocks.b2_cusum import run_cusum_update
@@ -160,6 +173,7 @@ class OfflineOrchestrator:
             # 5. Kelly parameter update
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
             run_kelly_update(outcome)
+            self.plog.info(f"B8: Kelly update \u2014 {asset_id}", source="b8_kelly")
 
             # 6. CB parameter estimation (if sufficient data)
             from captain_offline.blocks.b8_cb_params import estimate_cb_params
@@ -559,6 +573,7 @@ class OfflineOrchestrator:
     def _run_daily(self):
         """Daily tasks: drift detection, AIM lifecycle, warmup check."""
         logger.info("Running daily offline tasks...")
+        self.plog.info("Daily offline tasks starting (drift, lifecycle, warmup)", source="scheduler")
         write_checkpoint("OFFLINE", "DAILY_CLOSE", "starting", "drift_lifecycle_warmup")
 
         try:
@@ -611,6 +626,7 @@ class OfflineOrchestrator:
     def _run_weekly(self):
         """Weekly tasks: Tier 1 AIM retrain, HDWM diversity, diagnostic."""
         logger.info("Running weekly offline tasks...")
+        self.plog.info("Weekly offline tasks starting (retrain, HDWM, diagnostic)", source="scheduler")
 
         try:
             from captain_offline.blocks.b1_aim_lifecycle import run_tier_retrain, TIER_1_AIMS
