@@ -36,11 +36,15 @@ from shared.redis_client import (
     ensure_consumer_group, read_stream, ack_message,
     STREAM_TRADE_OUTCOMES, STREAM_COMMANDS, STREAM_SIGNAL_OUTCOMES,
     GROUP_OFFLINE_OUTCOMES, GROUP_OFFLINE_COMMANDS, GROUP_OFFLINE_SIGNAL_OUTCOMES,
+    CH_STATUS,
 )
 from shared.journal import write_checkpoint
 from shared.process_logger import ProcessLogger
 
 logger = logging.getLogger(__name__)
+
+# Pseudotrader gate: skip replay when max absolute param change < epsilon
+PSEUDOTRADER_EPSILON = 1e-4
 
 
 class OfflineOrchestrator:
@@ -51,7 +55,91 @@ class OfflineOrchestrator:
         self._detectors = {}  # {asset_id: (bocpd_detector, cusum_detector)}
         self._active_transitions = {}  # {asset_id: TransitionPhaser}
         self._redis_thread = None  # Stored for graceful shutdown join
+        self._last_heartbeat_time = 0
         self.plog = ProcessLogger("OFFLINE", get_redis_client())
+
+    def _pseudotrader_gate(self, asset_id: str, update_type: str,
+                           proposed_aim_weights: dict | None = None,
+                           proposed_kelly_params: dict | None = None) -> bool:
+        """Run pseudotrader validation on proposed parameter changes.
+
+        Fail-safe: if the pseudotrader crashes, returns False (reject the update).
+
+        Args:
+            asset_id: Asset being updated
+            update_type: "AIM_WEIGHT_CHANGE" or "KELLY_UPDATE"
+            proposed_aim_weights: {aim_id: inclusion_probability} for DMA updates
+            proposed_kelly_params: {regime: {session: kelly_full}} for Kelly updates
+
+        Returns:
+            True if the update should be committed, False if rejected.
+        """
+        try:
+            from captain_offline.blocks.b3_pseudotrader import run_signal_replay_comparison
+
+            proposed_update = {"update_type": update_type}
+            if proposed_aim_weights is not None:
+                proposed_update["proposed_aim_weights"] = proposed_aim_weights
+            if proposed_kelly_params is not None:
+                proposed_update["proposed_kelly_params"] = proposed_kelly_params
+
+            result = run_signal_replay_comparison(asset_id, proposed_update)
+            recommendation = result.get("recommendation", "REJECT")
+
+            if recommendation == "ADOPT":
+                logger.info("Pseudotrader ADOPT for %s [%s]: sharpe_delta=%.4f, pbo=%.3f",
+                            asset_id, update_type,
+                            result.get("sharpe_improvement", 0),
+                            result.get("pbo", 0))
+                return True
+            else:
+                logger.warning("Pseudotrader REJECT for %s [%s]: sharpe_delta=%.4f, "
+                               "pbo=%.3f, dsr=%.3f",
+                               asset_id, update_type,
+                               result.get("sharpe_improvement", 0),
+                               result.get("pbo", 0),
+                               result.get("dsr", 0))
+                self.plog.warn(
+                    f"Pseudotrader REJECTED {update_type} for {asset_id} "
+                    f"(sharpe_delta={result.get('sharpe_improvement', 0):.4f})",
+                    source="b3_pseudotrader",
+                )
+                return False
+
+        except Exception as exc:
+            # Fail-safe: pseudotrader crash -> reject the update
+            logger.error("Pseudotrader gate crashed for %s [%s]: %s — "
+                         "REJECTING update (fail-safe)",
+                         asset_id, update_type, exc, exc_info=True)
+            self.plog.error(
+                f"Pseudotrader CRASHED for {asset_id} [{update_type}]: {exc} — "
+                f"update blocked (fail-safe)",
+                source="b3_pseudotrader",
+            )
+            return False
+
+    @staticmethod
+    def _is_trivial_dma_change(current: dict, proposed: dict) -> bool:
+        """Check if DMA weight changes are below epsilon (trivial)."""
+        if not current or not proposed:
+            return False
+        for aid in proposed:
+            cur_val = current.get(aid, 0.0)
+            if abs(proposed[aid] - cur_val) >= PSEUDOTRADER_EPSILON:
+                return False
+        return True
+
+    @staticmethod
+    def _is_trivial_kelly_change(current_ewma: dict, proposed_ewma: dict) -> bool:
+        """Check if EWMA/Kelly changes are below epsilon (trivial)."""
+        if not current_ewma or not proposed_ewma:
+            return False
+        for key in ("win_rate", "avg_win", "avg_loss"):
+            cur_val = current_ewma.get(key, 0.0)
+            prop_val = proposed_ewma.get(key, 0.0)
+            if abs(prop_val - cur_val) >= PSEUDOTRADER_EPSILON:
+                return False
+        return True
 
     def start(self):
         """Start the orchestrator event loop."""
@@ -149,10 +237,25 @@ class OfflineOrchestrator:
                          "dma_bocpd_cusum_kelly", {"asset": asset_id})
 
         try:
-            # 1. DMA meta-weight update
+            # 1. DMA meta-weight update (gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
-            run_dma_update(outcome)
-            self.plog.info(f"B1: DMA meta-weight update \u2014 {asset_id}", source="b1_dma")
+            dma_proposed = run_dma_update(outcome, commit=False)
+            if dma_proposed and dma_proposed.get("proposed_weights"):
+                if self._is_trivial_dma_change(
+                    dma_proposed["current_weights"],
+                    dma_proposed["proposed_weights"],
+                ):
+                    # Trivial change \u2014 skip pseudotrader, commit directly
+                    run_dma_update(outcome, commit=True)
+                    self.plog.info(f"B1: DMA update (trivial) \u2014 {asset_id}", source="b1_dma")
+                elif self._pseudotrader_gate(
+                    asset_id, "AIM_WEIGHT_CHANGE",
+                    proposed_aim_weights=dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                    self.plog.info(f"B1: DMA update (pseudotrader ADOPT) \u2014 {asset_id}", source="b1_dma")
+                else:
+                    self.plog.warn(f"B1: DMA update REJECTED by pseudotrader \u2014 {asset_id}", source="b1_dma")
 
             # 2. BOCPD decay detection
             from captain_offline.blocks.b2_bocpd import run_bocpd_update
@@ -176,10 +279,25 @@ class OfflineOrchestrator:
             cp_history = bocpd_det.cp_history if bocpd_det else []
             check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
 
-            # 5. Kelly parameter update
+            # 5. Kelly parameter update (gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
-            run_kelly_update(outcome)
-            self.plog.info(f"B8: Kelly update \u2014 {asset_id}", source="b8_kelly")
+            kelly_proposed = run_kelly_update(outcome, commit=False)
+            if kelly_proposed and kelly_proposed.get("proposed_ewma"):
+                if self._is_trivial_kelly_change(
+                    kelly_proposed["current_ewma"],
+                    kelly_proposed["proposed_ewma"],
+                ):
+                    # Trivial change \u2014 skip pseudotrader, commit directly
+                    run_kelly_update(outcome, commit=True)
+                    self.plog.info(f"B8: Kelly update (trivial) \u2014 {asset_id}", source="b8_kelly")
+                elif self._pseudotrader_gate(
+                    asset_id, "KELLY_UPDATE",
+                    proposed_kelly_params=kelly_proposed["proposed_kelly"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                    self.plog.info(f"B8: Kelly update (pseudotrader ADOPT) \u2014 {asset_id}", source="b8_kelly")
+                else:
+                    self.plog.warn(f"B8: Kelly update REJECTED by pseudotrader \u2014 {asset_id}", source="b8_kelly")
 
             # 6. CB parameter estimation (if sufficient data)
             from captain_offline.blocks.b8_cb_params import estimate_cb_params
@@ -217,9 +335,23 @@ class OfflineOrchestrator:
                          "category_a_only", {"asset": asset_id, "theoretical": True})
 
         try:
-            # 1. DMA meta-weight update (Category A)
+            # 1. DMA meta-weight update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
-            run_dma_update(outcome)
+            dma_proposed = run_dma_update(outcome, commit=False)
+            if dma_proposed and dma_proposed.get("proposed_weights"):
+                if self._is_trivial_dma_change(
+                    dma_proposed["current_weights"],
+                    dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                elif self._pseudotrader_gate(
+                    asset_id, "AIM_WEIGHT_CHANGE",
+                    proposed_aim_weights=dma_proposed["proposed_weights"],
+                ):
+                    run_dma_update(outcome, commit=True)
+                else:
+                    logger.warning("Signal outcome DMA update REJECTED by pseudotrader for %s",
+                                   asset_id)
 
             # 2. BOCPD decay detection (Category A)
             from captain_offline.blocks.b2_bocpd import run_bocpd_update
@@ -239,9 +371,23 @@ class OfflineOrchestrator:
             cp_history = bocpd_det.cp_history if bocpd_det else []
             check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
 
-            # 5. Kelly/EWMA parameter update (Category A)
+            # 5. Kelly/EWMA parameter update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
-            run_kelly_update(outcome)
+            kelly_proposed = run_kelly_update(outcome, commit=False)
+            if kelly_proposed and kelly_proposed.get("proposed_ewma"):
+                if self._is_trivial_kelly_change(
+                    kelly_proposed["current_ewma"],
+                    kelly_proposed["proposed_ewma"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                elif self._pseudotrader_gate(
+                    asset_id, "KELLY_UPDATE",
+                    proposed_kelly_params=kelly_proposed["proposed_kelly"],
+                ):
+                    run_kelly_update(outcome, commit=True)
+                else:
+                    logger.warning("Signal outcome Kelly update REJECTED by pseudotrader for %s",
+                                   asset_id)
 
             # NOTE: CB params (b8_cb_params) and TSM simulation are INTENTIONALLY
             # SKIPPED here — they are Category B (account-specific) and must only
@@ -670,6 +816,12 @@ class OfflineOrchestrator:
         while self.running:
             now = now_et()
 
+            # Heartbeat every 30s
+            current_time = time.monotonic()
+            if current_time - self._last_heartbeat_time >= 30:
+                self._publish_heartbeat()
+                self._last_heartbeat_time = current_time
+
             # Daily close (after 16:00 ET, run once)
             if now.hour >= 16 and last_daily != now.date():
                 last_daily = now.date()
@@ -690,7 +842,19 @@ class OfflineOrchestrator:
                 last_quarterly = now.month
                 self._run_quarterly()
 
-            time.sleep(60)  # check every minute
+            time.sleep(30)
+
+    def _publish_heartbeat(self):
+        """Publish Offline process heartbeat to Redis."""
+        try:
+            client = get_redis_client()
+            client.publish(CH_STATUS, json.dumps({
+                "role": "OFFLINE",
+                "status": "ok",
+                "timestamp": now_et().isoformat(),
+            }))
+        except Exception as exc:
+            logger.error("Heartbeat publish failed: %s", exc)
 
     def _run_daily(self):
         """Daily tasks: drift detection, AIM lifecycle, warmup check."""

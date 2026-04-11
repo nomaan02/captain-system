@@ -128,7 +128,8 @@ def _compute_likelihood(modifier: float, pnl_per_contract: float,
 
 
 def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBDA,
-                    inclusion_threshold: float = DEFAULT_INCLUSION_THRESHOLD):
+                    inclusion_threshold: float = DEFAULT_INCLUSION_THRESHOLD,
+                    commit: bool = True) -> dict:
     """Execute P3-PG-02 after a trade outcome.
 
     Args:
@@ -136,6 +137,11 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
             asset, pnl, contracts, regime_at_entry, aim_breakdown_at_entry
         forgetting_factor: Lambda (default 0.99)
         inclusion_threshold: Below this, inclusion_flag = False (default 0.02)
+        commit: If False, compute proposed weights but do not write to DB.
+
+    Returns:
+        Dict with current and proposed weights:
+            asset_id, current_weights, proposed_weights, aims_data
     """
     asset_id = trade_outcome["asset"]
     pnl = trade_outcome["pnl"]
@@ -145,7 +151,7 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
 
     if contracts <= 0:
         logger.warning("DMA update skipped: invalid contract count %d", contracts)
-        return
+        return {}
 
     pnl_per_contract = pnl / contracts
 
@@ -153,7 +159,7 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
     aims = _load_active_aims(asset_id)
     if not aims:
         logger.warning("DMA update skipped: no active AIMs for %s", asset_id)
-        return
+        return {}
 
     # Snapshot before update
     snapshot_state = {a["aim_id"]: a["inclusion_probability"] for a in aims}
@@ -185,11 +191,25 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
             raw_probs[aid] = 1.0 / n
         total = 1.0
 
+    # Build proposed weights dict
+    current_weights = {a["aim_id"]: a["inclusion_probability"] for a in aims}
+    proposed_weights = {aid: raw_probs[aid] / total for aid in raw_probs}
+
+    result = {
+        "asset_id": asset_id,
+        "current_weights": current_weights,
+        "proposed_weights": proposed_weights,
+        "aims_data": aims,
+    }
+
+    if not commit:
+        return result
+
     # Step 3: Write updated weights to P3-D02
     with get_cursor() as cur:
         for aim in aims:
             aid = aim["aim_id"]
-            new_prob = raw_probs[aid] / total
+            new_prob = proposed_weights[aid]
             new_flag = new_prob > inclusion_threshold
 
             # Track days_below_threshold for suppression
@@ -209,3 +229,5 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
 
     logger.info("DMA update for %s: %d AIMs updated (lambda=%.3f)",
                 asset_id, len(aims), forgetting_factor)
+
+    return result

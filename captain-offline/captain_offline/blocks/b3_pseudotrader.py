@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 import logging
+import os
 import struct
 import uuid
 from collections import defaultdict
@@ -782,7 +783,7 @@ def run_pseudotrader(asset_id: str, update_type: str,
                       *,
                       current_params: dict | None = None,
                       proposed_params: dict | None = None,
-                      user_id: str = "primary_user",
+                      user_id: str = os.environ.get("BOOTSTRAP_USER_ID", "primary_user"),
                       lookback_days: int = 30,
                       n_trials: int = 1,
                       mode: str = REPLAY_MODE_IDEAL) -> dict:
