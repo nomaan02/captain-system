@@ -32,8 +32,8 @@ Each session below contains a **Passover Prompt** — a self-contained block you
 |-------|-------|-------|----------|---------------------|--------|
 | 0 | Quick Wins | Kelly L4 formula + GUI WebSocket sanitize | 1 | 2 | COMPLETE |
 | 1 | Pseudotrader Wiring [USER PRIORITY] | Wire B3 into orchestrator, implement replay | 3 | 2 | COMPLETE |
-| 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | PENDING |
-| 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | PENDING |
+| 2 | Fill Monitoring + Data Integrity [USER PRIORITY] | Slippage monitor, data feed checks, incidents | 2 | 3 | COMPLETE |
+| 3 | Crash Recovery + Shared Infra | Journal branching, Redis recovery, QuestDB pool | 2 | 1 | COMPLETE |
 | 4 | Remaining CRITICALs | Sensitivity fix, RPT-12, version rollback | 2 | 3 | PENDING |
 | 5 | Offline HIGH Fixes | B1-B9 HIGH gaps (20 findings) | 3 | 0 | PENDING |
 | 6 | Online HIGH Fixes | B1-B7 HIGH gaps (14 findings) | 2 | 0 | PENDING |
@@ -589,7 +589,7 @@ calls can lose data.
 
 ---
 
-### Session 4.1 — Sensitivity Fix + RPT-12
+### Session 4.1 — Sensitivity Fix + RPT-12 ✅ COMPLETE
 
 ````
 ## Execution Session 4.1 — Sensitivity Per-Parameter Perturbation + RPT-12 Alpha Decomposition
@@ -1187,14 +1187,14 @@ Phase 0 ────────────────────────
 |---|---------|-------|---------|--------|
 | 1 | G-ONL-017 (Kelly L4 formula) | 0 | 0.1 | RESOLVED |
 | 2 | G-ONL-028 / G-XCT-015 (GUI WebSocket) | 0 | 0.1 | RESOLVED |
-| 3 | G-OFF-015 (pseudotrader unwired) | 1 | 1.1 | PENDING |
+| 3 | G-OFF-015 (pseudotrader unwired) | 1 | 1.1 | RESOLVED |
 | 4 | G-OFF-016 (no pipeline replay) | 1 | 1.2 | RESOLVED |
-| 5 | G-ONL-042 (fill slippage) | 2 | 2.1 | PENDING |
-| 6 | G-CMD-003 (data feed monitoring) | 2 | 2.2 | PENDING |
-| 7 | G-CMD-004 (balance incident) | 2 | 2.2 | PENDING |
-| 8 | G-XCT-012 (crash recovery) | 3 | 3.1 | PENDING |
-| 9 | G-OFF-029 (sensitivity per-param) | 4 | 4.1 | PENDING |
-| 10 | G-CMD-002 (RPT-12) | 4 | 4.1 | PENDING |
+| 5 | G-ONL-042 (fill slippage) | 2 | 2.1 | RESOLVED |
+| 6 | G-CMD-003 (data feed monitoring) | 2 | 2.2 | RESOLVED |
+| 7 | G-CMD-004 (balance incident) | 2 | 2.2 | RESOLVED |
+| 8 | G-XCT-012 (crash recovery) | 3 | 3.1 | RESOLVED |
+| 9 | G-OFF-029 (sensitivity per-param) | 4 | 4.1 | RESOLVED |
+| 10 | G-CMD-002 (RPT-12) | 4 | 4.1 | RESOLVED |
 | 11 | G-OFF-046 (version rollback) | 4 | 4.2 | PENDING |
 
 **Deferred (not in tracker):**

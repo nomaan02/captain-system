@@ -70,11 +70,12 @@ def _compute_dsr(sharpe: float, n_trials: int, skew: float,
 
 
 def _backtest_perturbed(asset_id: str, base_returns: list[float], delta: float,
-                         locked_strategy: dict | None = None) -> list[float]:
+                         locked_strategy: dict | None = None,
+                         param_name: str | None = None) -> list[float]:
     """Simulate perturbed strategy returns via signal replay.
 
-    Loads replay context, applies delta perturbation to the locked strategy's
-    SL and TP multipliers, then runs SignalReplayEngine.strategy_replay()
+    Loads replay context, applies delta perturbation to a single named
+    strategy parameter, then runs SignalReplayEngine.strategy_replay()
     to produce daily P&L under the perturbed parameters.
 
     Falls back to the original scaling approach (r * (1 + delta)) when
@@ -112,11 +113,17 @@ def _backtest_perturbed(asset_id: str, base_returns: list[float], delta: float,
         base_tp = strategy.get("tp_multiplier",
                   strategy.get("tp_multiple", 2.0))
 
-        # Perturb both SL and TP by delta
-        perturbed_params = {
-            "sl_multiplier": base_sl * (1 + delta),
-            "tp_multiplier": base_tp * (1 + delta),
+        # Build base params, perturb only the named parameter (G-OFF-029)
+        base_params = {
+            "sl_multiplier": base_sl,
+            "tp_multiplier": base_tp,
         }
+        perturbed_params = dict(base_params)
+        if param_name and param_name in perturbed_params:
+            perturbed_params[param_name] *= (1 + delta)
+        else:
+            for k in perturbed_params:
+                perturbed_params[k] *= (1 + delta)
 
         engine = SignalReplayEngine(asset=asset_id)
         replayed_trades = engine.strategy_replay(
@@ -166,15 +173,37 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
         logger.warning("Sensitivity scan %s: insufficient data (%d < 30)", asset_id, len(base_returns))
         return {"robustness_status": "INSUFFICIENT_DATA", "asset_id": asset_id}
 
-    # Run perturbation grid
+    # Load locked strategy once for all perturbation runs
+    try:
+        from shared.signal_replay import SignalReplayEngine
+        ctx = SignalReplayEngine.load_replay_context(asset_id)
+        locked_strategy = ctx.get("locked_strategy", {})
+    except Exception:
+        locked_strategy = {}
+
+    # Determine perturbable parameters from locked strategy
+    perturbable_params = []
+    for p in ["sl_multiplier", "tp_multiplier"]:
+        alt = p.replace("multiplier", "multiple")
+        if locked_strategy.get(p) is not None or locked_strategy.get(alt) is not None:
+            perturbable_params.append(p)
+    if not perturbable_params:
+        perturbable_params = ["sl_multiplier", "tp_multiplier"]
+
+    # Per-parameter perturbation grid: N_params × 7 points (G-OFF-029)
     sharpe_values = []
     grid_results = []
+    grid_returns = {}
 
-    for delta in PERTURBATION_DELTAS:
-        perturbed = _backtest_perturbed(asset_id, base_returns, delta)
-        sharpe = _compute_sharpe(perturbed)
-        sharpe_values.append(sharpe)
-        grid_results.append({"delta": delta, "sharpe": sharpe})
+    for param_name in perturbable_params:
+        for delta in PERTURBATION_DELTAS:
+            perturbed = _backtest_perturbed(asset_id, base_returns, delta,
+                                            locked_strategy=locked_strategy,
+                                            param_name=param_name)
+            sharpe = _compute_sharpe(perturbed)
+            sharpe_values.append(sharpe)
+            grid_results.append({"param": param_name, "delta": delta, "sharpe": sharpe})
+            grid_returns[(param_name, delta)] = perturbed
 
     # Sharpe stability (CV)
     arr = np.array(sharpe_values)
@@ -182,16 +211,18 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
     std_sharpe = arr.std()
     sharpe_stability = float(std_sharpe / max(abs(mean_sharpe), 1e-10))
 
-    # PBO
-    pbo = _compute_pbo(base_returns)
+    # PBO on best-performing grid config instead of base_returns (G-OFF-030)
+    best_key = max(grid_returns, key=lambda k: _compute_sharpe(grid_returns[k]))
+    pbo = _compute_pbo(grid_returns[best_key])
 
     # DSR
     skew = float(np.mean((arr - arr.mean()) ** 3) / max(arr.std() ** 3, 1e-10)) if arr.std() > 0 else 0.0
     kurt = float(np.mean((arr - arr.mean()) ** 4) / max(arr.std() ** 4, 1e-10)) if arr.std() > 0 else 3.0
-    dsr = _compute_dsr(max(sharpe_values), len(PERTURBATION_DELTAS), skew, kurt, len(base_returns))
+    n_configs = len(perturbable_params) * len(PERTURBATION_DELTAS)
+    dsr = _compute_dsr(max(sharpe_values), n_configs, skew, kurt, len(base_returns))
 
-    # Complexity penalty
-    complexity_penalty = num_parameters * penalty_coefficient
+    # Complexity penalty (use actual param count from grid)
+    complexity_penalty = len(perturbable_params) * penalty_coefficient
     adjusted_sharpe = max(sharpe_values) - complexity_penalty
 
     # Flags

@@ -68,7 +68,7 @@
 | G-OFF-012 | B2-CUSUM | b2_cusum.py:38,44 | Doc 32 PG-06 | `[GAP]` | MEDIUM | Fresh CUSUM detector defaults to allowance=0.0 instead of loading calibrated value from D04 |
 | G-OFF-013 | B2-Escalation | b2_level_escalation.py:13 | Doc 32 PG-05 | `[GAP]` | MEDIUM | L3 "5 consecutive days" checked per-trade (cp_history), not per calendar day |
 | G-OFF-014 | B2-Escalation | b2_level_escalation.py:209 | Doc 32 PG-06:274 | `[GAP]` | MEDIUM | CUSUM breach severity hardcoded as 0.85 float; spec passes string label |
-| G-OFF-015 | B3 | orchestrator.py (entire) | Doc 32 PG-09 | `[GAP]` | CRITICAL | B3 pseudotrader ZERO references in orchestrator; never triggered by any event |
+| G-OFF-015 | B3 | orchestrator.py (entire) | Doc 32 PG-09 | `[RESOLVED]` | CRITICAL | B3 pseudotrader ZERO references in orchestrator; never triggered by any event |
 | G-OFF-016 | B3 | b3_pseudotrader.py:441-512 | Doc 32 PG-09 §1-2 | `[RESOLVED]` | CRITICAL | Spec requires captain_online_replay(); code accepts pre-computed P&L lists instead |
 | G-OFF-017 | B3 | b3_pseudotrader.py (entire) | Doc 28 §7 | `[GAP]` | HIGH | No SHA256 deterministic tick stream generator for synthetic replay |
 | G-OFF-018 | B3 | b3_pseudotrader.py (entire) | Doc 28 §8 | `[GAP]` | HIGH | No LEGACY vs IDEAL mode parameter; no mode-labelled results |
@@ -82,8 +82,8 @@
 | G-OFF-026 | B4 | b4_injection.py:46-65 | Doc 32 PG-10 §1 | `[GAP]` | MEDIUM | Simplified retroactive AIM analysis; no per-AIM replay over candidate's historical window |
 | G-OFF-027 | B4 | b4_injection.py:109-169 | Doc 32 PG-10 §5 | `[GAP]` | MEDIUM | No RPT-05 report generation or GUI notification on injection result |
 | G-OFF-028 | B4 | b4_injection.py:109-169 | Doc 32 PG-11 | `[GAP]` | MEDIUM | REJECT does not reset P3-D00.captain_status to ACTIVE as spec requires |
-| G-OFF-029 | B5 | b5_sensitivity.py:169-177 | Doc 32 PG-12 | `[GAP]` | CRITICAL | Perturbation deltas applied uniformly to ALL params; spec requires per-parameter grid (7 vs N×7) |
-| G-OFF-030 | B5 | b5_sensitivity.py:59-62 | Doc 32 PG-12 | `[GAP]` | MEDIUM | PBO computed on base_returns instead of perturbation grid results |
+| G-OFF-029 | B5 | b5_sensitivity.py:169-177 | Doc 32 PG-12 | `[RESOLVED]` | CRITICAL | Perturbation deltas applied uniformly to ALL params; spec requires per-parameter grid (7 vs N×7) |
+| G-OFF-030 | B5 | b5_sensitivity.py:59-62 | Doc 32 PG-12 | `[RESOLVED]` | MEDIUM | PBO computed on base_returns instead of perturbation grid results |
 | G-OFF-031 | B5 | b5_sensitivity.py:231-246 | Doc 32 PG-12 | `[GAP]` | MEDIUM | No GUI notification or RPT-03 section on FRAGILE detection |
 | G-OFF-032 | B6 | b6_auto_expansion.py:234-263 | Doc 32 PG-13 §2 | `[GAP]` | HIGH | GA fitness evaluated on full window; no walk-forward train/validate split |
 | G-OFF-033 | B6 | b6_auto_expansion.py:269-275 | Doc 32 PG-13 §4 | `[GAP]` | HIGH | PBO computed on raw holdout_returns identically for all candidates; should use per-candidate OOS |
@@ -349,9 +349,9 @@ The following spec requirements were verified as correctly implemented:
 | G-ONL-039 | B8 | b8_concentration_monitor.py:30-109 | Doc 33 PG-28 | `[GAP]` | MEDIUM | PG-28 counts open positions by direction (LONG vs SHORT fraction); code measures user concentration (users_in_direction / total_users). Different metric |
 | G-ONL-040 | B8 | b8_concentration_monitor.py:120 | Doc 33 PG-28 | `[GAP]` | LOW | Spec says priority="HIGH" for concentration alert; code uses "CRITICAL" — over-escalation may cause alert fatigue |
 | G-ONL-041 | B8 | b8_concentration_monitor.py:76,124 | CLAUDE.md TZ rule | `[GAP]` | LOW | `datetime.now().isoformat()` in alert timestamps without timezone |
-| G-ONL-042 | B9 | b9_capacity_evaluation.py:26-162 | Doc 33 PG-29 | `[GAP]` | CRITICAL | Spec requires per-asset fill slippage analysis (fill_quality, slippage_bps, avg_fill_time, fill_rate, volume_participation); code implements supply/demand capacity planning model. None of the five spec metrics exist |
-| G-ONL-043 | B9 | b9_capacity_evaluation.py:26-162 | Doc 33 PG-29 | `[GAP]` | HIGH | No notification/alert published when slippage exceeds threshold; spec requires NOTIFY priority="MEDIUM" |
-| G-ONL-044 | B9 | b9_capacity_evaluation.py:138,169-186 | Doc 33 PG-29 | `[GAP]` | MEDIUM | Naive `datetime.now()` and `LIKE %s` query without `LATEST ON` deduplication |
+| G-ONL-042 | B9 | b9_capacity_evaluation.py:26-162 | Doc 33 PG-29 | `[RESOLVED]` | CRITICAL | Spec requires per-asset fill slippage analysis (fill_quality, slippage_bps, avg_fill_time, fill_rate, volume_participation); code implements supply/demand capacity planning model. None of the five spec metrics exist |
+| G-ONL-043 | B9 | b9_capacity_evaluation.py:26-162 | Doc 33 PG-29 | `[RESOLVED]` | HIGH | No notification/alert published when slippage exceeds threshold; spec requires NOTIFY priority="MEDIUM" |
+| G-ONL-044 | B9 | b9_capacity_evaluation.py:138,169-186 | Doc 33 PG-29 | `[RESOLVED]` | MEDIUM | Naive `datetime.now()` and `LIKE %s` query without `LATEST ON` deduplication |
 | G-ONL-045 | Orch | orchestrator.py:102-136 | Doc 33 | `[GAP]` | MEDIUM | No periodic heartbeat published to `captain:status`; Command cannot distinguish "idle Online" from "dead Online" |
 | G-ONL-046 | Orch | orchestrator.py:204-207 | Doc 33 | `[GAP]` | MEDIUM | D00 asset query lacks `LATEST ON last_updated PARTITION BY asset_id`; fetches all historical rows, compensates with `_seen` set |
 | G-ONL-047 | Orch | orchestrator.py:714-728 | Doc 33 | `[GAP]` | MEDIUM | D15 user query `SELECT user_id, role FROM p3_d15...` has no `LATEST ON` dedup or WHERE filter; fetches entire user history table |
@@ -555,9 +555,9 @@ The following spec requirements were verified as correctly implemented:
 | ID | Block | File | Spec Ref | Status | Severity | Description |
 |----|-------|------|----------|--------|----------|-------------|
 | G-CMD-001 | api.py | api.py:113-142 | Doc 19 §4 (S2-09) | `[AMENDED]` | — | DEC-12: RBAC deferred to V2 multi-user; V1 single-user has no role separation need |
-| G-CMD-002 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 (S2-06) | `[GAP]` | CRITICAL | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist |
-| G-CMD-003 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | CRITICAL | Missing continuous data freshness/staleness monitoring; code only validates user inputs, no data feed checks |
-| G-CMD-004 | B8 | b8_reconciliation.py:109-111 | Doc 34 PG-39 step 1 | `[GAP]` | CRITICAL | Balance mismatch sends GUI notification only; spec requires create_incident("RECONCILIATION", "P2_HIGH", "FINANCE") for audit trail in D21 |
+| G-CMD-002 | B6 | b6_reports.py:32-44 | Doc 29 §2.5 (S2-06) | `[RESOLVED]` | CRITICAL | RPT-12 Alpha Decomposition completely missing; only 11 of 12 reports exist |
+| G-CMD-003 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | CRITICAL | Missing continuous data freshness/staleness monitoring; code only validates user inputs, no data feed checks |
+| G-CMD-004 | B8 | b8_reconciliation.py:109-111 | Doc 34 PG-39 step 1 | `[RESOLVED]` | CRITICAL | Balance mismatch sends GUI notification only; spec requires create_incident("RECONCILIATION", "P2_HIGH", "FINANCE") for audit trail in D21 |
 | G-CMD-005 | api.py | api.py:281,557,574,584,784+ | Doc 19 §7 (S2-07) | `[GAP]` | HIGH | Hardcoded "primary_user" in 13 locations; multi-user data isolation completely broken |
 | G-CMD-006 | api.py | api.py (entire) | Doc 19 §10 (S2-18) | `[GAP]` | HIGH | No audit trail logging; no AuditLog table; no user_id/timestamp/action/old_value/new_value records |
 | G-CMD-007 | api.py | api.py:284 | Doc 19 §6 | `[GAP]` | HIGH | No JWT silent refresh mechanism; 24h expiry with no /auth/refresh endpoint |
@@ -569,8 +569,8 @@ The following spec requirements were verified as correctly implemented:
 | G-CMD-013 | B8 | b8_reconciliation.py:73 | Doc 25+34 (S2-13) | `[GAP]` | HIGH | Scaling tier gated on topstep_optimisation instead of scaling_plan_active; XFA scaling skipped for accounts without topstep_optimisation flag |
 | G-CMD-014 | B9 | b9_incident_response.py:41 | Doc 26 §7, Doc 29 §2.4 | `[GAP]` | HIGH | P1_CRITICAL routes to ADMIN only on GUI+Telegram; spec requires ADMIN+DEV, ALL channels, quiet hours override |
 | G-CMD-015 | B9 | b9_incident_response.py (entire) | Doc 29 §2.4 (S2-21) | `[GAP]` | HIGH | No escalation matrix: P1=5min, P2=30min, P3=4hr, P4=next day — no timers, no acknowledgement tracking |
-| G-CMD-016 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | HIGH | Missing completeness validation with incident creation; returns dicts instead of calling create_incident |
-| G-CMD-017 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | HIGH | Missing format/schema validation with incident creation |
+| G-CMD-016 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | HIGH | Missing completeness validation with incident creation; returns dicts instead of calling create_incident |
+| G-CMD-017 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | HIGH | Missing format/schema validation with incident creation |
 | G-CMD-018 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing instrument_permitted check per signal; only checks 11 RTS6 boolean flags |
 | G-CMD-019 | B12 | b12_compliance_gate.py (entire) | Doc 34 PG-32 (S2-12) | `[GAP]` | HIGH | Missing max_contracts check per signal; gate is global pass/fail not per-order |
 | G-CMD-020 | B1 | b1_core_routing.py:40 | Doc 34 PG-30 | `[GAP]` | MEDIUM | PROHIBITED_EXTERNAL_FIELDS imported but never enforced at runtime; whitelist approach works but no defensive assertion |
@@ -596,7 +596,7 @@ The following spec requirements were verified as correctly implemented:
 | G-CMD-040 | B8 | b8_reconciliation.py:298-391 | Doc 25 (S2-14) | `[GAP]` | MEDIUM | Payout missing XFA 5-winning-days requirement; only BROKER_LIVE checks winning_days |
 | G-CMD-041 | B9 | b9_incident_response.py:42 | Doc 26 §7 | `[GAP]` | MEDIUM | P2_HIGH routes to ADMIN only; spec requires ADMIN + RISK |
 | G-CMD-042 | B9 | b9_incident_response.py:43 | Doc 26 §7, Doc 29 §2.4 | `[GAP]` | MEDIUM | P3_MEDIUM routes to generic ADMIN; spec says assigned owner |
-| G-CMD-043 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[GAP]` | MEDIUM | No integration with B9 incident response; validation errors returned as dicts, never trigger incidents |
+| G-CMD-043 | B10 | b10_data_validation.py (entire) | Doc 34 PG-41 | `[RESOLVED]` | MEDIUM | No integration with B9 incident response; validation errors returned as dicts, never trigger incidents |
 | G-CMD-044 | B11 | b11_replay_runner.py:206 | N/A (quality) | `[GAP]` | MEDIUM | _active_sessions dict has no eviction/cleanup; completed sessions accumulate unboundedly |
 | G-CMD-045 | B12 | b12_compliance_gate.py:46-54 | N/A (quality) | `[GAP]` | MEDIUM | compliance_gate.json reloaded from disk on every call with no caching |
 | G-CMD-046 | api.py | api.py:211-216 | Doc 34 PG-30 (S2-16) | `[GAP]` | MEDIUM | Health endpoint never returns HALTED overall status; CB halt doesn't propagate to top-level status |
@@ -796,9 +796,9 @@ The following spec requirements were verified as correctly implemented:
 | ID | Module | File | Spec Ref | Status | Severity | Description |
 |----|--------|------|----------|--------|----------|-------------|
 | G-SHR-001 | redis_client | redis_client.py:52 | Doc 24 retry | `[GAP]` | MEDIUM | retry_on_error only covers TimeoutError; missing ConnectionError, BusyLoadingError; no exponential backoff |
-| G-SHR-002 | redis_client | redis_client.py:110-136 | Doc 24 streams | `[GAP]` | HIGH | No XPENDING/XCLAIM pending message recovery; crashed consumers silently lose in-flight messages |
-| G-SHR-003 | redis_client | redis_client.py:110-131 | Doc 24 streams | `[GAP]` | MEDIUM | read_stream only reads new messages (">"); never reads pending ("0") on startup; crash→message loss |
-| G-SHR-004 | questdb_client | questdb_client.py:21-29 | Doc 24 connection | `[GAP]` | HIGH | No connection pooling; new psycopg2 connection per call; 31+ connections per session across 43 blocks |
+| G-SHR-002 | redis_client | redis_client.py:110-136 | Doc 24 streams | `[RESOLVED]` | HIGH | No XPENDING/XCLAIM pending message recovery; crashed consumers silently lose in-flight messages |
+| G-SHR-003 | redis_client | redis_client.py:110-131 | Doc 24 streams | `[RESOLVED]` | MEDIUM | read_stream only reads new messages (">"); never reads pending ("0") on startup; crash→message loss |
+| G-SHR-004 | questdb_client | questdb_client.py:21-29 | Doc 24 connection | `[RESOLVED]` | HIGH | No connection pooling; new psycopg2 connection per call; 31+ connections per session across 43 blocks |
 | G-SHR-005 | questdb_client | questdb_client.py:21-29 | Doc 24 connection | `[GAP]` | MEDIUM | No connect_timeout parameter; hangs indefinitely if QuestDB unresponsive |
 | G-SHR-006 | questdb_client | questdb_client.py:21-29 | Doc 24 retry | `[GAP]` | MEDIUM | No retry logic on connection failure; transient QuestDB restart causes immediate unhandled crash |
 | G-SHR-007 | questdb_client | questdb_client.py:96 | Doc 24 timezone | `[GAP]` | LOW | now() timestamp has no explicit timezone; relies on container TZ env var |
@@ -806,15 +806,15 @@ The following spec requirements were verified as correctly implemented:
 | G-SHR-009 | contract_resolver | contract_resolver.py:1-160 | Doc 27 specs | `[GAP]` | LOW | No point_value accessor; callers must read D00 or config separately |
 | G-SHR-010 | account_lifecycle | account_lifecycle.py:51-55 | Doc 19/25 stages | `[GAP]` | MEDIUM | Only 3 stages (EVAL/XFA/LIVE); spec defines 5 categories; no PAPER/DEMO or BROKER_RETAIL |
 | G-SHR-011 | account_lifecycle | account_lifecycle.py:568-572 | Doc 19/25 halt | `[GAP]` | MEDIUM | _reset_daily() unconditionally clears halt; no clock check for 19:00 EST; premature halt clear if called early |
-| G-SHR-012 | account_lifecycle | account_lifecycle.py:296-332 | Doc 19/25 LIVE | `[GAP]` | HIGH | No LIVE stage total balance failure; $0 account balance undetected; only daily DD checked |
+| G-SHR-012 | account_lifecycle | account_lifecycle.py:296-332 | Doc 19/25 LIVE | `[RESOLVED]` | HIGH | No LIVE stage total balance failure; $0 account balance undetected; only daily DD checked |
 | G-SHR-013 | vault | vault.py:24 | Doc 19 salt | `[GAP]` | MEDIUM | Fixed salt "captain-vault-salt-v1"; shared master key→identical derived keys across users |
 | G-SHR-014 | vault | vault.py:1-82 | Doc 19 rotation | `[GAP]` | MEDIUM | No key rotation support; changing VAULT_MASTER_KEY makes existing vault unreadable |
-| G-SHR-015 | vault | vault.py:78-82 | Doc 19 concurrency | `[GAP]` | HIGH | Non-atomic read-modify-write in store_api_key; concurrent writes lose data; no file/thread locking |
+| G-SHR-015 | vault | vault.py:78-82 | Doc 19 concurrency | `[RESOLVED]` | HIGH | Non-atomic read-modify-write in store_api_key; concurrent writes lose data; no file/thread locking |
 | G-SHR-016 | vault | vault.py:38-43 | Doc 19 performance | `[GAP]` | MEDIUM | _get_aesgcm() re-derives 256-bit key (600K PBKDF2 iterations) on every call; should cache |
 | G-SHR-017 | vault | vault.py:1-82 | Doc 19 audit | `[GAP]` | LOW | No audit logging for key access or modification |
-| G-SHR-018 | journal | journal.py:1-104 | Doc 33 recovery | `[GAP]` | HIGH | Crash recovery journal write-only in practice; get_last_checkpoint result logged and discarded by all 3 processes |
-| G-SHR-019 | journal | journal.py:1-104 | Doc 33 cleanup | `[GAP]` | MEDIUM | No journal cleanup or rotation; entries accumulate indefinitely; unbounded SQLite growth |
-| G-SHR-020 | journal | journal.py:63-80 | Doc 33 thread safety | `[GAP]` | MEDIUM | No thread safety; _initialized flag is bare global boolean with no locking |
+| G-SHR-018 | journal | journal.py:1-104 | Doc 33 recovery | `[RESOLVED]` | HIGH | Crash recovery journal write-only in practice; get_last_checkpoint result logged and discarded by all 3 processes |
+| G-SHR-019 | journal | journal.py:1-104 | Doc 33 cleanup | `[RESOLVED]` | MEDIUM | No journal cleanup or rotation; entries accumulate indefinitely; unbounded SQLite growth |
+| G-SHR-020 | journal | journal.py:63-80 | Doc 33 thread safety | `[RESOLVED]` | MEDIUM | No thread safety; _initialized flag is bare global boolean with no locking |
 | G-SHR-021 | journal | journal.py:63-80 | Doc 33 connection | `[GAP]` | LOW | Connection opened/closed on every call; pays full SQLite connection overhead per checkpoint |
 | G-SHR-022 | journal | journal.py:88 | Doc 33 ordering | `[GAP]` | LOW | ORDER BY timestamp DESC uses ISO string comparison; functionally correct but fragile |
 
@@ -879,7 +879,7 @@ The following spec requirements were verified as correctly implemented:
 | G-XCT-009 | Heartbeat | captain-offline (entire) | CLAUDE.md Redis channels | `[GAP]` | HIGH | Offline NEVER publishes to CH_STATUS; zero references in entire captain-offline/ directory; GUI shows Unknown |
 | G-XCT-010 | Heartbeat | captain-online orchestrator.py:93 | CLAUDE.md Redis channels | `[GAP]` | MEDIUM | Online publishes stage transitions but no periodic heartbeat; idle between sessions indistinguishable from dead |
 | G-XCT-011 | Heartbeat | captain-command orchestrator.py:619 | CLAUDE.md Redis channels | `[VALID]` | — | Command publishes 30-second heartbeat via _publish_heartbeat(); correct subscriber at L205 routes to _handle_status() |
-| G-XCT-012 | Crash recovery | main.py (all 3 processes) | Doc 33 crash recovery | `[GAP]` | CRITICAL | All 3 processes call get_last_checkpoint on startup but NEVER branch on result; checkpoint logged and discarded; zero recovery logic |
+| G-XCT-012 | Crash recovery | main.py (all 3 processes) | Doc 33 crash recovery | `[RESOLVED]` | CRITICAL | All 3 processes call get_last_checkpoint on startup but NEVER branch on result; checkpoint logged and discarded; zero recovery logic |
 | G-XCT-013 | LATEST ON | b5c_circuit_breaker.py:493-526 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D25 and D23 queries use ORDER BY + Python _seen set instead of QuestDB LATEST ON; pulls all historical rows |
 | G-XCT-014 | LATEST ON | b2_gui_data_server.py:182-258 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D08 TSM queries lack LATEST ON; append-only table may return duplicate rows per account |
 | G-XCT-015 | PROHIBITED_FIELDS | b1_core_routing.py:80-82 (command) | Doc 20, constants.py | `[RESOLVED]` | CRITICAL | GUI WebSocket path now sanitised via `sanitise_for_gui()` blacklist; PROHIBITED_EXTERNAL_FIELDS stripped before browser delivery |
