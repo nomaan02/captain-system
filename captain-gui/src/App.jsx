@@ -19,6 +19,7 @@ import ReportsPage from "./pages/ReportsPage";
 import ProcessesPage from "./pages/ProcessesPage";
 import SystemOverviewPage from "./pages/SystemOverviewPage";
 import ReplayPage from "./pages/ReplayPage";
+import PseudotraderPage from "./pages/PseudotraderPage";
 
 function RequireAuth({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -86,6 +87,9 @@ function App() {
       case "/replay":
         title = "Captain Replay";
         break;
+      case "/pseudotrader":
+        title = "Captain Pseudotrader";
+        break;
       case "/login":
         title = "Captain Login";
         break;
@@ -124,6 +128,7 @@ function App() {
         <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/system" element={<SystemOverviewPage />} />
         <Route path="/replay" element={<ReplayPage />} />
+        <Route path="/pseudotrader" element={<PseudotraderPage />} />
       </Route>
     </Routes>
   );

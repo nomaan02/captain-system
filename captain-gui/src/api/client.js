@@ -93,6 +93,20 @@ const api = {
 
   // System
   gitPull: () => post(`${BASE}/system/git-pull`, {}),
+
+  // Pseudotrader
+  pseudotraderDecisions: (limit = 200) =>
+    fetchJson(`${BASE}/pseudotrader/decisions?limit=${limit}`),
+  pseudotraderParameters: () =>
+    fetchJson(`${BASE}/pseudotrader/parameters`),
+  pseudotraderHealth: () =>
+    fetchJson(`${BASE}/pseudotrader/health`),
+  pseudotraderTrends: (days = 30) =>
+    fetchJson(`${BASE}/pseudotrader/trends?days=${days}`),
+  pseudotraderVersions: (limit = 50) =>
+    fetchJson(`${BASE}/pseudotrader/versions?limit=${limit}`),
+  pseudotraderForecasts: () =>
+    fetchJson(`${BASE}/pseudotrader/forecasts`),
 };
 
 export default api;
