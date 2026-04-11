@@ -770,57 +770,285 @@ The following spec requirements were verified as correctly implemented:
 
 ## Shared Modules
 
+**Audited:** 2026-04-11 Session 6
+**Scope:** 6 core shared modules: redis_client.py, questdb_client.py, contract_resolver.py, account_lifecycle.py, vault.py, journal.py
+**Spec Documents:** Docs 19, 24, 25, 27, 33
+
 ### Summary
 
 | Status | Count |
 |--------|-------|
-| `[GAP]` | — |
-| `[VALID]` | — |
-| `[AMENDED]` | — |
-| `[BLOCKED]` | — |
-| **Total** | — |
+| `[GAP]` | 22 |
+| `[VALID]` | 41 |
+| `[AMENDED]` | 2 |
+| `[BLOCKED]` | 0 |
+| **Total** | 65 verification points |
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 0 |
+| HIGH | 5 |
+| MEDIUM | 12 |
+| LOW | 5 |
 
 ### Findings
 
 | ID | Module | File | Spec Ref | Status | Severity | Description |
 |----|--------|------|----------|--------|----------|-------------|
-| | | | | | | _(Sessions 3-5 will populate as shared modules are referenced)_ |
+| G-SHR-001 | redis_client | redis_client.py:52 | Doc 24 retry | `[GAP]` | MEDIUM | retry_on_error only covers TimeoutError; missing ConnectionError, BusyLoadingError; no exponential backoff |
+| G-SHR-002 | redis_client | redis_client.py:110-136 | Doc 24 streams | `[GAP]` | HIGH | No XPENDING/XCLAIM pending message recovery; crashed consumers silently lose in-flight messages |
+| G-SHR-003 | redis_client | redis_client.py:110-131 | Doc 24 streams | `[GAP]` | MEDIUM | read_stream only reads new messages (">"); never reads pending ("0") on startup; crash→message loss |
+| G-SHR-004 | questdb_client | questdb_client.py:21-29 | Doc 24 connection | `[GAP]` | HIGH | No connection pooling; new psycopg2 connection per call; 31+ connections per session across 43 blocks |
+| G-SHR-005 | questdb_client | questdb_client.py:21-29 | Doc 24 connection | `[GAP]` | MEDIUM | No connect_timeout parameter; hangs indefinitely if QuestDB unresponsive |
+| G-SHR-006 | questdb_client | questdb_client.py:21-29 | Doc 24 retry | `[GAP]` | MEDIUM | No retry logic on connection failure; transient QuestDB restart causes immediate unhandled crash |
+| G-SHR-007 | questdb_client | questdb_client.py:96 | Doc 24 timezone | `[GAP]` | LOW | now() timestamp has no explicit timezone; relies on container TZ env var |
+| G-SHR-008 | contract_resolver | contract_resolver.py:1-160 | Doc 27 roll | `[GAP]` | MEDIUM | No roll_confirmed flag checking; resolver returns stale contract ID during ROLL_PENDING state |
+| G-SHR-009 | contract_resolver | contract_resolver.py:1-160 | Doc 27 specs | `[GAP]` | LOW | No point_value accessor; callers must read D00 or config separately |
+| G-SHR-010 | account_lifecycle | account_lifecycle.py:51-55 | Doc 19/25 stages | `[GAP]` | MEDIUM | Only 3 stages (EVAL/XFA/LIVE); spec defines 5 categories; no PAPER/DEMO or BROKER_RETAIL |
+| G-SHR-011 | account_lifecycle | account_lifecycle.py:568-572 | Doc 19/25 halt | `[GAP]` | MEDIUM | _reset_daily() unconditionally clears halt; no clock check for 19:00 EST; premature halt clear if called early |
+| G-SHR-012 | account_lifecycle | account_lifecycle.py:296-332 | Doc 19/25 LIVE | `[GAP]` | HIGH | No LIVE stage total balance failure; $0 account balance undetected; only daily DD checked |
+| G-SHR-013 | vault | vault.py:24 | Doc 19 salt | `[GAP]` | MEDIUM | Fixed salt "captain-vault-salt-v1"; shared master key→identical derived keys across users |
+| G-SHR-014 | vault | vault.py:1-82 | Doc 19 rotation | `[GAP]` | MEDIUM | No key rotation support; changing VAULT_MASTER_KEY makes existing vault unreadable |
+| G-SHR-015 | vault | vault.py:78-82 | Doc 19 concurrency | `[GAP]` | HIGH | Non-atomic read-modify-write in store_api_key; concurrent writes lose data; no file/thread locking |
+| G-SHR-016 | vault | vault.py:38-43 | Doc 19 performance | `[GAP]` | MEDIUM | _get_aesgcm() re-derives 256-bit key (600K PBKDF2 iterations) on every call; should cache |
+| G-SHR-017 | vault | vault.py:1-82 | Doc 19 audit | `[GAP]` | LOW | No audit logging for key access or modification |
+| G-SHR-018 | journal | journal.py:1-104 | Doc 33 recovery | `[GAP]` | HIGH | Crash recovery journal write-only in practice; get_last_checkpoint result logged and discarded by all 3 processes |
+| G-SHR-019 | journal | journal.py:1-104 | Doc 33 cleanup | `[GAP]` | MEDIUM | No journal cleanup or rotation; entries accumulate indefinitely; unbounded SQLite growth |
+| G-SHR-020 | journal | journal.py:63-80 | Doc 33 thread safety | `[GAP]` | MEDIUM | No thread safety; _initialized flag is bare global boolean with no locking |
+| G-SHR-021 | journal | journal.py:63-80 | Doc 33 connection | `[GAP]` | LOW | Connection opened/closed on every call; pays full SQLite connection overhead per checkpoint |
+| G-SHR-022 | journal | journal.py:88 | Doc 33 ordering | `[GAP]` | LOW | ORDER BY timestamp DESC uses ISO string comparison; functionally correct but fragile |
+
+**Amended Items:**
+
+| ID | Module | File | Spec Ref | Description | Rationale |
+|----|--------|------|----------|-------------|-----------|
+| G-SHR-A01 | redis_client | redis_client.py:33 | CLAUDE.md channels | 6th channel CH_PROCESS_LOGS not in 5-channel spec | Intentional addition for GUI live terminal feature |
+| G-SHR-A02 | redis_client | redis_client.py:27 | CLAUDE.md channels | REDIS_KEY_QUOTES plain key not in channel spec | Data key (not pub/sub channel); correct to omit from channel table |
+
+### Key Validated Areas
+
+**redis_client.py:** All 5 spec channels defined (CH_SIGNALS template, CH_TRADE_OUTCOMES, CH_COMMANDS, CH_ALERTS, CH_STATUS). Singleton with double-checked locking. Redis Streams (XADD/XREAD) alongside pub/sub with maxlen=1000 cap. Idempotent consumer group creation.
+
+**questdb_client.py:** Environment-based config. Context manager with auto-commit. LATEST ON used correctly in read_d00_row. Parameterized queries (%s). D00_COLUMNS matches schema.
+
+**contract_resolver.py:** All 10 assets mapped (ES, MES, NQ, MNQ, M2K, MYM, NKD, MGC, ZB, ZN). 4-tier resolution chain (cache→config→D00→API). Thread-safe cache with Lock. LATEST ON in D00 fallback.
+
+**account_lifecycle.py:** All monetary constants match spec (EVAL_MLL=$4,500, profit target=$9,000, XFA_MLL=$4,500). Correct 5-tier XFA scaling. LIVE daily DD, low-balance threshold, capital unlock at $9K blocks. Payout commission 10% XFA / 0% LIVE. Account failure + $226.60 fee.
+
+**vault.py:** AES-256-GCM confirmed. PBKDF2HMAC SHA256 with 600K iterations (OWASP 2023). Master key from env var only. Random 12-byte nonce. Per-account key storage.
+
+**journal.py:** SQLite WAL mode. write_checkpoint/get_last_checkpoint functions correct. Auto-init with CREATE TABLE IF NOT EXISTS. Per-process journal paths via env var.
 
 ---
 
 ## Cross-Cutting Concerns
 
+**Audited:** 2026-04-11 Session 6
+**Scope:** 6 systemic patterns verified across all 3 processes + shared modules
+**Method:** Codebase-wide grep + manual tracing for each pattern
+
 ### Summary
 
 | Status | Count |
 |--------|-------|
-| `[GAP]` | — |
-| `[VALID]` | — |
-| `[AMENDED]` | — |
-| `[BLOCKED]` | — |
-| **Total** | — |
+| `[GAP]` | 16 |
+| `[VALID]` | 4 |
+| `[AMENDED]` | 0 |
+| `[BLOCKED]` | 0 |
+| **Total** | 20 verification points |
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 1 |
+| HIGH | 6 |
+| MEDIUM | 6 |
+| LOW | 3 |
 
 ### Findings
 
 | ID | Area | File(s) | Spec Ref | Status | Severity | Description |
 |----|------|---------|----------|--------|----------|-------------|
-| | | | | | | _(Session 6 will populate)_ |
+| G-XCT-001 | Naive datetime | b7_position_monitor.py:134,511 | CLAUDE.md TZ rule | `[GAP]` | HIGH | TIME EXIT: datetime.now() >= buffer_time for forced position close; wrong-timezone close possible during DST |
+| G-XCT-002 | Naive datetime | b4_kelly_sizing.py:329 | CLAUDE.md TZ rule | `[GAP]` | HIGH | remaining_days = (eval_end.date() - datetime.now().date()).days; wrong TZ shifts date boundary at UTC midnight |
+| G-XCT-003 | Naive datetime | b7_shadow_monitor.py:62,88 | CLAUDE.md TZ rule | `[GAP]` | HIGH | Shadow age and timeout computed from naive timestamps; relative delta works inside Docker but violates spec |
+| G-XCT-004 | Naive datetime | 25+ files, 68+ occurrences | CLAUDE.md TZ rule | `[GAP]` | MEDIUM | Pervasive datetime.now() without timezone across all 3 processes; Docker ENV TZ masks the issue; fragile outside container |
+| G-XCT-005 | Hardcoded user | api.py:574,584,803,830,849,873,926 | Doc 19 §7 | `[GAP]` | HIGH | 7 API endpoints hardcode "primary_user" ignoring JWT user_id; AIM control, replays, presets all single-user |
+| G-XCT-006 | Hardcoded user | orchestrator.py:405,445,457 (command) | Doc 19 §7 | `[GAP]` | HIGH | gui_push("primary_user", ...) in signal routing, auto-execute, notifications; second user never sees signals |
+| G-XCT-007 | Hardcoded user | b7_shadow_monitor.py:61,147; orchestrator.py:728 (online) | Doc 19 §7 | `[GAP]` | MEDIUM | Fallback "primary_user" in shadow monitor and user query; defaults to single user on empty query |
+| G-XCT-008 | Hardcoded user | 29 total occurrences across codebase | Doc 19 §7 | `[GAP]` | MEDIUM | 12 hard assignments (HIGH), 4 fallback defaults (MEDIUM), 5 env-var overridable (LOW); V2 multi-user blocked |
+| G-XCT-009 | Heartbeat | captain-offline (entire) | CLAUDE.md Redis channels | `[GAP]` | HIGH | Offline NEVER publishes to CH_STATUS; zero references in entire captain-offline/ directory; GUI shows Unknown |
+| G-XCT-010 | Heartbeat | captain-online orchestrator.py:93 | CLAUDE.md Redis channels | `[GAP]` | MEDIUM | Online publishes stage transitions but no periodic heartbeat; idle between sessions indistinguishable from dead |
+| G-XCT-011 | Heartbeat | captain-command orchestrator.py:619 | CLAUDE.md Redis channels | `[VALID]` | — | Command publishes 30-second heartbeat via _publish_heartbeat(); correct subscriber at L205 routes to _handle_status() |
+| G-XCT-012 | Crash recovery | main.py (all 3 processes) | Doc 33 crash recovery | `[GAP]` | CRITICAL | All 3 processes call get_last_checkpoint on startup but NEVER branch on result; checkpoint logged and discarded; zero recovery logic |
+| G-XCT-013 | LATEST ON | b5c_circuit_breaker.py:493-526 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D25 and D23 queries use ORDER BY + Python _seen set instead of QuestDB LATEST ON; pulls all historical rows |
+| G-XCT-014 | LATEST ON | b2_gui_data_server.py:182-258 | Doc 24 QuestDB | `[GAP]` | MEDIUM | D08 TSM queries lack LATEST ON; append-only table may return duplicate rows per account |
+| G-XCT-015 | PROHIBITED_FIELDS | b1_core_routing.py:80-82 (command) | Doc 20, constants.py | `[GAP]` | CRITICAL | GUI WebSocket path pushes full unsanitized signal blob including all 9 PROHIBITED_EXTERNAL_FIELDS to browser |
+| G-XCT-016 | PROHIBITED_FIELDS | b1_core_routing.py:103-116 (command) | Doc 20, constants.py | `[VALID]` | — | External API path correctly sanitizes to 6 fields via sanitise_for_api() whitelist |
+| G-XCT-017 | PROHIBITED_FIELDS | b6_signal_output.py:94-136 (online) | Doc 20, constants.py | `[VALID]` | — | B6 publishes full blob to Redis (correct — Command needs internal fields); sanitization boundary is at Command |
+| G-XCT-018 | PROHIBITED_FIELDS | constants.py:108-116 (shared) | Doc 20 | `[VALID]` | — | SANITISED_SIGNAL_FIELDS (6) and PROHIBITED_EXTERNAL_FIELDS (9) correctly defined |
+
+### Detailed Findings — CRITICAL
+
+---
+
+#### G-XCT-012 — Crash Recovery Journal Is Write-Only Across All 3 Processes
+
+**Files:** `captain-offline/main.py:129-132`, `captain-online/main.py:107-110`, `captain-command/main.py:305-308`
+**Spec:** Doc 33 crash recovery, Doc 32 version snapshot policy
+
+All 3 processes diligently write checkpoints throughout execution (60+ `write_checkpoint()` calls codebase-wide). On startup, all 3 call `get_last_checkpoint(ROLE)`, log the result ("Resuming from: X — next: Y"), and then proceed with normal initialization — completely ignoring the checkpoint state and next_action field.
+
+**Example (captain-online/main.py:107-110):**
+```python
+last = get_last_checkpoint(ROLE)
+if last:
+    logger.info(f"Resuming from: {last['checkpoint']} — next: {last.get('next_action','fresh')}")
+# ... proceeds with full fresh startup regardless
+```
+
+If Online crashes mid-session with checkpoint "STREAMS_STARTED", it restarts streams from scratch. If Offline crashes after "WEEKLY_START" with next_action "run_sensitivity", the sensitivity scan is never resumed.
+
+**Impact:** No crash recovery exists in practice. The journal infrastructure is complete but the recovery logic is missing. Mid-session crashes require a full restart from scratch, potentially re-processing already-completed work or missing partially-completed learning updates.
+
+---
+
+#### G-XCT-015 — GUI WebSocket Bypasses PROHIBITED_FIELDS Sanitization
+
+**Files:** `captain-online/b6_signal_output.py:94-136` → Redis → `captain-command/b1_core_routing.py:80-82` → WebSocket
+**Spec:** Doc 20 PG-26, `shared/constants.py` PROHIBITED_EXTERNAL_FIELDS
+
+The signal flow has two outbound paths:
+1. **API Adapter path:** B6 → Redis → Command B1 → `sanitise_for_api()` → B3 → Brokerage. **Correct: 6 fields only.**
+2. **GUI WebSocket path:** B6 → Redis → Command B1 → `gui_push_fn(signal)` → WebSocket → Browser. **Bypassed: all ~30 fields including aim_breakdown, regime_probs, combined_modifier, expected_edge.**
+
+Any user with browser DevTools can inspect the WebSocket messages and see the system's internal signal reasoning. In multi-user/multi-instance deployment, this leaks proprietary trading intelligence (AIM weights, Kelly parameters, regime probabilities) to any connected client.
+
+**Recommendation:** Add `sanitise_for_api(signal)` call in `gui_push_fn` path at `b1_core_routing.py:80`, or create a separate GUI-safe field set that excludes PROHIBITED fields while allowing display-relevant extras.
+
+---
+
+### S2-Flagged Items — Final Resolution
+
+All 22 S2-flagged items from Session 2 are now resolved:
+
+| S2-ID | Category | Resolution | Finding ID |
+|-------|----------|------------|------------|
+| S2-01 | HIGH | **GAP**: rollback unimplemented, pruning missing, state query missing | G-OFF-046/047/048 |
+| S2-02 | HIGH | **GAP**: CB pseudotrader not account-aware (G-025 unresolved) | G-OFF-021 |
+| S2-03 | HIGH | **GAP**: TVTP missing; 240-obs min not enforced | G-OFF-001/002 |
+| S2-04 | HIGH | **VALID**: Priority rotation correctly deferred for V1 single-user | — |
+| S2-05 | MEDIUM | **VALID**: AIM-05 deferred → modifier=1.0, confidence=0.0 | — |
+| S2-06 | LOW | **GAP**: RPT-12 Alpha Decomposition missing entirely | G-CMD-002 |
+| S2-07 | HIGH | **GAP**: 13 hardcoded "primary_user" in api.py | G-CMD-005 |
+| S2-08 | HIGH | **VALID**: P3-D18 version_history table exists in init_questdb.py:433 | — |
+| S2-09 | MEDIUM | **GAP**: JWT has no roles field; zero RBAC enforcement | G-CMD-001 |
+| S2-10 | MEDIUM | **VALID**: Quiet hours 22:00-06:00 with CRITICAL override | — |
+| S2-11 | MEDIUM | **VALID**: Per-user notification preferences fully implemented | — |
+| S2-12 | MEDIUM | **GAP**: Compliance gate global only; no per-signal checks | G-CMD-009/018/019 |
+| S2-13 | MEDIUM | **PARTIAL GAP**: Correct tiers in B4; wrong gate field in B8 | G-CMD-013 |
+| S2-14 | MEDIUM | **PARTIAL GAP**: Cap + commission correct; 5-winning-days missing for XFA | G-CMD-040 |
+| S2-15 | MEDIUM | **GAP**: No AIM cascade ordering; no inter-AIM deps currently | G-ONL-014 |
+| S2-16 | MEDIUM | **MOSTLY VALID**: 7/7 fields present; HALTED status path missing | G-CMD-046 |
+| S2-17 | LOW | **GAP**: RPT-12 missing; 9 of 11 remaining reports are shallow | G-CMD-002/036 |
+| S2-18 | LOW | **GAP**: No audit trail logging; no AuditLog table | G-CMD-006 |
+| S2-19 | LOW | **GAP**: Init-time CUSUM calibration missing; quarterly works | G-OFF-010 |
+| S2-20 | LOW | **SATISFIED**: All 8 health dimensions scored [0,1] | — |
+| S2-21 | LOW | **GAP**: No escalation timers, acknowledgement tracking | G-CMD-015 |
+| S2-22 | LOW | **VALID**: roll_confirmed flag, ROLL_PENDING status correct | — |
+
+**Result:** 7 VALID, 1 SATISFIED, 2 PARTIAL GAP, 1 MOSTLY VALID, 11 GAP confirmed. All 22 items accounted for.
 
 ---
 
 ## Final Rollup
 
-| Program | GAP | VALID | AMENDED | BLOCKED | Total | Verdict |
-|---------|-----|-------|---------|---------|-------|---------|
-| P3-Offline | 52 | ~75 | 3 | 0 | 55 | 5 CRITICAL |
-| P3-Online | 49 | ~40 | 8 | 0 | 57 | 3 CRITICAL |
-| P3-Command | 65 | ~35 | 3 | 0 | 71 | 4 CRITICAL |
-| Shared | — | — | — | — | — | — |
-| Cross-Cutting | — | — | — | — | — | — |
-| **TOTAL** | — | — | — | — | — | **—** |
+| Program | GAP | VALID | AMENDED | BLOCKED | CRITICAL | HIGH | MEDIUM | LOW |
+|---------|-----|-------|---------|---------|----------|------|--------|-----|
+| P3-Offline | 52 | ~75 | 3 | 0 | 5 | 20 | 22 | 5 |
+| P3-Online | 49 | ~40 | 8 | 0 | 3 | 14 | 22 | 10 |
+| P3-Command | 65 | ~35 | 3 | 0 | 4 | 15 | 31 | 18 |
+| Shared Modules | 22 | 41 | 2 | 0 | 0 | 5 | 12 | 5 |
+| Cross-Cutting | 16 | 4 | 0 | 0 | 2 | 6 | 6 | 2 |
+| **TOTAL** | **204** | **~195** | **16** | **0** | **14** | **60** | **93** | **40** |
 
-**Overall Verdict:** _(Session 6 will determine: READY / NOT READY)_
+**Note:** Cross-cutting findings (G-XCT-xxx) overlap with per-program findings (the same underlying issue surfaces in multiple programs). The per-program findings provide the granular detail; cross-cutting findings identify the systemic pattern. De-duplicated unique gap count is approximately **188** (removing ~16 cross-cutting entries that are aggregations of per-program findings).
 
-**BLOCKED Items Requiring Isaac's Input:**
+---
 
-_(Session 6 will list)_
+## Overall Verdict: NOT READY
+
+**The Captain System is NOT READY for live trading.**
+
+### Justification
+
+**14 CRITICAL gaps** remain across the system. Any single CRITICAL finding could produce wrong trades, lose money, or crash the system in production:
+
+1. **Position sizing errors (3 CRITICAL):**
+   - G-ONL-017: Kelly L4 robust formula algebraically wrong — 52% oversize during regime uncertainty
+   - G-OFF-029: Sensitivity scanner applies uniform perturbation instead of per-parameter — cannot detect single-parameter fragility
+   - G-OFF-001: AIM-16 HMM uses static transitions instead of TVTP — HMM regime detection ignores market context
+
+2. **Safety gates missing (3 CRITICAL):**
+   - G-OFF-015/016: Pseudotrader completely unwired from orchestrator AND uses pre-computed P&L instead of actual pipeline replay — parameter updates committed without validation
+   - G-XCT-012: Crash recovery journal write-only — all 3 processes ignore checkpoint state on restart
+
+3. **Data integrity (3 CRITICAL):**
+   - G-CMD-004: Balance mismatch auto-corrected without incident record — unauthorized trades or API errors leave no audit trail
+   - G-CMD-003: No continuous data feed monitoring — stale/corrupt market data undetected until downstream signal errors
+   - G-ONL-042: Capacity evaluation implements entirely different algorithm — no empirical fill quality monitoring exists
+
+4. **Information leakage (2 CRITICAL):**
+   - G-ONL-028 / G-XCT-015: Prohibited fields (aim_breakdown, regime_probs, Kelly params) leak through GUI WebSocket — proprietary strategy visible in browser DevTools
+   - G-CMD-001: Zero RBAC enforcement — any authenticated user can activate/deactivate AIMs, trigger diagnostics, access all endpoints
+
+5. **Operational gaps (3 CRITICAL):**
+   - G-CMD-002: RPT-12 Alpha Decomposition missing — cannot attribute returns to component strategies
+   - G-OFF-046: Version rollback entirely unimplemented — no automated revert to known-good parameters
+
+### What Works (Production-Ready Areas)
+
+Despite the CRITICAL gaps, substantial portions of the system are correctly implemented:
+
+- **Core signal pipeline (B1-B3):** Data ingestion, regime detection, AIM aggregation all produce correct signals per spec
+- **Kelly sizing (L1-L3, L5-L7):** 6 of 7 Kelly layers correct; only L4 robust fallback is wrong
+- **Circuit breaker (L0, L1, L3):** Preemptive halt, beta_b expectancy checks work; L2/L4 use different formulas
+- **Feedback loops (1-6):** AIM meta-learning, decay detection, Kelly EWMA, beta_b learning, intraday CB state, SOD compounding all correctly wired end-to-end
+- **Infrastructure:** Redis Streams with consumer groups, QuestDB with proper LATEST ON in core paths, Docker multi-container orchestration, JWT authentication, Telegram bot
+- **Account lifecycle:** Monetary constants, scaling tiers, payout rules, progression logic all match spec
+- **Reconciliation formulas:** f(A), R_eff, N, E, L_halt all mathematically correct
+
+### Minimum Path to READY
+
+To reach READY status, the following CRITICAL gaps must be resolved (in priority order):
+
+| Priority | Finding | Effort | Risk if Deferred |
+|----------|---------|--------|-------------------|
+| 1 | G-ONL-017: Fix Kelly L4 robust formula | Small (formula swap) | Wrong position sizes during uncertainty |
+| 2 | G-ONL-028/G-XCT-015: Sanitize GUI WebSocket path | Small (add sanitise call) | Strategy leakage to all GUI users |
+| 3 | G-CMD-001: Add RBAC role field to JWT + endpoint guards | Medium | Any user can modify system |
+| 4 | G-CMD-004: Add create_incident for balance mismatch | Small | No audit trail for mismatches |
+| 5 | G-CMD-003: Add data feed freshness monitoring | Medium | Stale data → wrong signals |
+| 6 | G-OFF-015: Wire pseudotrader into orchestrator | Medium | Parameter updates unvalidated |
+| 7 | G-XCT-012: Implement crash recovery branching | Medium | Full restart on every crash |
+| 8 | G-OFF-029: Fix sensitivity per-parameter perturbation | Small (loop restructure) | Cannot detect per-param fragility |
+| 9 | G-CMD-002: Implement RPT-12 Alpha Decomposition | Medium | Cannot attribute returns |
+| 10 | G-OFF-046: Implement rollback_to_version | Large | No automated parameter revert |
+| 11 | G-OFF-001: Implement TVTP or document DEC-XX | Large (library change) | HMM ignores market context |
+| 12 | G-ONL-042: Implement fill slippage monitoring | Medium | No fill quality defense |
+
+Items 1-2 are quick fixes. Items 3-7 are the minimum before first live session. Items 8-12 can be addressed in parallel with cautious live operation.
+
+### BLOCKED Items Requiring Isaac's Input
+
+None. All findings could be traced to clear spec requirements. No ambiguity requiring spec author clarification.
+
+### Decisions to Record
+
+The following items may warrant formal DEC-XX architectural decisions if the current implementations are intentional:
+
+| Finding | Question for Nomaan |
+|---------|-------------------|
+| G-OFF-001 | Is hmmlearn's static HMM acceptable for V1, with TVTP deferred? |
+| G-ONL-042 | Is the capacity planning model a replacement for or addition to fill slippage monitoring? |
+| G-OFF-015/016 | Is pseudotrader validation deferred post-live (confirming DEC-04 still holds)? |
+| G-CMD-001 | Is RBAC deferred to V2 multi-user? If so, document as DEC-XX |

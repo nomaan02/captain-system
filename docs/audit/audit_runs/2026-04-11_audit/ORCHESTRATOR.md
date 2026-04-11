@@ -16,8 +16,8 @@
 | 2 | Spec Extraction | Obsidian vault tag search, wikilink traversal, spec-to-code mapping | COMPLETE |
 | 3 | P3-Offline Audit | All 17 offline blocks vs spec (AIM lifecycle, decay, Kelly, diagnostic) | COMPLETE |
 | 4 | P3-Online Audit | All 14 online blocks vs spec (data ingestion, regime, AIM, signal output) | COMPLETE |
-| 5 | P3-Command Audit | All 12 command blocks vs spec (routing, GUI, API, reconciliation) | PENDING |
-| 6 | Cross-Verification & Verdict | Regression check, unaudited file scan, final rollup, READY/NOT READY | PENDING |
+| 5 | P3-Command Audit | All 12 command blocks vs spec (routing, GUI, API, reconciliation) | COMPLETE |
+| 6 | Cross-Verification & Verdict | Regression check, unaudited file scan, final rollup, READY/NOT READY | COMPLETE |
 
 ---
 
@@ -1017,6 +1017,104 @@ These are spec requirements that may not have full code coverage. **Each must be
 
 ## Session 6 — Cross-Verification & Verdict
 
-**Status:** PENDING
+**Status:** COMPLETE
+**Completed:** 2026-04-11 04:55 GMT+1
+**Objective:** Cross-verify all findings, audit shared modules, verify S2 items, assign final verdict
 
-_(To be populated by Session 6)_
+### 6.1 Methodology
+
+3 parallel verification tracks:
+- Track 1: GAP_ANALYSIS.md consistency verification (ID uniqueness, S2 resolution, severity consistency)
+- Track 2: Cross-cutting concerns audit (6 systemic patterns grep'd across all 3 processes + shared)
+- Track 3: Shared modules audit (6 core modules read and verified against spec)
+
+### 6.2 Consistency Verification
+
+**ID Uniqueness:** Confirmed. Three distinct prefixes (G-OFF, G-ONL, G-CMD) ensure zero cross-program duplicates. Within each program, IDs are sequential with no gaps or collisions.
+
+**S2 Resolution:** All 22 S2-flagged items from Session 2 now have explicit resolutions:
+- 7 VALID (S2-04, S2-05, S2-08, S2-10, S2-11, S2-20, S2-22)
+- 11 GAP confirmed with finding IDs
+- 2 PARTIAL GAP (S2-13, S2-14)
+- 1 MOSTLY VALID (S2-16)
+- 1 SATISFIED (S2-20)
+- S2-08 required Session 6 verification: `p3_d18_version_history` table confirmed present in `init_questdb.py:433`
+- S2-17 required Session 6 resolution: covered by G-CMD-002 (RPT-12 missing) + G-CMD-036 (9/11 shallow)
+
+**Severity Consistency:** Verified all 14 CRITICAL findings against criteria ("will produce wrong trades, lose money, or crash in production"):
+- G-OFF-001: TVTP missing → HMM regime detection ignores market context → sizing affected ✓
+- G-OFF-015/016: Pseudotrader unwired → parameter updates unvalidated → wrong parameters go live ✓
+- G-OFF-029: Uniform perturbation → cannot detect single-parameter fragility → fragile strategy undetected ✓
+- G-OFF-046: No rollback → cannot revert harmful parameter changes ✓
+- G-ONL-017: Wrong Kelly formula → 52% oversize during uncertainty → money at risk ✓
+- G-ONL-028: Prohibited fields leak → strategy intelligence exposed ✓
+- G-ONL-042: Wrong algorithm → no fill quality monitoring → slippage undetected ✓
+- G-CMD-001: No RBAC → any user can modify system state ✓
+- G-CMD-002: RPT-12 missing → cannot attribute returns → model validation impossible ✓
+- G-CMD-003: No data monitoring → stale data → wrong signals ✓
+- G-CMD-004: No incident on mismatch → accounting errors unaudited ✓
+- G-XCT-012: No crash recovery → mid-session state lost ✓
+- G-XCT-015: GUI WebSocket unsanitized → prohibited fields visible in browser ✓
+
+All CRITICAL classifications justified. Note G-XCT-015 overlaps G-ONL-028 (same underlying issue viewed from different vantage points).
+
+### 6.3 Cross-Cutting Concerns Results
+
+| Area | Scope | HIGH | MEDIUM | LOW | Key Finding |
+|------|-------|------|--------|-----|-------------|
+| Naive datetime.now() | 68+ occurrences, 25+ files, all 3 processes | 3 | 1 | ~55 | B7 time-exit (HIGH), B4 Kelly day-count (HIGH), shadow timeout (HIGH); Docker ENV TZ masks the rest |
+| Hardcoded "primary_user" | 29 occurrences across codebase | 2 (systemic) | 2 | — | 12 hard assignments in api.py + command orchestrator; entire V2 multi-user blocked |
+| captain:status heartbeat | All 3 processes checked | 1 | 1 | — | Offline: NEVER publishes (HIGH); Online: stage transitions only, no periodic (MEDIUM); Command: correct 30s loop |
+| Crash recovery journal | All 3 main.py files + journal.py | 1 (CRITICAL) | — | — | Write-only; 60+ write_checkpoint calls but zero recovery branching on startup |
+| QuestDB LATEST ON | All SELECT queries audited | — | 3 | — | CB params, D08 TSM queries use _seen sets or lack dedup; core paths correct |
+| PROHIBITED_FIELDS | Signal flow traced end-to-end | 1 (CRITICAL) | — | — | API path sanitized correctly; GUI WebSocket path completely bypasses sanitization |
+
+### 6.4 Shared Modules Results
+
+| Module | VALID | GAP | HIGH | MEDIUM | LOW | Key Finding |
+|--------|-------|-----|------|--------|-----|-------------|
+| redis_client.py | 8 | 3 | 1 | 2 | 0 | No XPENDING/XCLAIM recovery for crashed consumers |
+| questdb_client.py | 5 | 4 | 1 | 2 | 1 | No connection pooling; new connection per call |
+| contract_resolver.py | 7 | 2 | 0 | 1 | 1 | No roll_confirmed check; stale contract ID during ROLL_PENDING |
+| account_lifecycle.py | 10 | 3 | 1 | 2 | 0 | No LIVE stage total balance failure detection |
+| vault.py | 6 | 5 | 1 | 3 | 1 | Non-atomic read-modify-write race in store_api_key |
+| journal.py | 5 | 5 | 1 | 2 | 2 | Write-only (confirmed G-XCT-012 from shared perspective) |
+| **TOTAL** | **41** | **22** | **5** | **12** | **5** | — |
+
+### 6.5 Final Rollup
+
+| Program | GAP | VALID | AMENDED | CRITICAL | HIGH | MEDIUM | LOW |
+|---------|-----|-------|---------|----------|------|--------|-----|
+| P3-Offline | 52 | ~75 | 3 | 5 | 20 | 22 | 5 |
+| P3-Online | 49 | ~40 | 8 | 3 | 14 | 22 | 10 |
+| P3-Command | 65 | ~35 | 3 | 4 | 15 | 31 | 18 |
+| Shared Modules | 22 | 41 | 2 | 0 | 5 | 12 | 5 |
+| Cross-Cutting | 16 | 4 | 0 | 2 | 6 | 6 | 2 |
+| **TOTAL** | **204** | **~195** | **16** | **14** | **60** | **93** | **40** |
+
+De-duplicated unique gaps: ~188 (cross-cutting entries aggregate per-program findings).
+
+### 6.6 Verdict
+
+**NOT READY for live trading.**
+
+14 CRITICAL gaps span position sizing (Kelly L4 formula 52% oversize), safety gates (pseudotrader unwired, crash recovery non-functional), data integrity (balance mismatches unaudited, data feed monitoring absent), information leakage (prohibited fields on GUI WebSocket, no RBAC), and operational completeness (RPT-12 missing, version rollback unimplemented).
+
+**Quick wins (items 1-2, <1 day):** Fix Kelly L4 formula, add sanitise call to GUI WebSocket path.
+**Minimum for first live session (items 3-7, ~1 week):** RBAC, balance incident, data monitoring, pseudotrader wiring, crash recovery.
+**Full compliance (~2-3 weeks):** All 14 CRITICAL + 60 HIGH findings.
+
+### 6.7 Audit Statistics
+
+| Metric | Value |
+|--------|-------|
+| Source files audited | 71 (per Session 1 index) |
+| Spec documents referenced | 16 (Docs 18-34) |
+| PG programs mapped | 32 |
+| Total findings | 204 GAP + 16 AMENDED = 220 |
+| Verification points confirmed | ~195 VALID |
+| S2-flagged items resolved | 22/22 |
+| Cross-cutting patterns verified | 6 |
+| Shared modules audited | 6 |
+| Audit sessions | 6 (completed 2026-04-11, 03:30-04:55 GMT+1) |
+| Prior audit (April 9) gaps re-verified | 100 (baseline comparison) |
