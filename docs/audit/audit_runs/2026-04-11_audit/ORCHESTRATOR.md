@@ -14,7 +14,7 @@
 |---------|-------|-------|--------|
 | 1 | Index & Scaffold | Directory structure, git history, mem-search context, file index | COMPLETE |
 | 2 | Spec Extraction | Obsidian vault tag search, wikilink traversal, spec-to-code mapping | COMPLETE |
-| 3 | P3-Offline Audit | All 17 offline blocks vs spec (AIM lifecycle, decay, Kelly, diagnostic) | PENDING |
+| 3 | P3-Offline Audit | All 17 offline blocks vs spec (AIM lifecycle, decay, Kelly, diagnostic) | COMPLETE |
 | 4 | P3-Online Audit | All 14 online blocks vs spec (data ingestion, regime, AIM, signal output) | PENDING |
 | 5 | P3-Command Audit | All 12 command blocks vs spec (routing, GUI, API, reconciliation) | PENDING |
 | 6 | Cross-Verification & Verdict | Regression check, unaudited file scan, final rollup, READY/NOT READY | PENDING |
@@ -824,9 +824,64 @@ These are spec requirements that may not have full code coverage. **Each must be
 
 ## Session 3 — P3-Offline Audit
 
-**Status:** PENDING
+**Status:** COMPLETE
+**Completed:** 2026-04-11 03:55 GMT+1
+**Objective:** Audit all 20 Captain Offline files against Obsidian spec (Docs 21, 22, 28, 31, 32)
 
-_(To be populated by Session 3)_
+### 3.1 Methodology
+
+6 parallel audit agents, each reading code files + spec documents:
+- Agent 1: B1 AIM blocks (5 files) — lifecycle, HMM, DMA, diversity, drift
+- Agent 2: B2 Decay blocks (3 files) — BOCPD, CUSUM, level escalation
+- Agent 3: B3 Pseudotrader (1 file) — PG-09/09B/09C deep dive
+- Agent 4: B4-B6 (3 files) — injection, sensitivity, auto-expansion
+- Agent 5: B7-B9 (4 files) — TSM simulation, Kelly, CB params, diagnostic
+- Agent 6: Support (4 files) — bootstrap, version_snapshot, orchestrator, main
+
+### 3.2 Results Summary
+
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 5 |
+| HIGH | 20 |
+| MEDIUM | 22 |
+| LOW | 5 |
+| AMENDED | 3 |
+| **Total Findings** | **55** |
+
+~75 spec verification points confirmed as correctly implemented.
+
+### 3.3 CRITICAL Findings
+
+| ID | Block | Description |
+|----|-------|-------------|
+| G-OFF-001 | B1-HMM | AIM-16 TVTP missing — hmmlearn only supports static transition matrices |
+| G-OFF-015 | B3 | Pseudotrader completely unwired from orchestrator event loop |
+| G-OFF-016 | B3 | No actual Online pipeline replay — uses pre-computed P&L |
+| G-OFF-029 | B5 | Sensitivity perturbation applied uniformly instead of per-parameter |
+| G-OFF-046 | Support | rollback_to_version() entirely unimplemented |
+
+### 3.4 S2-Flagged Items Resolution
+
+| S2-ID | Finding | Resolution |
+|-------|---------|------------|
+| S2-01 | Version Snapshot Policy | **G-OFF-046 CRITICAL**: rollback unimplemented. **G-OFF-047/048 HIGH**: pruning and state query missing. Only snapshot_before_update() works. |
+| S2-02 | Pseudotrader G-025 | **G-OFF-021 HIGH**: CB pseudotrader still not account-aware. Plus 6 additional HIGH gaps (G-OFF-015 through G-OFF-020). G-025 remains unresolved. |
+| S2-03 | AIM-16 HMM | **G-OFF-001 CRITICAL**: TVTP missing entirely. K=3, 7-obs vector, 60-day window, quartile seeding all valid. 240-obs min not enforced (G-OFF-002 HIGH). |
+| S2-19 | CUSUM bootstrap | **G-OFF-010 HIGH**: Init-time calibration missing; quarterly works. Sequential limits empty until first quarterly boundary. |
+| S2-20 | System Health 8D | **SATISFIED**: All 8 dimensions (D1-D8) implemented and scored ∈[0,1]. Minor: equal weighting vs spec's "weighted_mean" (G-OFF-045 LOW). |
+
+### 3.5 Pattern Observations
+
+**System-wide gaps detected across multiple blocks:**
+
+1. **Report generation absent everywhere**: RPT-03 (B5), RPT-05 (B4), RPT-07 (B7), RPT-09 (B3) — none generated. This appears to be a system-wide deferral, not a per-block oversight.
+
+2. **GUI notifications missing across blocks**: B4 (injection), B5 (FRAGILE), B6 (no viable candidates), B9 (action items) — all use logger instead of Redis alerts. Captain Command would not receive these events.
+
+3. **State persistence on restart weak**: BOCPD posterior, CUSUM state, and detector caches all lost on process restart. The orchestrator does not restore from P3-D04.
+
+4. **Pseudotrader deeply incomplete**: 7 HIGH/CRITICAL gaps. B3 is the least production-ready block in the Offline process. DEC-04 (defer post-live) acknowledged this, but the gap is wider than originally flagged.
 
 ---
 
