@@ -23,6 +23,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from shared.constants import now_et
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ class LifecycleEvent:
     tradable_balance: float = 0.0
     reserve_balance: float = 0.0
     details: dict = field(default_factory=dict)
-    ts: str = field(default_factory=lambda: datetime.now().isoformat())
+    ts: str = field(default_factory=lambda: now_et().isoformat())
 
 
 class MultiStageTopstepAccount:

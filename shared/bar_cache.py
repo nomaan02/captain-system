@@ -15,6 +15,7 @@ import json
 import sqlite3
 import logging
 from datetime import datetime, timedelta
+from shared.constants import now_et
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ def cache_bars(asset_id: str, bar_date: str, session_type: str, bars: list[dict]
             session_type,
             json.dumps(bars),
             len(bars),
-            datetime.now().isoformat(),
+            now_et().isoformat(),
         ),
     )
     conn.commit()
@@ -100,7 +101,7 @@ def cache_bars(asset_id: str, bar_date: str, session_type: str, bars: list[dict]
 
 def prune_cache(max_age_days: int = 30) -> int:
     """Delete entries older than max_age_days. Return count deleted."""
-    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    cutoff = (now_et() - timedelta(days=max_age_days)).isoformat()
     conn = _get_connection()
     cur = conn.execute(
         "DELETE FROM bar_cache WHERE fetched_at < ?",

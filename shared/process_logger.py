@@ -17,8 +17,7 @@ Usage::
 
 import json
 import logging
-from datetime import datetime
-
+from shared.constants import now_et
 from shared.redis_client import CH_PROCESS_LOGS
 
 _logger = logging.getLogger(__name__)
@@ -39,7 +38,7 @@ class ProcessLogger:
             "level": level,
             "source": source,
             "message": message,
-            "timestamp": datetime.now().astimezone().isoformat(),
+            "timestamp": now_et().isoformat(),
         }
         try:
             self.redis.publish(CH_PROCESS_LOGS, json.dumps(entry))

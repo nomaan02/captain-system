@@ -11,6 +11,7 @@ import uuid
 import json
 import sqlite3
 from datetime import datetime
+from shared.constants import now_et
 
 
 JOURNAL_PATH = os.environ.get("CAPTAIN_JOURNAL_PATH", "/captain/journal.sqlite")
@@ -67,7 +68,7 @@ def write_checkpoint(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             str(uuid.uuid4()),
-            datetime.now().isoformat(),
+            now_et().isoformat(),
             component,
             checkpoint,
             state_hash,
