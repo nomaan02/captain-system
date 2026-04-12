@@ -20,6 +20,9 @@ __pycache__/
 # Claude Code local config
 .claude/
 
+# Obsidian vault symlink (local path)
+obsidian-spec
+
 # Windows/WSL metadata
 *:Zone.Identifier
 

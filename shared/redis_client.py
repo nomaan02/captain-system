@@ -131,6 +131,37 @@ def read_stream(stream: str, group: str, consumer: str,
     return messages
 
 
+def read_pending_stream(stream: str, group: str, consumer: str,
+                        count: int = 100) -> list:
+    """Read pending (unacknowledged) messages from a stream consumer group.
+
+    Called on startup to recover messages that were delivered but not ACKed
+    before a crash.  Uses ID ``"0"`` which returns all pending entries for
+    this consumer.  Does **not** block -- returns immediately if no pending
+    messages exist.
+
+    Returns list of (message_id, data_dict) tuples.
+    """
+    client = get_redis_client()
+    results = client.xreadgroup(
+        group, consumer, {stream: "0"}, count=count,
+    )
+    if not results:
+        return []
+    messages = []
+    for msg_id, fields in results[0][1]:
+        # Redis returns empty field dict for fully-acknowledged entries
+        # when using ID "0" — skip those sentinel entries.
+        if not fields:
+            continue
+        try:
+            data = json.loads(fields.get("payload", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+        messages.append((msg_id, data))
+    return messages
+
+
 def ack_message(stream: str, group: str, msg_id: str) -> None:
     """Acknowledge a processed message so it won't be re-delivered."""
     get_redis_client().xack(stream, group, msg_id)

@@ -83,7 +83,8 @@ def check_compliance_gate() -> dict:
     ]
 
     all_met = len(unsatisfied) == 0 and len(requirements) == _EXPECTED_REQUIREMENTS
-    auto_execute = os.environ.get("AUTO_EXECUTE", "false").lower() == "true"
+    # Must match orchestrator.py accepted values: ("1", "true", "yes")
+    auto_execute = os.environ.get("AUTO_EXECUTE", "false").lower() in ("1", "true", "yes")
 
     return {
         "allowed": all_met and auto_execute,

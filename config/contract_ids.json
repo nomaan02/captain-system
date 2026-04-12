@@ -1,6 +1,6 @@
 {
     "description": "TopstepX contract IDs. Auto-updated 2026-03-23 via roll_calendar_update.py",
-    "note": "MGC uses April expiry (J26), all others June (M26). ZN uses TYA (standard 10yr), NOT TNA (Ultra).",
+    "note": "All contracts use June expiry (M26). ZN uses TYA (standard 10yr), NOT TNA (Ultra).",
     "contracts": {
         "ES": {
             "contract_id": "CON.F.US.EP.M26",
@@ -52,9 +52,9 @@
             "tick_value": 25.0
         },
         "MGC": {
-            "contract_id": "CON.F.US.MGC.J26",
-            "name": "MGCJ6",
-            "description": "Micro Gold: April 2026",
+            "contract_id": "CON.F.US.MGC.M26",
+            "name": "MGCM6",
+            "description": "Micro Gold: June 2026",
             "tick_size": 0.1,
             "tick_value": 1.0
         },

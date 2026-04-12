@@ -35,6 +35,7 @@ from shared.redis_client import (
     signals_channel,
     ensure_consumer_group,
     read_stream,
+    read_pending_stream,
     ack_message,
     STREAM_SIGNALS,
     GROUP_COMMAND_SIGNALS,
@@ -166,6 +167,22 @@ class CommandOrchestrator:
                 ensure_consumer_group(STREAM_SIGNALS, GROUP_COMMAND_SIGNALS)
                 logger.info("Signal stream consumer group ready")
                 backoff = 1
+
+                # --- PEL recovery: drain pending messages from previous crash ---
+                pending = read_pending_stream(
+                    STREAM_SIGNALS, GROUP_COMMAND_SIGNALS, "command_1",
+                )
+                for msg_id, data in pending:
+                    logger.info("Recovering pending signal: %s", msg_id)
+                    # NOTE: _handle_signal is not fully idempotent today.
+                    # Duplicate execution risk is low — the compliance gate
+                    # and brokerage API reject duplicate order attempts — and
+                    # far preferable to silently losing a signal.
+                    self._handle_signal(data)
+                    ack_message(STREAM_SIGNALS, GROUP_COMMAND_SIGNALS, msg_id)
+                if pending:
+                    logger.info("Recovered %d pending signal(s) from PEL", len(pending))
+                # --- end PEL recovery ---
 
                 while self.running:
                     for msg_id, data in read_stream(

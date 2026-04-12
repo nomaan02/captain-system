@@ -28,6 +28,7 @@ from typing import Any
 from shared.questdb_client import get_cursor
 from shared.vault import get_api_key
 from shared.journal import write_checkpoint
+from shared.redis_client import get_redis_client, CH_ALERTS
 from captain_command.blocks.b9_incident_response import create_incident
 from captain_command.blocks.b12_compliance_gate import check_compliance_gate, compliance_check
 from shared.constants import PROHIBITED_EXTERNAL_FIELDS, SANITISED_SIGNAL_FIELDS, now_et
@@ -259,7 +260,37 @@ class TopstepXAdapter(APIAdapter):
                     self._account_id, contract_id, exit_side, size,
                     float(sl_price),
                 )
-                result["sl_order_id"] = sl_resp.get("orderId")
+                if sl_resp.get("success"):
+                    result["sl_order_id"] = sl_resp.get("orderId")
+                else:
+                    result["sl_failed"] = True
+                    result["sl_error"] = sl_resp.get(
+                        "errorMessage", "SL placement failed",
+                    )
+                    logger.critical(
+                        "STOP LOSS PLACEMENT FAILED — position %s is "
+                        "UNPROTECTED. Error: %s",
+                        entry_oid, result["sl_error"],
+                    )
+                    try:
+                        get_redis_client().publish(CH_ALERTS, json.dumps({
+                            "notif_id": f"SL-FAIL-{uuid.uuid4().hex[:12].upper()}",
+                            "priority": "CRITICAL",
+                            "event_type": "SL_PLACEMENT_FAILED",
+                            "message": (
+                                f"STOP LOSS FAILED for entry {entry_oid} — "
+                                f"position is UNPROTECTED. "
+                                f"Error: {result['sl_error']}"
+                            ),
+                            "source": "B3_API_ADAPTER",
+                            "asset": order.get("asset", ""),
+                            "timestamp": now_et().isoformat(),
+                        }))
+                    except Exception as alert_exc:
+                        logger.error(
+                            "Failed to publish SL failure alert: %s",
+                            alert_exc,
+                        )
 
             # Take profit
             tp_price = order.get("tp")
@@ -268,7 +299,36 @@ class TopstepXAdapter(APIAdapter):
                     self._account_id, contract_id, exit_side, size,
                     float(tp_price),
                 )
-                result["tp_order_id"] = tp_resp.get("orderId")
+                if tp_resp.get("success"):
+                    result["tp_order_id"] = tp_resp.get("orderId")
+                else:
+                    result["tp_failed"] = True
+                    result["tp_error"] = tp_resp.get(
+                        "errorMessage", "TP placement failed",
+                    )
+                    logger.warning(
+                        "Take profit placement failed for entry %s. "
+                        "Error: %s",
+                        entry_oid, result["tp_error"],
+                    )
+                    try:
+                        get_redis_client().publish(CH_ALERTS, json.dumps({
+                            "notif_id": f"TP-FAIL-{uuid.uuid4().hex[:12].upper()}",
+                            "priority": "HIGH",
+                            "event_type": "TP_PLACEMENT_FAILED",
+                            "message": (
+                                f"Take profit failed for entry {entry_oid}. "
+                                f"Error: {result['tp_error']}"
+                            ),
+                            "source": "B3_API_ADAPTER",
+                            "asset": order.get("asset", ""),
+                            "timestamp": now_et().isoformat(),
+                        }))
+                    except Exception as alert_exc:
+                        logger.error(
+                            "Failed to publish TP failure alert: %s",
+                            alert_exc,
+                        )
 
             logger.info(
                 "TopstepX order PLACED: entry=%s sl=%s tp=%s (%s x%d @ %s)",

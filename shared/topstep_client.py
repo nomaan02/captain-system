@@ -125,12 +125,17 @@ class TopstepXClient:
     def validate_token(self) -> str:
         """Refresh token via /Auth/validate. Returns new token."""
         resp = self._post("/Auth/validate", {}, skip_refresh=True)
-        if not resp.get("success") and not resp.get("token"):
+        if not resp.get("success") and not resp.get("newToken"):
             raise AuthenticationError(
                 f"Token validation failed: {resp.get('errorCode', 'unknown')}"
             )
+        new_token = resp.get("newToken")
+        if new_token is None:
+            raise AuthenticationError(
+                "Token validation response missing 'newToken' field"
+            )
         with self._lock:
-            self._token = resp["token"]
+            self._token = new_token
             self._token_acquired_at = time.time()
         logger.debug("TopstepX token refreshed")
         return self._token
