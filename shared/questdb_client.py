@@ -7,6 +7,7 @@ except ImportError:
 """QuestDB connection utilities shared across all Captain processes."""
 
 import os
+import threading
 import psycopg2
 from contextlib import contextmanager
 
@@ -17,28 +18,60 @@ QUESTDB_USER = os.environ.get("QUESTDB_USER", "captain")
 QUESTDB_PASSWORD = os.environ.get("QUESTDB_PASSWORD", "")
 QUESTDB_DB = os.environ.get("QUESTDB_DB", "qdb")
 
+_local = threading.local()
 
-def get_connection():
-    """Get a psycopg2 connection to QuestDB via PostgreSQL wire protocol."""
-    return psycopg2.connect(
+
+def _connect():
+    """Create a fresh psycopg2 connection."""
+    conn = psycopg2.connect(
         host=QUESTDB_HOST,
         port=QUESTDB_PORT,
         user=QUESTDB_USER,
         password=QUESTDB_PASSWORD,
         database=QUESTDB_DB,
     )
+    conn.autocommit = True
+    return conn
+
+
+def get_connection():
+    """Get a psycopg2 connection to QuestDB via PostgreSQL wire protocol.
+
+    Returns a thread-local cached connection, creating a new one only if
+    the cached connection is missing or has been closed/broken.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.cursor().execute("SELECT 1")
+            return conn
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+    conn = _connect()
+    _local.conn = conn
+    return conn
 
 
 @contextmanager
 def get_cursor():
     """Context manager yielding a QuestDB cursor with auto-commit."""
     conn = get_connection()
+    cur = conn.cursor()
     try:
-        conn.autocommit = True
-        cur = conn.cursor()
         yield cur
-    finally:
-        conn.close()
+    except Exception:
+        # If the connection went bad mid-query, discard it so the next
+        # call to get_connection() creates a fresh one.
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+        raise
 
 
 # ---------------------------------------------------------------------------

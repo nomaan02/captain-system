@@ -443,6 +443,8 @@ _active_connections: dict[str, dict] = {}
 
 HEALTH_CHECK_INTERVAL_S = 30
 MAX_RECONNECT_RETRIES = 3
+_INCIDENT_COOLDOWN_SECS = 300  # 5 min — suppress duplicate connection-lost incidents
+_incident_cooldowns: dict[str, float] = {}  # account_id → last incident timestamp
 
 
 def register_connection(account_id: str, adapter: APIAdapter, endpoint: str):
@@ -502,13 +504,18 @@ def run_health_checks(notify_fn=None) -> dict:
                 logger.error(msg)
                 _log_api_health(ac_id, "DISCONNECTED", -1)
 
-                create_incident(
-                    incident_type="OPERATIONAL",
-                    severity="P1_CRITICAL",
-                    component="API",
-                    details=msg,
-                    notify_fn=notify_fn,
-                )
+                # Rate-limit: only fire one incident per account per 5 minutes
+                now_ts = time.time()
+                last = _incident_cooldowns.get(ac_id, 0.0)
+                if now_ts - last >= _INCIDENT_COOLDOWN_SECS:
+                    _incident_cooldowns[ac_id] = now_ts
+                    create_incident(
+                        incident_type="OPERATIONAL",
+                        severity="P1_CRITICAL",
+                        component="API",
+                        details=msg,
+                        notify_fn=notify_fn,
+                    )
         else:
             state["connected"] = True
             state["latency_ms"] = latency

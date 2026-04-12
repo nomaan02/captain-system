@@ -318,18 +318,31 @@ def main():
     # Handle Ctrl+C gracefully
     signal.signal(signal.SIGINT, lambda s, f: (log("\nInterrupted by user."), sys.exit(130)))
 
+    # Parse --from N to skip earlier sessions
+    start_session = 2
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--from" and i < len(sys.argv) - 1:
+            start_session = int(sys.argv[i + 1])
+        elif arg.startswith("--from="):
+            start_session = int(arg.split("=", 1)[1])
+
+    sessions_to_run = [s for s in SESSIONS if s["num"] >= start_session]
+    if not sessions_to_run:
+        log(f"No sessions >= {start_session}. Valid range: 2-6.")
+        sys.exit(1)
+
     print()
     log("Canvas Cross-Validation Audit Runner")
     log(f"Audit dir: {AUDIT_DIR}")
     log(f"Model: claude-opus-4-6 | Effort: max")
-    log(f"Sessions to run: 2 -> 6 (5 sessions)")
+    log(f"Sessions to run: {sessions_to_run[0]['num']} -> {sessions_to_run[-1]['num']} ({len(sessions_to_run)} session(s))")
     print()
 
     check_prereqs()
 
     total_start = datetime.now()
 
-    for session in SESSIONS:
+    for session in sessions_to_run:
         print()
         success = run_session(session)
         if not success:
