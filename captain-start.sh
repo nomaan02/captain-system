@@ -115,6 +115,14 @@ for svc in captain-offline captain-online captain-command; do
 done
 log "Config synced into build contexts"
 
+# ── Step 4b: Ensure SQLite journal files exist ────────────────────────────────
+# Docker bind-mount of a non-existent path creates a directory; SQLite can't
+# open a directory.  *.sqlite is gitignored, so fresh clones need this.
+for svc in captain-offline captain-online captain-command; do
+    journal="$CAPTAIN_DIR/$svc/journal.sqlite"
+    [ ! -f "$journal" ] && touch "$journal"
+done
+
 # ── Step 5: Start containers ──────────────────────────────────────────────────
 if [ -n "$BUILD_FLAG" ]; then
     info "Starting with --build (rebuilding images)..."

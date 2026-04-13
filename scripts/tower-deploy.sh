@@ -184,6 +184,18 @@ if [ "$FROM_PHASE" -le 1 ]; then
     mkdir -p "$HOME_DIR/backups"
     log "  Directories: created"
 
+    # ── SQLite journal files (must exist as FILES before Docker bind-mount) ─
+    # Docker bind-mount of a non-existent path creates a directory, which
+    # SQLite can't open. The *.sqlite files are gitignored, so fresh clones
+    # don't have them.
+    for svc in captain-offline captain-online captain-command; do
+        journal="$CAPTAIN_DIR/$svc/journal.sqlite"
+        if [ ! -f "$journal" ]; then
+            touch "$journal"
+        fi
+    done
+    log "  Journal files: ensured"
+
     log "Phase 1 complete."
 fi
 
