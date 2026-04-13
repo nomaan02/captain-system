@@ -147,7 +147,8 @@ while [ $elapsed -lt $QUESTDB_INIT_TIMEOUT ]; do
     fi
 
     if ! $redis_ready; then
-        if docker compose $COMPOSE_FILES exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; then
+        REDIS_PW=$(grep -oP '^REDIS_PASSWORD=\K.*' "$CAPTAIN_DIR/.env" 2>/dev/null || echo "")
+        if docker compose $COMPOSE_FILES exec -T redis redis-cli ${REDIS_PW:+-a "$REDIS_PW"} ping 2>/dev/null | grep -q PONG; then
             log "  Redis: PONG"
             redis_ready=true
         fi
