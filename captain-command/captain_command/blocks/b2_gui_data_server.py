@@ -36,7 +36,7 @@ from shared.contract_resolver import resolve_contract_id
 
 logger = logging.getLogger(__name__)
 
-_CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.H26")
+_CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.M26")
 
 # Lock protecting mutable module-level state so concurrent GUI clients
 # receive atomically-consistent financial snapshots (§7 B2).

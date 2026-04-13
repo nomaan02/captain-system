@@ -21,11 +21,12 @@ Writes: Redis signals channel, P3-D17 (session_log)
 import json
 import logging
 import random
+import time
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from shared.redis_client import publish_to_stream, STREAM_SIGNALS
+from shared.redis_client import publish_to_stream, STREAM_SIGNALS, get_redis_client, CH_ALERTS
 from shared.questdb_client import get_cursor
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
@@ -153,7 +154,28 @@ def run_signal_output(
 
     # Publish to Redis
     if signals or below_threshold:
-        _publish_signals(user_id, signals, below_threshold, session_id)
+        try:
+            _publish_signals(user_id, signals, below_threshold, session_id)
+        except Exception as pub_exc:
+            logger.critical("ON-B6: Signal publication LOST for user %s session %d — "
+                            "%d signals dropped: %s",
+                            user_id, session_id, len(signals), pub_exc)
+            try:
+                get_redis_client().publish(CH_ALERTS, json.dumps({
+                    "notif_id": f"SIG-PUB-FAIL-{uuid.uuid4().hex[:12].upper()}",
+                    "priority": "CRITICAL",
+                    "event_type": "SIGNAL_PUBLISH_FAILED",
+                    "message": (
+                        f"Signal publication FAILED for user {user_id} "
+                        f"session {session_id} — {len(signals)} signals lost "
+                        f"after 3 retries. Error: {pub_exc}"
+                    ),
+                    "source": "ON_B6_SIGNAL_OUTPUT",
+                    "asset": ",".join(s["asset"] for s in signals),
+                    "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                }))
+            except Exception as alert_exc:
+                logger.error("ON-B6: Failed to publish signal-loss alert: %s", alert_exc)
 
     # Log to P3-D17
     _log_signal_output(user_id, session_id, signals, below_threshold)
@@ -288,19 +310,31 @@ def _publish_signals(user_id: str, signals: list, below_threshold: list, session
     """Publish signals to Redis stream:signals (durable delivery).
 
     Anti-copy jitter applied to published copies; internal signals unchanged.
+    Retries up to 3 times with 100ms delay between attempts.
+    Raises on exhaustion so the caller can alert.
     """
     jittered = [_apply_jitter(s) for s in signals]
-    try:
-        publish_to_stream(STREAM_SIGNALS, {
-            "user_id": user_id,
-            "session_id": session_id,
-            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
-            "signals": jittered,
-            "below_threshold": below_threshold,
-        })
-        logger.debug("ON-B6: Published %d signals to %s", len(signals), STREAM_SIGNALS)
-    except Exception as e:
-        logger.error("ON-B6: Failed to publish signals: %s", e)
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            publish_to_stream(STREAM_SIGNALS, {
+                "user_id": user_id,
+                "session_id": session_id,
+                "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                "signals": jittered,
+                "below_threshold": below_threshold,
+            })
+            logger.debug("ON-B6: Published %d signals to %s", len(signals), STREAM_SIGNALS)
+            return
+        except Exception as e:
+            if attempt < max_attempts:
+                logger.warning("ON-B6: Retry %d/%d publishing signals for user %s: %s",
+                               attempt, max_attempts, user_id, e)
+                time.sleep(0.1)
+            else:
+                logger.error("ON-B6: FAILED to publish signals for user %s after %d attempts: %s",
+                             user_id, max_attempts, e)
+                raise
 
 
 def _log_signal_output(user_id: str, session_id: int, signals: list, below_threshold: list):

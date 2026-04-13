@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Callable
 
 from shared.questdb_client import get_cursor
-from shared.redis_client import get_redis_client, CH_COMMANDS
+from shared.redis_client import publish_to_stream, STREAM_COMMANDS
 from shared.journal import write_checkpoint
 from shared.constants import now_et
 
@@ -172,12 +172,11 @@ def route_injection_decision(candidate_id: str, decision: str,
         logger.warning("Invalid injection decision: %s", decision)
         return
 
-    redis_client = get_redis_client()
-    redis_client.publish(CH_COMMANDS, json.dumps({
+    publish_to_stream(STREAM_COMMANDS, {
         "type": f"{decision}_STRATEGY" if decision != "PARALLEL_TRACK" else "PARALLEL_TRACK",
         "candidate_id": candidate_id,
         "user_id": user_id,
-    }))
+    })
 
     # Log decision
     _log_injection_decision(candidate_id, decision, user_id)

@@ -39,7 +39,7 @@ def main():
 
     # 2. Contract resolution
     print("\n[2] CONTRACT RESOLUTION")
-    contract = client.get_contract_by_id("CON.F.US.EP.H26")
+    contract = client.get_contract_by_id("CON.F.US.EP.M26")
     print(f"  Contract: {contract['id']} ({contract['name']})")
     print(f"  Tick: {contract['tickSize']} / Value: ${contract['tickValue']}")
 
@@ -70,7 +70,7 @@ def main():
     )
 
     market = MarketStream(
-        token=client.current_token, contract_id="CON.F.US.EP.H26",
+        token=client.current_token, contract_id="CON.F.US.EP.M26",
     )
     market.start()
     time.sleep(2)
@@ -83,7 +83,7 @@ def main():
     time.sleep(2)
     print(f"  UserStream: {user.state.value}")
 
-    quote = quote_cache.get("CON.F.US.EP.H26")
+    quote = quote_cache.get("CON.F.US.EP.M26")
     print(f"  Quote cache: {'populated' if quote else 'empty (market closed)'}")
     print(f"  Account cache: {'populated' if user.account_data else 'empty'}")
 

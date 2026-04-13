@@ -26,7 +26,7 @@ _ET = ZoneInfo(SYSTEM_TIMEZONE)
 logger = logging.getLogger(__name__)
 
 # Tolerance window for session detection (minutes)
-SESSION_WINDOW_MINUTES = int(os.environ.get("SESSION_WINDOW_MINUTES", "2"))
+SESSION_WINDOW_MINUTES = int(os.environ.get("SESSION_WINDOW_MINUTES", "5"))
 
 # ---------------------------------------------------------------------------
 # Registry loading (cached)

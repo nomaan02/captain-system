@@ -23,9 +23,6 @@ from typing import Any, Callable
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import (
-    get_redis_client,
-    get_redis_pubsub,
-    CH_COMMANDS,
     CH_ALERTS,
     CH_STATUS,
     CH_TRADE_OUTCOMES,
@@ -163,8 +160,6 @@ def route_command(data: dict, gui_push_fn: Callable):
 
     logger.info("Routing command %s from user %s", cmd_type, user_id)
 
-    redis_client = get_redis_client()
-
     # ------------------------------------------------------------------
     # TAKEN / SKIPPED  — forward to Online (position creation / logging)
     # ------------------------------------------------------------------
@@ -285,11 +280,11 @@ def route_command(data: dict, gui_push_fn: Callable):
     elif cmd_type in ("MANUAL_PAUSE", "MANUAL_RESUME"):
         paused = cmd_type == "MANUAL_PAUSE"
         _set_asset_pause(data.get("asset"), paused, user_id)
-        redis_client.publish(CH_COMMANDS, json.dumps({
+        publish_to_stream(STREAM_COMMANDS, {
             "type": "MANUAL_HALT" if paused else "MANUAL_RESUME",
             "user_id": user_id,
             "asset": data.get("asset"),
-        }))
+        })
         gui_push_fn(user_id, {"type": "command_ack", "command": cmd_type})
 
 

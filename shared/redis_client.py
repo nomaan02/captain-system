@@ -81,6 +81,7 @@ GROUP_OFFLINE_OUTCOMES = "offline_outcomes"
 GROUP_OFFLINE_COMMANDS = "offline_commands"
 GROUP_ONLINE_COMMANDS = "online_commands"
 GROUP_OFFLINE_SIGNAL_OUTCOMES = "offline_signal_outcomes"  # Category A learning from theoretical trades
+GROUP_COMMAND_COMMANDS = "command_commands"
 
 
 def publish_to_stream(stream: str, data: dict) -> str:

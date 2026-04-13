@@ -190,7 +190,7 @@ class TopstepXClient:
         return resp.get("contracts", [])
 
     def get_contract_by_id(self, contract_id: str) -> dict | None:
-        """Get contract details by ID (e.g. 'CON.F.US.EP.H26')."""
+        """Get contract details by ID (e.g. 'CON.F.US.EP.M26')."""
         resp = self._post("/Contract/searchById",
                           {"contractId": contract_id})
         return resp.get("contract")

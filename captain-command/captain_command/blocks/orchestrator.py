@@ -38,7 +38,9 @@ from shared.redis_client import (
     read_pending_stream,
     ack_message,
     STREAM_SIGNALS,
+    STREAM_COMMANDS,
     GROUP_COMMAND_SIGNALS,
+    GROUP_COMMAND_COMMANDS,
 )
 from shared.process_logger import ProcessLogger
 from shared.journal import write_checkpoint
@@ -131,13 +133,19 @@ class CommandOrchestrator:
         )
         self._signal_thread.start()
 
-        # Background thread 2: Pub/sub for alerts + status (non-critical)
+        # Background thread 2: Command stream reader (durable delivery)
+        self._command_thread = threading.Thread(
+            target=self._command_stream_reader, daemon=True, name="cmd-commands"
+        )
+        self._command_thread.start()
+
+        # Background thread 3: Pub/sub for alerts + status (non-critical)
         self._redis_thread = threading.Thread(
             target=self._redis_listener, daemon=True, name="cmd-redis"
         )
         self._redis_thread.start()
 
-        # Background thread 3: Process log forwarder (Live Terminal GUI)
+        # Background thread 4: Process log forwarder (Live Terminal GUI)
         self._plog_thread = threading.Thread(
             target=self._process_log_forwarder, daemon=True, name="cmd-plog"
         )
@@ -208,10 +216,63 @@ class CommandOrchestrator:
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 30)
 
-    def _redis_listener(self):
-        """Subscribe to non-critical pub/sub channels (alerts, status, commands).
+    def _command_stream_reader(self):
+        """Read commands from Redis Stream with durable delivery guarantee.
 
-        Signals are now read from Redis Streams in _signal_stream_reader().
+        Mirrors _signal_stream_reader() pattern.  Commands published to
+        STREAM_COMMANDS by b1_core_routing and b5_injection_flow are now
+        consumed here instead of relying solely on the non-durable pub/sub
+        listener.
+        """
+        backoff = 1
+        while self.running:
+            try:
+                ensure_consumer_group(STREAM_COMMANDS, GROUP_COMMAND_COMMANDS)
+                logger.info("Command stream consumer group ready")
+                backoff = 1
+
+                # --- PEL recovery: drain pending messages from previous crash ---
+                pending = read_pending_stream(
+                    STREAM_COMMANDS, GROUP_COMMAND_COMMANDS, "command_1",
+                )
+                for msg_id, data in pending:
+                    logger.info("Recovering pending command: %s", msg_id)
+                    self._handle_command(data)
+                    ack_message(STREAM_COMMANDS, GROUP_COMMAND_COMMANDS, msg_id)
+                if pending:
+                    logger.info("Recovered %d pending command(s) from PEL", len(pending))
+                # --- end PEL recovery ---
+
+                while self.running:
+                    for msg_id, data in read_stream(
+                        STREAM_COMMANDS, GROUP_COMMAND_COMMANDS,
+                        "command_1", block=2000,
+                    ):
+                        self._handle_command(data)
+                        ack_message(STREAM_COMMANDS, GROUP_COMMAND_COMMANDS, msg_id)
+
+            except Exception as exc:
+                if not self.running:
+                    return
+                logger.error("Command stream error: %s — reconnecting in %ds", exc, backoff)
+                if self.running:
+                    try:
+                        create_incident(
+                            "RECONNECT", "P2_HIGH", "COMMAND",
+                            f"Command stream reconnecting after: {exc}",
+                            notify_fn=lambda n: notify_route(n, gui_push, telegram_bot=self.telegram_bot),
+                        )
+                    except Exception:
+                        pass
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+
+    def _redis_listener(self):
+        """Subscribe to non-critical pub/sub channels (alerts, status).
+
+        Commands are now primarily read from Redis Streams in
+        _command_stream_reader().  CH_COMMANDS remains subscribed here
+        for backward compatibility during the transition period.
         """
         logger.info("Redis pub/sub listener started (alerts + status)")
         backoff = 1

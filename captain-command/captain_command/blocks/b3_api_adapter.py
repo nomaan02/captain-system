@@ -124,7 +124,7 @@ class TopstepXAdapter(APIAdapter):
     """
 
     # Default contract and account (from .env / captain-system/.env)
-    DEFAULT_CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.H26")
+    DEFAULT_CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.M26")
     DEFAULT_ACCOUNT_NAME = os.environ.get("TOPSTEP_ACCOUNT_NAME", "")
 
     def __init__(self):
