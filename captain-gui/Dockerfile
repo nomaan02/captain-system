@@ -7,9 +7,9 @@ COPY . .
 RUN npm run build
 
 # ---- Deploy stage (copy built files into shared volume) ----
+# Runs as root because the gui-dist Docker volume is root-owned.
+# This is an ephemeral container that exits after copying — no security concern.
 FROM alpine:3.20
-RUN addgroup -S appuser && adduser -S appuser -G appuser \
-    && mkdir -p /gui-dist && chown appuser:appuser /gui-dist
-COPY --from=build --chown=appuser:appuser /app/build /gui-build
-USER appuser
+RUN mkdir -p /gui-dist
+COPY --from=build /app/build /gui-build
 CMD ["sh", "-c", "rm -rf /gui-dist/* && cp -r /gui-build/* /gui-dist/ && echo 'GUI deployed to /gui-dist'"]
