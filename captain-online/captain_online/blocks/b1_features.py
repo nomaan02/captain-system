@@ -1254,7 +1254,7 @@ def store_opening_volatility(asset_id: str):
         with get_cursor() as cur:
             cur.execute(
                 """INSERT INTO p3_d33_opening_volatility
-                   (asset_id, session_date, vol_5min)
+                   (asset_id, session_date, opening_range_pct)
                    VALUES (%s, %s, %s)""",
                 (asset_id, today_str, vol),
             )
@@ -1394,7 +1394,7 @@ def _get_trailing_open_vol(asset_id: str, lookback: int = 60) -> Optional[list[f
     try:
         with get_cursor() as cur:
             cur.execute(
-                """SELECT vol_5min FROM p3_d33_opening_volatility
+                """SELECT opening_range_pct FROM p3_d33_opening_volatility
                    WHERE asset_id = %s
                    ORDER BY session_date DESC
                    LIMIT %s""",
