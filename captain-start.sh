@@ -176,8 +176,15 @@ if ! $questdb_ready; then
     exit 1
 fi
 if ! $redis_ready; then
-    err "Redis not ready after ${QUESTDB_INIT_TIMEOUT}s"
-    exit 1
+    # Docker healthcheck already validated Redis (container shows "Healthy").
+    # This script-level check can fail if grep -oP isn't available or the
+    # password has special chars.  Trust Docker's healthcheck and continue.
+    if docker compose $COMPOSE_FILES ps 2>/dev/null | grep -q "redis.*healthy"; then
+        warn "Redis script-level ping failed, but Docker healthcheck shows healthy — continuing."
+    else
+        err "Redis not ready after ${QUESTDB_INIT_TIMEOUT}s"
+        exit 1
+    fi
 fi
 
 # ── Step 6: Initialise QuestDB tables (idempotent — CREATE IF NOT EXISTS) ─────
