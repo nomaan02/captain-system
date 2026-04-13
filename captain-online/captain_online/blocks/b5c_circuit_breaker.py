@@ -502,15 +502,19 @@ def _load_intraday_state(accounts: list[str]) -> dict:
 
 def _get_rolling_trade_returns(lookback_days: int = 60) -> list[float]:
     """Query per-trade P&L from D03 for rolling basket Sharpe calculation."""
-    with get_cursor() as cur:
-        cur.execute(
-            """SELECT pnl FROM p3_d03_trade_outcomes
-               WHERE timestamp > dateadd('d', -%s, now())
-               ORDER BY timestamp DESC""",
-            (lookback_days,),
-        )
-        rows = cur.fetchall()
-    return [r[0] for r in rows if r[0] is not None]
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT pnl FROM p3_d03_trade_outcome_log
+                   WHERE timestamp > dateadd('d', -%s, now())
+                   ORDER BY timestamp DESC""",
+                (lookback_days,),
+            )
+            rows = cur.fetchall()
+        return [r[0] for r in rows if r[0] is not None]
+    except Exception:
+        # Table may not exist on fresh deployment (cold start) — return empty
+        return []
 
 
 def _resolve_fee(tsm: dict, asset_id: str, fallback_fee: float) -> float:
