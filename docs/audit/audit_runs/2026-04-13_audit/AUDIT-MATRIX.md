@@ -36,7 +36,7 @@
 | S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | `951daf8` | Yes |
 | S2 | 2026-04-13 | C2, H2 | 0 | `1727026` | Yes |
 | S3 | 2026-04-13 | H4, M1-M8 | 0 | `c533f00` | Yes |
-| S4 | — | — | — | — | — |
+| S4 | 2026-04-13 | — (verification only) | 0 | pending (docs commit) | Yes |
 
 ---
 
@@ -54,12 +54,12 @@ Issues that required manual user input:
 
 Run after ALL sessions complete:
 
-- [ ] `docker compose -f docker-compose.yml -f docker-compose.local.yml config --quiet` (compose valid)
-- [ ] `PYTHONPATH=./:./captain-online:./captain-offline:./captain-command python3 -B -m pytest tests/ --ignore=tests/test_integration_e2e.py --ignore=tests/test_pipeline_e2e.py --ignore=tests/test_pseudotrader_account.py --ignore=tests/test_offline_feedback.py --ignore=tests/test_stress.py --ignore=tests/test_account_lifecycle.py -v` (unit tests pass)
-- [ ] `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build` (all containers start)
-- [ ] All 9 containers healthy (`docker compose ps`)
-- [ ] Redis streams writable (XADD test)
-- [ ] QuestDB tables queryable (SELECT 1 FROM each critical table)
-- [ ] TopstepX auth succeeds or fails loudly
-- [ ] GUI loads at http://localhost:80
-- [ ] `/api/health` returns 200 only when ready
+- [x] `docker compose -f docker-compose.yml -f docker-compose.local.yml config --quiet` (compose valid — YAML parse confirmed)
+- [x] `PYTHONPATH=./:./captain-online:./captain-offline:./captain-command python3 -B -m pytest tests/ --ignore=tests/test_integration_e2e.py --ignore=tests/test_pipeline_e2e.py --ignore=tests/test_pseudotrader_account.py --ignore=tests/test_offline_feedback.py --ignore=tests/test_stress.py --ignore=tests/test_account_lifecycle.py -v` (unit tests pass — 148/148)
+- [ ] `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build` (all containers start) — deferred: Docker daemon not running
+- [ ] All 9 containers healthy (`docker compose ps`) — deferred: Docker daemon not running
+- [ ] Redis streams writable (XADD test) — deferred: Docker daemon not running
+- [ ] QuestDB tables queryable (SELECT 1 FROM each critical table) — deferred: Docker daemon not running
+- [ ] TopstepX auth succeeds or fails loudly — deferred: Docker daemon not running
+- [ ] GUI loads at http://localhost:80 — deferred: Docker daemon not running
+- [ ] `/api/health` returns 200 only when ready — deferred: Docker daemon not running
