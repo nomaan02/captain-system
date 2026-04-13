@@ -102,8 +102,8 @@ class PaperTrader:
         self._last_signal_time = 0.0
         # ORB parameters from locked strategy (M4 k=017)
         self.or_pct = 0.003       # OR range as % of price (~0.3%)
-        self.sl_multiple = 1.5
-        self.tp_multiple = 2.0
+        self.sl_multiple = 0.05
+        self.tp_multiple = 0.95
 
     def start(self):
         """Start the paper trading loop."""

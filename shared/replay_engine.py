@@ -348,8 +348,8 @@ def load_replay_config(overrides: dict | None = None) -> dict:
         "budget_divisor": _budget_divisor,
         "risk_goal": risk_goal,
         "cb_enabled": True,
-        "tp_multiple": 0.70,
-        "sl_multiple": 0.35,
+        "tp_multiple": 0.95,
+        "sl_multiple": 0.05,
         "mdd_limit": mdd_limit,
         "mll_limit": mll_limit,
         "current_drawdown": current_drawdown,
@@ -700,8 +700,8 @@ def simulate_orb(
         }
 
     # Simulate TP/SL exit
-    tp_mult = strategy.get("tp_multiple", 2.0)
-    sl_mult = strategy.get("sl_multiple", 1.0)
+    tp_mult = strategy.get("tp_multiple", 0.95)
+    sl_mult = strategy.get("sl_multiple", 0.05)
 
     tp_level = entry_price + (tp_mult * or_range * direction)
     sl_level = entry_price - (sl_mult * or_range * direction)

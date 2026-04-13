@@ -43,8 +43,8 @@ def build_test_signal(direction: str = "BUY", price: float = 0.0,
 
     # OR-range based TP/SL (typical for MOST strategy)
     or_range = price * 0.003  # ~0.3% of price
-    sl_mult = 1.5
-    tp_mult = 2.0
+    sl_mult = 0.05
+    tp_mult = 0.95
 
     if direction == "BUY":
         dir_int = 1

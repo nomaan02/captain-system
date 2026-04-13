@@ -206,8 +206,8 @@ def _infer_entry(signal: dict) -> float | None:
     direction = signal.get("direction", 0)
     if tp is not None and sl is not None and direction != 0:
         # For ORB: entry divides TP-SL range at sl_multiple/(tp_multiple+sl_multiple)
-        # Default tp_multiple=0.70, sl_multiple=0.35 → entry is 1/3 from SL toward TP
-        # Simpler: entry = SL + (TP-SL) * sl_frac where sl_frac = 0.35/(0.35+0.70) = 1/3
+        # Default tp_multiple=0.95, sl_multiple=0.05 → entry is 1/20 from SL toward TP
+        # Simpler: entry = SL + (TP-SL) * sl_frac where sl_frac = 0.05/(0.05+0.95) = 1/20
         if direction == 1:
             return sl + (tp - sl) / 3.0
         else:

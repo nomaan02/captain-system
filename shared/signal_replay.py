@@ -216,8 +216,8 @@ class SignalReplayEngine:
         regime_labels: dict[str, str] | None = None,
         aim_weights: dict[str, float] | None = None,
         kelly_params: dict[str, dict] | None = None,
-        sl_mult: float = 1.0,
-        tp_mult: float = 2.0,
+        sl_mult: float = 0.05,
+        tp_mult: float = 0.95,
         threshold: float | None = None,
         account_capital: float = 150_000.0,
         risk_per_contract: float | None = None,
@@ -239,9 +239,9 @@ class SignalReplayEngine:
         3. Final P&L = per_contract_pnl * contracts
 
         Supports two calling conventions:
-          1. Direct: strategy_replay(trades=..., sl_mult=0.35, tp_mult=1.0, ...)
+          1. Direct: strategy_replay(trades=..., sl_mult=0.05, tp_mult=0.95, ...)
           2. Config-dict: strategy_replay(raw_trades=...,
-                 strategy_params={"sl_multiplier": 0.35, "tp_multiplier": 1.0},
+                 strategy_params={"sl_multiplier": 0.05, "tp_multiplier": 0.95},
                  account_config={"starting_balance": 150000, "max_contracts": 15})
 
         Args:
