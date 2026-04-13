@@ -502,7 +502,7 @@ import psycopg2, os, sys
 conn = psycopg2.connect(
     host=os.environ.get('QUESTDB_HOST','questdb'),
     port=int(os.environ.get('QUESTDB_PORT','8812')),
-    user=os.environ.get('QUESTDB_USER','admin'), password=os.environ.get('QUESTDB_PASSWORD','quest'), dbname='qdb'
+    user=os.environ.get('QUESTDB_USER','captain'), password=os.environ.get('QUESTDB_PASSWORD',''), dbname='qdb'
 )
 conn.autocommit = True
 cur = conn.cursor()
@@ -616,7 +616,7 @@ import psycopg2, os
 conn = psycopg2.connect(
     host=os.environ.get('QUESTDB_HOST','questdb'),
     port=int(os.environ.get('QUESTDB_PORT','8812')),
-    user=os.environ.get('QUESTDB_USER','admin'), password=os.environ.get('QUESTDB_PASSWORD','quest'), dbname='qdb'
+    user=os.environ.get('QUESTDB_USER','captain'), password=os.environ.get('QUESTDB_PASSWORD',''), dbname='qdb'
 )
 conn.autocommit = True
 cur = conn.cursor()

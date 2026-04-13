@@ -199,7 +199,7 @@ else
     if docker compose $COMPOSE_FILES exec -T captain-offline \
         python -c "
 import psycopg2, os
-conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QUESTDB_USER','admin'), password=os.environ.get('QUESTDB_PASSWORD','quest'), dbname='qdb')
+conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QUESTDB_USER','captain'), password=os.environ.get('QUESTDB_PASSWORD',''), dbname='qdb')
 conn.autocommit = True
 cur = conn.cursor()
 cur.execute('SELECT count() FROM p3_d00_asset_universe')
@@ -219,7 +219,7 @@ COMPOSE_CMD="docker compose $COMPOSE_FILES"
 DATA_OK=true
 $COMPOSE_CMD exec -T -e PYTHONPATH=/app captain-offline python -c "
 import psycopg2, os, sys
-conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QUESTDB_USER','admin'), password=os.environ.get('QUESTDB_PASSWORD','quest'), dbname='qdb')
+conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QUESTDB_USER','captain'), password=os.environ.get('QUESTDB_PASSWORD',''), dbname='qdb')
 conn.autocommit = True
 cur = conn.cursor()
 critical = {

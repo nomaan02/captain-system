@@ -165,7 +165,7 @@ info "Verifying QuestDB data integrity..."
 DATA_OK=true
 $COMPOSE exec -T -e PYTHONPATH=/app captain-offline python -c "
 import psycopg2, os, sys
-conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QDB_PG_USER','admin'), password=os.environ.get('QDB_PG_PASSWORD','quest'), dbname='qdb')
+conn = psycopg2.connect(host=os.environ.get('QUESTDB_HOST','questdb'), port=int(os.environ.get('QUESTDB_PORT','8812')), user=os.environ.get('QUESTDB_USER','captain'), password=os.environ.get('QUESTDB_PASSWORD',''), dbname='qdb')
 conn.autocommit = True
 cur = conn.cursor()
 critical = {
