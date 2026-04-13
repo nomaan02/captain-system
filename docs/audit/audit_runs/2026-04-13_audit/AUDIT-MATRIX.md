@@ -10,12 +10,12 @@
 | ID | Sev | Title | Session | Fix Description | Files Changed | Verification Method | Verified | Status |
 |----|-----|-------|---------|-----------------|---------------|---------------------|----------|--------|
 | C1 | CRIT | Redis signal publication silent loss | S1 | Added 3-attempt retry (100ms backoff) to _publish_signals(); caller publishes CRITICAL alert on final failure | b6_signal_output.py | grep retry + unit tests (148 pass) | Yes | FIXED |
-| C2 | CRIT | TopstepX auth failure blind operation | S2 | — | — | — | — | PENDING |
+| C2 | CRIT | TopstepX auth failure blind operation | S2 | Added 3-attempt retry (5s delay) to _start_market_streams(); made auth failure fatal with sys.exit(1) + CRITICAL log | captain-online/main.py | Import check + 148 unit tests pass | Yes | FIXED |
 | C3 | CRIT | Contract ID H26 expired default | S1 | Changed all H26 defaults to M26 (June 2026) | b2_gui_data_server.py, b3_api_adapter.py, verify_topstep_integration.py, topstep_client.py | grep H26 = 0 source matches | Yes | FIXED |
 | C4 | CRIT | B5 injection never reaches Offline | S1 | Changed b5_injection_flow from pub/sub CH_COMMANDS to publish_to_stream(STREAM_COMMANDS) | b5_injection_flow.py | grep CH_COMMANDS = 0 matches in b5 | Yes | FIXED |
 | C5 | CRIT | Duplicate HALT/RESUME publish | S1 | Migrated HALT/RESUME from pub/sub to stream; removed CH_COMMANDS imports | b1_core_routing.py | grep CH_COMMANDS = 0 matches in b1; all 5 publishes use stream | Yes | FIXED |
 | H1 | HIGH | Command orch on pub/sub not streams | S1 | Added _command_stream_reader() as 4th daemon thread; new GROUP_COMMAND_COMMANDS constant | orchestrator.py, shared/redis_client.py | grep STREAM_COMMANDS in orchestrator confirmed | Yes | FIXED |
-| H2 | HIGH | QuestDB no retry on connection | S2 | — | — | — | — | PENDING |
+| H2 | HIGH | QuestDB no retry on connection | S2 | Added exponential backoff retry to _connect(): 3 attempts with [1s, 2s, 4s] delays; logs each attempt; raises on final failure | shared/questdb_client.py | Import check + 148 unit tests pass | Yes | FIXED |
 | H3 | HIGH | Session window 2 vs 5 min | S1 | Changed default from "2" to "5" in b9_session_controller.py | b9_session_controller.py | grep confirms default="5"; matches session_registry.json | Yes | FIXED |
 | H4 | HIGH | Redis healthcheck var not expanded | S3 | — | — | — | — | PENDING |
 | M1 | MED | Zero-contract signals published | S3 | — | — | — | — | PENDING |
@@ -34,7 +34,7 @@
 | Session | Date | Issues Fixed | Issues Deferred | Commit(s) | Signed Off |
 |---------|------|-------------|-----------------|-----------|------------|
 | S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | `951daf8` | Yes |
-| S2 | — | — | — | — | — |
+| S2 | 2026-04-13 | C2, H2 | 0 | pending | Yes |
 | S3 | — | — | — | — | — |
 | S4 | — | — | — | — | — |
 

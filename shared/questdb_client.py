@@ -6,10 +6,14 @@ except ImportError:
 # endregion
 """QuestDB connection utilities shared across all Captain processes."""
 
+import logging
 import os
 import threading
+import time
 import psycopg2
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 
 QUESTDB_HOST = os.environ.get("QUESTDB_HOST", "localhost")
@@ -20,18 +24,44 @@ QUESTDB_DB = os.environ.get("QUESTDB_DB", "qdb")
 
 _local = threading.local()
 
+_CONNECT_MAX_ATTEMPTS = 3
+_CONNECT_DELAYS = [1, 2, 4]  # exponential backoff seconds
+
 
 def _connect():
-    """Create a fresh psycopg2 connection."""
-    conn = psycopg2.connect(
-        host=QUESTDB_HOST,
-        port=QUESTDB_PORT,
-        user=QUESTDB_USER,
-        password=QUESTDB_PASSWORD,
-        database=QUESTDB_DB,
-    )
-    conn.autocommit = True
-    return conn
+    """Create a fresh psycopg2 connection with exponential backoff retry.
+
+    Attempts up to 3 times with delays [1s, 2s, 4s]. Raises on final failure.
+    """
+    last_exc = None
+    for attempt in range(1, _CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            conn = psycopg2.connect(
+                host=QUESTDB_HOST,
+                port=QUESTDB_PORT,
+                user=QUESTDB_USER,
+                password=QUESTDB_PASSWORD,
+                database=QUESTDB_DB,
+            )
+            conn.autocommit = True
+            if attempt > 1:
+                logger.info("QuestDB connection succeeded on attempt %d", attempt)
+            return conn
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _CONNECT_MAX_ATTEMPTS:
+                delay = _CONNECT_DELAYS[attempt - 1]
+                logger.warning(
+                    "QuestDB connection attempt %d/%d failed: %s — retrying in %ds",
+                    attempt, _CONNECT_MAX_ATTEMPTS, exc, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    "QuestDB connection failed after %d attempts: %s",
+                    _CONNECT_MAX_ATTEMPTS, exc,
+                )
+    raise last_exc
 
 
 def get_connection():

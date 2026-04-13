@@ -15,6 +15,7 @@ import os
 import sys
 import signal
 import threading
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -40,42 +41,69 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_TOPSTEP_MAX_ATTEMPTS = 3
+_TOPSTEP_RETRY_DELAY_S = 5
+
+
 def _start_market_streams():
     """Authenticate TopstepX and start a single multi-contract MarketStream.
 
     Online needs live quotes in quote_cache for B1 (prices, volume),
     B1-features (OHLCV, bid-ask), and B7 (position monitoring).
+
+    Retries up to 3 times with 5s delay between attempts.
+    Returns the MarketStream on success, None on final failure.
     """
     from shared.topstep_client import get_topstep_client, TopstepXClientError
     from shared.topstep_stream import MarketStream
 
-    try:
-        client = get_topstep_client()
-        client.authenticate()
-        logger.info("TopstepX API: authenticated")
+    for attempt in range(1, _TOPSTEP_MAX_ATTEMPTS + 1):
+        try:
+            client = get_topstep_client()
+            client.authenticate()
+            logger.info("TopstepX API: authenticated")
 
-        contracts = preload_contracts()
-        logger.info("Resolved %d contracts: %s", len(contracts), list(contracts.keys()))
+            contracts = preload_contracts()
+            logger.info("Resolved %d contracts: %s", len(contracts), list(contracts.keys()))
 
-        if not contracts:
-            logger.warning("No contracts resolved — market data unavailable")
-            return None
+            if not contracts:
+                logger.warning("No contracts resolved — market data unavailable")
+                return None
 
-        stream = MarketStream(
-            token=client.current_token,
-            contract_ids=list(contracts.values()),
-            on_quote=or_tracker.on_quote,
-        )
-        stream.start()
-        logger.info("MarketStream STARTED for %d contracts", len(contracts))
-        return stream
+            stream = MarketStream(
+                token=client.current_token,
+                contract_ids=list(contracts.values()),
+                on_quote=or_tracker.on_quote,
+            )
+            stream.start()
+            logger.info("MarketStream STARTED for %d contracts", len(contracts))
+            return stream
 
-    except TopstepXClientError as exc:
-        logger.error("TopstepX init failed: %s", exc)
-        return None
-    except Exception as exc:
-        logger.error("TopstepX unexpected error: %s", exc, exc_info=True)
-        return None
+        except TopstepXClientError as exc:
+            if attempt < _TOPSTEP_MAX_ATTEMPTS:
+                logger.warning(
+                    "TopstepX init attempt %d/%d failed: %s — retrying in %ds",
+                    attempt, _TOPSTEP_MAX_ATTEMPTS, exc, _TOPSTEP_RETRY_DELAY_S,
+                )
+                time.sleep(_TOPSTEP_RETRY_DELAY_S)
+            else:
+                logger.error(
+                    "TopstepX init failed after %d attempts: %s",
+                    _TOPSTEP_MAX_ATTEMPTS, exc,
+                )
+        except Exception as exc:
+            if attempt < _TOPSTEP_MAX_ATTEMPTS:
+                logger.warning(
+                    "TopstepX init attempt %d/%d unexpected error: %s — retrying in %ds",
+                    attempt, _TOPSTEP_MAX_ATTEMPTS, exc, _TOPSTEP_RETRY_DELAY_S,
+                )
+                time.sleep(_TOPSTEP_RETRY_DELAY_S)
+            else:
+                logger.error(
+                    "TopstepX init failed after %d attempts: %s",
+                    _TOPSTEP_MAX_ATTEMPTS, exc, exc_info=True,
+                )
+    return None
 
 
 def main():
@@ -122,7 +150,9 @@ def main():
     if market_stream:
         plog.info("MarketStream started \u2014 live quotes active", source="stream")
     else:
-        plog.warn("MarketStream failed to start", source="stream")
+        logger.critical("TopstepX authentication failed — cannot trade without market data")
+        plog.error("MarketStream FAILED after retries — exiting", source="stream")
+        sys.exit(1)
 
     write_checkpoint(ROLE, "STREAMS_STARTED", "streams_ready", "starting_orchestrator")
 
