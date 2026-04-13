@@ -33,7 +33,7 @@
 
 | Session | Date | Issues Fixed | Issues Deferred | Commit(s) | Signed Off |
 |---------|------|-------------|-----------------|-----------|------------|
-| S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | (pending commit) | Yes |
+| S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | `951daf8` | Yes |
 | S2 | — | — | — | — | — |
 | S3 | — | — | — | — | — |
 | S4 | — | — | — | — | — |
