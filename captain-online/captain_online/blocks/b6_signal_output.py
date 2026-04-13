@@ -213,7 +213,7 @@ def _determine_direction(strategy: dict, features: dict) -> int:
 
 def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
     """Compute take-profit level from strategy params."""
-    tp_multiple = strategy.get("tp_multiple", 0.95)
+    tp_multiple = strategy.get("tp_multiple", 0.70)
     or_range = features.get("or_range")
     entry = features.get("entry_price")
 
@@ -226,7 +226,7 @@ def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
 
 def _compute_sl(strategy: dict, features: dict, direction: int) -> float | None:
     """Compute stop-loss level from strategy params."""
-    sl_multiple = strategy.get("sl_multiple", 0.05)
+    sl_multiple = strategy.get("sl_multiple", 0.35)
     or_range = features.get("or_range")
     entry = features.get("entry_price")
 

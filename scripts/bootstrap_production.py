@@ -102,8 +102,8 @@ def _build_locked_strategy(asset_id: str) -> str:
         "regime_label": "REGIME_NEUTRAL",
         # Runtime ORB trading parameters for B4/B6
         "default_direction": 0,     # ORB: resolved at Opening Range close
-        "tp_multiple": 0.95,        # TP = 0.95x Opening Range width (19:1 ratio with SL)
-        "sl_multiple": 0.05,        # SL = 0.05x Opening Range width
+        "tp_multiple": 0.70,        # TP = 0.70x Opening Range width (2:1 ratio with SL)
+        "sl_multiple": 0.35,        # SL = 0.35x Opening Range width
         "sl_method": "OR_RANGE",
         "threshold": spec["sl_distance"],  # SL distance in points (B4 Kelly fallback)
         "entry_conditions": {},
