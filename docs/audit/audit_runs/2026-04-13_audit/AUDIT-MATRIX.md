@@ -36,7 +36,7 @@
 | S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | `951daf8` | Yes |
 | S2 | 2026-04-13 | C2, H2 | 0 | `1727026` | Yes |
 | S3 | 2026-04-13 | H4, M1-M8 | 0 | `c533f00` | Yes |
-| S4 | 2026-04-13 | — (verification only) | 0 | pending (docs commit) | Yes |
+| S4 | 2026-04-13 | — (verification only) | 0 | `09c8653` | Yes |
 
 ---
 
