@@ -414,6 +414,8 @@ def _layer5_session_halt(session_id: int) -> str | None:
     Per Arch 19.6: DATA_HOLD >= 3 OR VIX > threshold -> skip session.
     """
     vix = _get_current_vix()
+    if vix is None:
+        logger.info("ON-B5C: VIX unavailable — Layer 5 VIX check skipped")
     if vix is not None and vix > DEFAULT_VIX_CB_THRESHOLD:
         return f"L5: VIX {vix:.1f} exceeds threshold {DEFAULT_VIX_CB_THRESHOLD}"
 

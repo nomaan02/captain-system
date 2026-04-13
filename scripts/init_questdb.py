@@ -623,6 +623,8 @@ TABLES = [
     # P3-D28: account_lifecycle
     # Owner: Shared (Offline B3 pseudotrader, Command B8 reconciliation)
     # Tracks: stage transitions, failures, fees, payouts, resets
+    # NOTE: Table defined for future account_lifecycle.py integration.
+    #       Not currently referenced by any block. See 2026-04-13 audit.
     # =====================================================================
     """
     CREATE TABLE IF NOT EXISTS p3_d28_account_lifecycle (

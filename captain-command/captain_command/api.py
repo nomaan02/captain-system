@@ -71,6 +71,12 @@ def set_orchestrator(orch):
     _orchestrator = orch
 
 
+def set_orchestrator_ready():
+    """Called by orchestrator once initialization is complete."""
+    global _orchestrator_ready
+    _orchestrator_ready = True
+
+
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
     """FastAPI lifespan: captures event loop on startup, stops orchestrator + bot on shutdown."""
@@ -167,6 +173,9 @@ _api_connections: dict[str, dict] = {}
 # Start time for uptime calculation
 _start_time: float = time.time()
 
+# Orchestrator readiness — set to True when orchestrator.start() reports ready
+_orchestrator_ready = False
+
 # Last signal time — updated by signal routing
 _last_signal_time: str | None = None
 
@@ -194,6 +203,12 @@ async def health():
 
     Spec: CMD Block 1.0 lines 34-53.
     """
+    if not _orchestrator_ready:
+        return JSONResponse(
+            {"status": "STARTING", "detail": "Orchestrator not yet ready"},
+            status_code=503,
+        )
+
     # Determine aggregate status
     connected_apis = sum(
         1 for ac in _api_connections.values()

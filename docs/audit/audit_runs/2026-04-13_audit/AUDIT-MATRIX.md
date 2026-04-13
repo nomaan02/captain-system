@@ -17,15 +17,15 @@
 | H1 | HIGH | Command orch on pub/sub not streams | S1 | Added _command_stream_reader() as 4th daemon thread; new GROUP_COMMAND_COMMANDS constant | orchestrator.py, shared/redis_client.py | grep STREAM_COMMANDS in orchestrator confirmed | Yes | FIXED |
 | H2 | HIGH | QuestDB no retry on connection | S2 | Added exponential backoff retry to _connect(): 3 attempts with [1s, 2s, 4s] delays; logs each attempt; raises on final failure | shared/questdb_client.py | Import check + 148 unit tests pass | Yes | FIXED |
 | H3 | HIGH | Session window 2 vs 5 min | S1 | Changed default from "2" to "5" in b9_session_controller.py | b9_session_controller.py | grep confirms default="5"; matches session_registry.json | Yes | FIXED |
-| H4 | HIGH | Redis healthcheck var not expanded | S3 | — | — | — | — | PENDING |
-| M1 | MED | Zero-contract signals published | S3 | — | — | — | — | PENDING |
-| M2 | MED | VIX provider returns None | S3 | — | — | — | — | PENDING |
-| M3 | MED | journal.sqlite volume mount risk | S3 | — | — | — | — | PENDING |
-| M4 | MED | Bootstrap vars missing from template | S3 | — | — | — | — | PENDING |
-| M5 | MED | Memory limits low for production | S3 | — | — | — | — | PENDING |
-| M6 | MED | No explicit Docker network | S3 | — | — | — | — | PENDING |
-| M7 | MED | Unused table p3_d28 | S3 | — | — | — | — | PENDING |
-| M8 | MED | No startup health gate for API | S3 | — | — | — | — | PENDING |
+| H4 | HIGH | Redis healthcheck var not expanded | S3 | Changed CMD array to CMD-SHELL with `$$REDIS_PASSWORD` and `\| grep PONG` | docker-compose.yml | YAML validation + CMD-SHELL grep | Yes | FIXED |
+| M1 | MED | Zero-contract signals published | S3 | Added `if total_size <= 0: continue` guard after sizing aggregation | b6_signal_output.py | grep + 148 unit tests pass | Yes | FIXED |
+| M2 | MED | VIX provider returns None | S3 | Added info log when VIX is None in Layer 5 | b5c_circuit_breaker.py | grep + 148 unit tests pass | Yes | FIXED |
+| M3 | MED | journal.sqlite volume mount risk | S3 | Added pre-creation requirement comments at all 3 journal.sqlite mounts | docker-compose.yml | grep journal.sqlite shows 3 comment blocks | Yes | FIXED |
+| M4 | MED | Bootstrap vars missing from template | S3 | Added 5 BOOTSTRAP_* variables (commented) to .env.template | .env.template | grep BOOTSTRAP shows all 5 vars | Yes | FIXED |
+| M5 | MED | Memory limits low for production | S3 | Added WSL2 dev-sized warning comment; actual limits unchanged (deferred) | docker-compose.local.yml | grep WARNING confirms comment | Yes | FIXED |
+| M6 | MED | No explicit Docker network | S3 | Added `captain` bridge network; assigned to all 7 services | docker-compose.yml | YAML parse: 7 services on captain network | Yes | FIXED |
+| M7 | MED | Unused table p3_d28 | S3 | Added NOTE comment documenting future use; table retained | scripts/init_questdb.py | grep NOTE confirms comment | Yes | FIXED |
+| M8 | MED | No startup health gate for API | S3 | Added `_orchestrator_ready` flag; /api/health returns 503 until threads start | api.py, orchestrator.py | grep _orchestrator_ready + 148 tests pass | Yes | FIXED |
 
 ---
 
@@ -35,7 +35,7 @@
 |---------|------|-------------|-----------------|-----------|------------|
 | S1 | 2026-04-13 | C1, C3, C4, C5, H1, H3 | 0 | `951daf8` | Yes |
 | S2 | 2026-04-13 | C2, H2 | 0 | `1727026` | Yes |
-| S3 | — | — | — | — | — |
+| S3 | 2026-04-13 | H4, M1-M8 | 0 | pending | Yes |
 | S4 | — | — | — | — | — |
 
 ---

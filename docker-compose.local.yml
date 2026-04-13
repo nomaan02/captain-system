@@ -7,6 +7,8 @@
 #   - All ports explicitly 127.0.0.1
 #   - Memory limits to stay within WSL 2 allocation (.wslconfig)
 #   - GUI container restart policy: run once to deploy files, then stop
+#   - WARNING: Memory limits are WSL 2 dev-sized. Production needs 4G/2G minimum.
+#     Monitor with: docker stats --no-stream
 
 services:
   questdb:

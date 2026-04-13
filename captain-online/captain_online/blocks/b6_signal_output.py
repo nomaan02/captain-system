@@ -98,6 +98,9 @@ def run_signal_output(
         total_size = sum(
             final_contracts.get(u, {}).get(ac, 0) for ac in accounts
         )
+        if total_size <= 0:
+            logger.debug("ON-B6: Skipping %s — zero contracts after sizing", u)
+            continue
 
         signal = {
             # 6 spec fields (PG-26)

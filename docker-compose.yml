@@ -25,6 +25,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - captain
 
   redis:
     image: redis:7-alpine
@@ -35,10 +37,12 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --appendfsync everysec --stop-writes-on-bgsave-error no
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a $REDIS_PASSWORD ping"]
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - captain
 
   captain-offline:
     build: ./captain-offline
@@ -52,6 +56,8 @@ services:
       - ./shared:/app/shared:ro
       - ./data:/captain/data:ro
       - ./logs:/captain/logs
+      # REQUIRES: touch captain-offline/journal.sqlite before first run
+      # captain-start.sh creates this automatically; manual docker compose does not
       - ./captain-offline/journal.sqlite:/captain/journal.sqlite
     environment:
       QUESTDB_HOST: questdb
@@ -71,6 +77,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - captain
 
   captain-online:
     build: ./captain-online
@@ -85,6 +93,8 @@ services:
       - ./data:/captain/data:ro
       - ./logs:/captain/logs
       - ./vault:/captain/vault:ro
+      # REQUIRES: touch captain-online/journal.sqlite before first run
+      # captain-start.sh creates this automatically; manual docker compose does not
       - ./captain-online/journal.sqlite:/captain/journal.sqlite
     env_file:
       - .env
@@ -106,6 +116,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - captain
 
   captain-command:
     build: ./captain-command
@@ -128,6 +140,8 @@ services:
       - ./logs:/captain/logs
       - ./vault:/captain/vault:ro
       - vault-backup:/captain/vault-backup
+      # REQUIRES: touch captain-command/journal.sqlite before first run
+      # captain-start.sh creates this automatically; manual docker compose does not
       - ./captain-command/journal.sqlite:/captain/journal.sqlite
     env_file:
       - .env
@@ -155,12 +169,16 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - captain
 
   captain-gui:
     build: ./captain-gui
     volumes:
       - gui-dist:/gui-dist
     restart: "no"
+    networks:
+      - captain
 
   # Nginx ports and config are deployment-specific.
   # Use docker-compose.local.yml (localhost HTTP) or a production override (TLS).
@@ -180,7 +198,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - captain
 
 volumes:
   gui-dist:
   vault-backup:
+
+networks:
+  captain:
+    driver: bridge

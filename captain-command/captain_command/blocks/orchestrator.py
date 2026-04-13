@@ -151,6 +151,11 @@ class CommandOrchestrator:
         )
         self._plog_thread.start()
 
+        # Signal API health gate — orchestrator threads are up
+        from captain_command.api import set_orchestrator_ready
+        set_orchestrator_ready()
+        logger.info("CommandOrchestrator ready — API health gate opened")
+
         # Main loop: scheduler (runs in caller thread)
         self._run_scheduler()
 
