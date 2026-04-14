@@ -127,7 +127,7 @@ def main():
     with get_cursor() as cur:
         cur.execute(
             """SELECT account_id, model_m, r_bar, beta_b, sigma, rho_bar,
-                      layers_enabled, vix_threshold
+                      n_observations, p_value, l_star, cold_start
                FROM p3_d25_circuit_breaker_params
                WHERE account_id = %s
                ORDER BY last_updated DESC
@@ -142,19 +142,20 @@ def main():
             cur.execute(
                 """INSERT INTO p3_d25_circuit_breaker_params (
                     account_id, model_m, r_bar, beta_b, sigma, rho_bar,
-                    layers_enabled, vix_threshold, last_updated
-                ) VALUES (%s, 20, 0.0, 0.0, 1.0, 0.0, %s, 50.0, now())""",
-                (new_id, json.dumps([1, 2, 5])),
+                    n_observations, p_value, l_star, cold_start, last_updated
+                ) VALUES (%s, 20, 0.0, 0.0, 1.0, 0.0, 0, 1.0, 0.0, true, now())""",
+                (new_id,),
             )
     else:
         with get_cursor() as cur:
             cur.execute(
                 """INSERT INTO p3_d25_circuit_breaker_params (
                     account_id, model_m, r_bar, beta_b, sigma, rho_bar,
-                    layers_enabled, vix_threshold, last_updated
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                    n_observations, p_value, l_star, cold_start, last_updated
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
                 (new_id, cb_row[1], cb_row[2], cb_row[3],
-                 cb_row[4], cb_row[5], cb_row[6], cb_row[7]),
+                 cb_row[4], cb_row[5], cb_row[6], cb_row[7],
+                 cb_row[8], cb_row[9]),
             )
     logger.info("  D25: OK")
 
@@ -176,7 +177,7 @@ def main():
         d08 = cur.fetchone()
 
         cur.execute(
-            """SELECT account_id FROM p3_d25_circuit_breaker_params
+            """SELECT account_id, cold_start FROM p3_d25_circuit_breaker_params
                ORDER BY last_updated DESC LIMIT 1"""
         )
         d25 = cur.fetchone()
