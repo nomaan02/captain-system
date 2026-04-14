@@ -37,7 +37,7 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --appendfsync everysec --stop-writes-on-bgsave-error no
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
