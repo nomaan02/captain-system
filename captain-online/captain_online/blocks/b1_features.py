@@ -164,6 +164,13 @@ def min_distance_to_event(events: list[dict], reference_time: datetime) -> Optio
     if not events:
         return None
 
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+
+    # Normalize reference_time to timezone-aware (ET)
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=_ET)
+
     distances = []
     for event in events:
         event_time = event.get("time")
@@ -174,6 +181,9 @@ def min_distance_to_event(events: list[dict], reference_time: datetime) -> Optio
                 event_time = datetime.fromisoformat(event_time)
             except ValueError:
                 continue
+        # Normalize event_time to timezone-aware (ET)
+        if hasattr(event_time, 'tzinfo') and event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=_ET)
         delta = (event_time - reference_time).total_seconds() / 60.0
         distances.append(delta)
 
@@ -1036,6 +1046,7 @@ def _load_economic_calendar(date) -> list[dict]:
     import json
     from datetime import datetime
     from pathlib import Path
+    from zoneinfo import ZoneInfo
 
     for path in [
         Path("/captain/config/economic_calendar_2026.json"),
@@ -1050,7 +1061,9 @@ def _load_economic_calendar(date) -> list[dict]:
                 return [
                     {
                         "name": e["name"],
-                        "time": datetime.fromisoformat(f"{e['date']}T{e['time']}"),
+                        "time": datetime.fromisoformat(f"{e['date']}T{e['time']}").replace(
+                            tzinfo=ZoneInfo(e.get("timezone", "America/New_York"))
+                        ),
                         "tier": e.get("tier", 4),
                         "scope": e.get("scope", "ALL"),
                         "affected_assets": e.get("affected_assets", []),
@@ -1132,17 +1145,26 @@ def _get_session_open_time(asset_id: str) -> Optional[datetime]:
     """Session open time for this asset's session (NY=09:30, LON=03:00, APAC=18:00 ET)."""
     try:
         import json as _json
-        import os
-        registry_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "config", "session_registry.json"
-        )
-        with open(registry_path) as f:
-            registry = _json.load(f)
+        from pathlib import Path
+        from zoneinfo import ZoneInfo
+
+        registry = None
+        for p in [
+            Path("/captain/config/session_registry.json"),
+            Path(__file__).resolve().parent.parent.parent.parent / "config" / "session_registry.json",
+        ]:
+            if p.exists():
+                with open(p) as f:
+                    registry = _json.load(f)
+                break
+
+        if registry is None:
+            raise FileNotFoundError("session_registry.json not found")
+
         session_name = registry.get("asset_session_map", {}).get(asset_id, "NY")
         session_cfg = registry.get("sessions", {}).get(session_name, {})
         or_start = session_cfg.get("or_start", "09:30")
         hour, minute = int(or_start.split(":")[0]), int(or_start.split(":")[1])
-        from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("America/New_York"))
         return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     except Exception:
