@@ -282,7 +282,7 @@ Each asset has its own (m,k) pair. **Never use a single pair for all assets.**
 | M2K | 5 | 32 | 0.9245 | NY |
 | MYM | 9 | 115 | 0.7705 | NY |
 | NKD | 6 | 6 | 0.8533 | APAC |
-| MGC | 2 | 29 | 0.8892 | NY |
+| MGC | 2 | 29 | 0.8892 | LON |
 | ZB | 10 | 113 | 0.8054 | NY |
 | ZN | 4 | 37 | 0.9058 | NY |
 

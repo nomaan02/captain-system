@@ -32,7 +32,7 @@ ASSET_CONFIG = {
     "M2K": {"session": "NY", "or_min": 5},
     "MYM": {"session": "NY", "or_min": 9},
     "NKD": {"session": "APAC", "or_min": 6},
-    "MGC": {"session": "NY", "or_min": 2},
+    "MGC": {"session": "LON", "or_min": 2},
     "ZB":  {"session": "NY", "or_min": 10},
     "ZN":  {"session": "NY", "or_min": 4},
 }

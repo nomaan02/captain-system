@@ -818,20 +818,24 @@ def _get_diagnostic_health() -> list[dict]:
     try:
         with get_cursor() as cur:
             cur.execute(
-                """SELECT dimension, score, status, details, timestamp
+                """SELECT scores, ts
                    FROM p3_d22_system_health_diagnostic
-                   WHERE timestamp = (
-                       SELECT max(timestamp) FROM p3_d22_system_health_diagnostic
-                       WHERE dimension != 'ACTION_ITEM_UPDATE'
-                   ) AND dimension != 'ACTION_ITEM_UPDATE'
-                   ORDER BY dimension"""
+                   ORDER BY ts DESC LIMIT 1"""
             )
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return []
+            scores = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            ts = row[1]
             return [
                 {
-                    "dimension": r[0], "score": r[1], "status": r[2],
-                    "details": r[3], "timestamp": r[4],
+                    "dimension": dim,
+                    "score": score,
+                    "status": "OK" if score >= 0.7 else "WARNING" if score >= 0.4 else "CRITICAL",
+                    "details": None,
+                    "timestamp": ts,
                 }
-                for r in cur.fetchall()
+                for dim, score in scores.items()
             ]
     except Exception as exc:
         logger.error("Diagnostic health query failed: %s", exc, exc_info=True)
@@ -843,18 +847,25 @@ def _get_action_queue() -> list[dict]:
     try:
         with get_cursor() as cur:
             cur.execute(
-                """SELECT dimension, status, details, timestamp
+                """SELECT action_queue, ts
                    FROM p3_d22_system_health_diagnostic
-                   WHERE status IN ('OPEN', 'STALE', 'CRITICAL')
-                   ORDER BY timestamp DESC LIMIT 50"""
+                   ORDER BY ts DESC LIMIT 1"""
             )
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return []
+            items = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            ts = row[1]
             return [
                 {
-                    "dimension": r[0], "status": r[1],
-                    "details": r[2], "timestamp": r[3],
+                    "dimension": item.get("dimension", "unknown"),
+                    "status": item.get("status", "OPEN"),
+                    "details": item.get("title", ""),
+                    "timestamp": item.get("created", ts),
                 }
-                for r in cur.fetchall()
-            ]
+                for item in items
+                if item.get("status") in ("OPEN", "STALE", "CRITICAL")
+            ][:50]
     except Exception as exc:
         logger.error("Action queue query failed: %s", exc, exc_info=True)
     return []

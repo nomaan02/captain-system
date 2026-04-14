@@ -64,8 +64,9 @@ SESSION_CONFIG = {
     "APAC":   {"id": 3, "or_start": "18:00", "or_end": "18:05", "eod": "02:55"},
 }
 
-# NY session assets (9 assets — NKD is APAC only)
-NY_ASSETS = ["ES", "MES", "NQ", "MNQ", "M2K", "MYM", "MGC", "ZB", "ZN"]
+# Session asset groups
+NY_ASSETS = ["ES", "MES", "NQ", "MNQ", "M2K", "MYM", "ZB", "ZN"]
+LON_ASSETS = ["MGC"]
 
 # Contract ID mapping
 CONTRACT_MAP = {}
@@ -483,7 +484,7 @@ def run_replay(target_date: date, session_type: str = "NY"):
     logger.info("TopstepX authenticated")
 
     # Fetch bars for all session assets
-    assets = NY_ASSETS if session_type == "NY" else ["NKD"]
+    assets = NY_ASSETS if session_type == "NY" else LON_ASSETS if session_type == "LON" else ["NKD"]
     all_bars = {}
     for asset in assets:
         cid = CONTRACT_MAP.get(asset)

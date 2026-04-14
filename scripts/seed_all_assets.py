@@ -68,7 +68,7 @@ ASSET_SPECS = {
     "M2K": {"point_value": 5.0,    "tick_size": 0.10,     "margin": 700.0,   "tz": "America/New_York", "sessions": ["NY"]},
     "MYM": {"point_value": 0.5,    "tick_size": 1.0,      "margin": 880.0,   "tz": "America/New_York", "sessions": ["NY"]},
     "NKD": {"point_value": 5.0,    "tick_size": 5.0,      "margin": 7700.0,  "tz": "Asia/Tokyo",       "sessions": ["APAC"]},
-    "MGC": {"point_value": 10.0,   "tick_size": 0.10,     "margin": 1000.0,  "tz": "America/New_York", "sessions": ["NY"]},
+    "MGC": {"point_value": 10.0,   "tick_size": 0.10,     "margin": 1000.0,  "tz": "America/New_York", "sessions": ["LON"]},
     "ZB":  {"point_value": 1000.0, "tick_size": 0.03125,  "margin": 3300.0,  "tz": "America/Chicago",  "sessions": ["NY"]},
     "ZN":  {"point_value": 1000.0, "tick_size": 0.015625, "margin": 2000.0,  "tz": "America/Chicago",  "sessions": ["NY"]},
     # --- P2-eliminated ---
