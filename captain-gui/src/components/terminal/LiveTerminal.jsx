@@ -22,7 +22,7 @@ const LEVEL_COLORS = {
   DEBUG: "#64748b",
 };
 
-const FILTERS = ["ALL", "ONLINE", "OFFLINE", "COMMAND", "ERRORS"];
+const FILTERS = ["ALL", "ONLINE", "OFFLINE", "COMMAND", "ERRORS", "BACKEND"];
 
 function formatTime(ts) {
   if (!ts) return "--:--:--";
@@ -39,6 +39,7 @@ function formatTime(ts) {
 
 const LiveTerminal = () => {
   const entries = useTerminalStore((s) => s.entries);
+  const backendEntries = useTerminalStore((s) => s.backendEntries);
   const [filter, setFilter] = useState("ALL");
   const [autoScroll, setAutoScroll] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState(false);
@@ -46,11 +47,12 @@ const LiveTerminal = () => {
   const bottomRef = useRef(null);
 
   const filtered = useMemo(() => {
+    if (filter === "BACKEND") return backendEntries;
     if (filter === "ALL") return entries;
     if (filter === "ERRORS")
       return entries.filter((e) => e.level === "ERROR" || e.level === "WARN");
     return entries.filter((e) => e.process === filter);
-  }, [entries, filter]);
+  }, [entries, backendEntries, filter]);
 
   useEffect(() => {
     if (autoScroll && bottomRef.current) {
@@ -122,23 +124,30 @@ const LiveTerminal = () => {
             const active = filter === f;
             let color;
             if (f === "ERRORS") color = "#ef4444";
+            else if (f === "BACKEND") color = "#a78bfa";
             else if (f !== "ALL") color = PROCESS_COLORS[f];
             return (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                aria-pressed={active}
-                className={`cursor-pointer border border-border-accent px-[5px] py-0 text-[10px] font-medium font-[Inter] hover:bg-[rgba(84,115,128,0.09)] focus-visible:outline-1 focus-visible:outline-[#3b82f6] ${
-                  active ? "bg-[rgba(46,78,90,0.5)]" : "bg-transparent"
-                }`}
-                style={{ color: active && color ? color : "#e2e8f0" }}
-              >
-                {f === "ERRORS"
-                  ? "ERR"
-                  : f === "ALL"
-                    ? "All"
-                    : PROCESS_ABBREV[f]}
-              </button>
+              <span key={f} className="flex items-center">
+                {f === "BACKEND" && (
+                  <div className="w-px h-3 bg-border-subtle mx-1" />
+                )}
+                <button
+                  onClick={() => setFilter(f)}
+                  aria-pressed={active}
+                  className={`cursor-pointer border border-border-accent px-[5px] py-0 text-[10px] font-medium font-[Inter] hover:bg-[rgba(84,115,128,0.09)] focus-visible:outline-1 focus-visible:outline-[#3b82f6] ${
+                    active ? "bg-[rgba(46,78,90,0.5)]" : "bg-transparent"
+                  }`}
+                  style={{ color: active && color ? color : "#e2e8f0" }}
+                >
+                  {f === "ERRORS"
+                    ? "ERR"
+                    : f === "ALL"
+                      ? "All"
+                      : f === "BACKEND"
+                        ? "BACKEND"
+                        : PROCESS_ABBREV[f]}
+                </button>
+              </span>
             );
           })}
         </div>
@@ -154,7 +163,9 @@ const LiveTerminal = () => {
           <div className="flex items-center justify-center h-full text-[#4a5568]">
             {filter === "ALL"
               ? "Waiting for process logs\u2026"
-              : `No ${filter.toLowerCase()} entries`}
+              : filter === "BACKEND"
+                ? "Waiting for backend logs\u2026"
+                : `No ${filter.toLowerCase()} entries`}
           </div>
         ) : (
           filtered.map((entry) => (
@@ -169,6 +180,11 @@ const LiveTerminal = () => {
               >
                 {` [${PROCESS_ABBREV[entry.process] || entry.process}] `}
               </span>
+              {entry.name && (
+                <span className="text-[#64748b]">
+                  {`${entry.name.split(".").pop()}: `}
+                </span>
+              )}
               <span
                 style={{
                   color: LEVEL_COLORS[entry.level] || "#e2e8f0",

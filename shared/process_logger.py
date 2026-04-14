@@ -17,8 +17,9 @@ Usage::
 
 import json
 import logging
+import threading
 from shared.constants import now_et
-from shared.redis_client import CH_PROCESS_LOGS
+from shared.redis_client import CH_PROCESS_LOGS, CH_BACKEND_LOGS
 
 _logger = logging.getLogger(__name__)
 
@@ -56,3 +57,46 @@ class ProcessLogger:
 
     def debug(self, message: str, source: str = ""):
         self._emit("DEBUG", message, source)
+
+
+class RedisLogHandler(logging.Handler):
+    """Python logging handler that publishes to Redis for GUI backend log view."""
+
+    _EXCLUDED = frozenset({
+        "redis", "urllib3", "httpx", "asyncio",
+        "uvicorn.access", "uvicorn.error",
+    })
+    _local = threading.local()
+
+    def __init__(self, process_name: str, redis_client):
+        super().__init__()
+        self.process = process_name
+        self.redis = redis_client
+
+    def emit(self, record):
+        if any(record.name.startswith(p) for p in self._EXCLUDED):
+            return
+        if getattr(self._local, "publishing", False):
+            return
+        self._local.publishing = True
+        try:
+            entry = {
+                "process": self.process,
+                "level": record.levelname,
+                "name": record.name,
+                "message": record.getMessage(),
+                "timestamp": now_et().isoformat(),
+            }
+            self.redis.publish(CH_BACKEND_LOGS, json.dumps(entry))
+        except Exception:
+            pass
+        finally:
+            self._local.publishing = False
+
+
+def attach_backend_handler(process_name: str):
+    """Attach a RedisLogHandler to the root logger for GUI backend view."""
+    from shared.redis_client import get_redis_client
+    handler = RedisLogHandler(process_name, get_redis_client())
+    handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
