@@ -111,6 +111,32 @@ DEFAULT_PREFERENCES = {
 
 QUIET_QUEUE_MAX = 50
 
+# ---------------------------------------------------------------------------
+# Signal deduplication — prevent duplicate Telegram notifications per signal
+# ---------------------------------------------------------------------------
+
+_SIGNAL_DEDUP_TTL = 300  # 5 minutes
+_signal_dedup_cache: dict[str, float] = {}  # {signal_id: timestamp}
+_signal_dedup_lock = threading.Lock()
+
+
+def _is_duplicate_signal(signal_id: str) -> bool:
+    """Return True if this signal_id was already notified recently."""
+    if not signal_id:
+        return False
+    now = time.time()
+    with _signal_dedup_lock:
+        # Prune expired entries
+        expired = [k for k, v in _signal_dedup_cache.items()
+                   if now - v > _SIGNAL_DEDUP_TTL]
+        for k in expired:
+            del _signal_dedup_cache[k]
+        # Check and record
+        if signal_id in _signal_dedup_cache:
+            return True
+        _signal_dedup_cache[signal_id] = now
+        return False
+
 # {user_id: [(notif_dict, timestamp), ...]}
 _quiet_queue: dict[str, list[tuple[dict, str]]] = defaultdict(list)
 _quiet_queue_lock = threading.Lock()
@@ -274,6 +300,12 @@ def route_notification(
                 else:
                     # Determine if this is a signal notification (needs inline buttons)
                     signal_id = notif.get("data", {}).get("signal_id") if notif.get("data") else None
+
+                    # Dedup: skip if this signal was already notified
+                    if signal_id and _is_duplicate_signal(signal_id):
+                        logger.debug("Skipping duplicate signal notification: %s", signal_id)
+                        continue
+
                     if event_type == "SIGNAL_GENERATED" and signal_id:
                         sent = telegram_bot.send_signal_notification(
                             chat_id=chat_id,

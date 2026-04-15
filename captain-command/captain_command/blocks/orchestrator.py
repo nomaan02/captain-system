@@ -573,8 +573,50 @@ class CommandOrchestrator:
         route_command(data, gui_push_fn=gui_push)
 
     def _handle_alert(self, data: dict):
-        """Route alert notification to users via GUI + Telegram."""
-        notify_route(data, gui_push, telegram_bot=self.telegram_bot)
+        """Route alert from Redis captain:alerts to GUI + Telegram.
+
+        IMPORTANT: Do NOT call notify_route() here — it publishes back to
+        captain:alerts, which would create an infinite feedback loop.
+        Instead, push directly to GUI and Telegram.
+        """
+        priority = data.get("priority", "LOW")
+        message = data.get("message", "")
+        notif_id = data.get("notif_id", "")
+        event_type = data.get("event_type", "")
+        asset = data.get("asset", "")
+        ts = data.get("timestamp", now_et().isoformat())
+        source = data.get("source", "SYSTEM")
+
+        # Push to all connected GUI users
+        from captain_command.api import _ws_sessions
+        for user_id in list(_ws_sessions.keys()):
+            gui_push(user_id, {
+                "type": "notification",
+                "notif_id": notif_id,
+                "priority": priority,
+                "event_type": event_type,
+                "message": message,
+                "source": source,
+                "timestamp": ts,
+                "asset": asset,
+            })
+
+        # Send to Telegram for CRITICAL/HIGH (skip re-publishing to Redis)
+        if self.telegram_bot and priority in ("CRITICAL", "HIGH"):
+            from captain_command.blocks.b7_notifications import (
+                _get_all_active_user_ids,
+                _get_telegram_chat_id,
+            )
+            prefix = {
+                "CRITICAL": "\U0001f6a8",
+                "HIGH": "\u26a0\ufe0f",
+            }.get(priority, "")
+            for uid in _get_all_active_user_ids():
+                chat_id = _get_telegram_chat_id(uid)
+                if chat_id:
+                    self.telegram_bot.send_message(
+                        chat_id, f"{prefix} {message}", priority,
+                    )
 
     def _handle_status(self, data: dict):
         """Update process health from heartbeat."""
