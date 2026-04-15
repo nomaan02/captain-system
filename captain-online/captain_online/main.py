@@ -40,9 +40,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from shared.process_logger import attach_backend_handler
-attach_backend_handler(ROLE)
-
 
 _TOPSTEP_MAX_ATTEMPTS = 3
 _TOPSTEP_RETRY_DELAY_S = 5

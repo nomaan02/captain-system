@@ -39,9 +39,6 @@ logger = logging.getLogger(__name__)
 # Suppress httpx request logging — it leaks the Telegram bot token in URLs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from shared.process_logger import attach_backend_handler
-attach_backend_handler(ROLE)
-
 
 def verify_connections():
     """Verify QuestDB and Redis are reachable."""

@@ -170,8 +170,10 @@ def route_command(data: dict, gui_push_fn: Callable):
         _log_trade_confirmation(signal_id, user_id, action, data)
 
         # Forward to Online orchestrator (durable stream delivery)
+        # _source prevents Command's own _command_stream_reader from re-processing
         publish_to_stream(STREAM_COMMANDS, {
             "type": "TAKEN_SKIPPED",
+            "_source": "orchestrator",
             "action": action,
             "signal_id": signal_id,
             "user_id": user_id,
@@ -205,6 +207,7 @@ def route_command(data: dict, gui_push_fn: Callable):
     elif cmd_type in ("ADOPT_STRATEGY", "REJECT_STRATEGY", "PARALLEL_TRACK"):
         publish_to_stream(STREAM_COMMANDS, {
             "type": cmd_type,
+            "_source": "orchestrator",
             "user_id": user_id,
             "asset": data.get("asset"),
             "candidate_id": data.get("candidate_id"),
@@ -229,6 +232,7 @@ def route_command(data: dict, gui_push_fn: Callable):
     elif cmd_type in ("ACTIVATE_AIM", "DEACTIVATE_AIM"):
         publish_to_stream(STREAM_COMMANDS, {
             "type": cmd_type,
+            "_source": "orchestrator",
             "user_id": user_id,
             "aim_id": data.get("aim_id"),
             "asset": data.get("asset"),
@@ -269,6 +273,7 @@ def route_command(data: dict, gui_push_fn: Callable):
     elif cmd_type == "TRIGGER_DIAGNOSTIC":
         publish_to_stream(STREAM_COMMANDS, {
             "type": "TRIGGER_DIAGNOSTIC",
+            "_source": "orchestrator",
             "user_id": user_id,
             "mode": "ON_DEMAND",
         })
@@ -282,6 +287,7 @@ def route_command(data: dict, gui_push_fn: Callable):
         _set_asset_pause(data.get("asset"), paused, user_id)
         publish_to_stream(STREAM_COMMANDS, {
             "type": "MANUAL_HALT" if paused else "MANUAL_RESUME",
+            "_source": "orchestrator",
             "user_id": user_id,
             "asset": data.get("asset"),
         })

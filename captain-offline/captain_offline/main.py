@@ -35,9 +35,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from shared.process_logger import attach_backend_handler
-attach_backend_handler(ROLE)
-
 
 NUM_AIMS = 16
 TIER1_AIMS = {4, 6, 8, 11, 12, 15}

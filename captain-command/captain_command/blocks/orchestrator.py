@@ -32,7 +32,6 @@ from shared.redis_client import (
     CH_STATUS,
     CH_TRADE_OUTCOMES,
     CH_PROCESS_LOGS,
-    CH_BACKEND_LOGS,
     signals_channel,
     ensure_consumer_group,
     read_stream,
@@ -151,12 +150,6 @@ class CommandOrchestrator:
             target=self._process_log_forwarder, daemon=True, name="cmd-plog"
         )
         self._plog_thread.start()
-
-        # Background thread 5: Backend log forwarder (detailed Python logging)
-        self._blog_thread = threading.Thread(
-            target=self._backend_log_forwarder, daemon=True, name="cmd-blog"
-        )
-        self._blog_thread.start()
 
         # Signal API health gate — orchestrator threads are up
         from captain_command.api import set_orchestrator_ready
@@ -358,43 +351,6 @@ class CommandOrchestrator:
 
             except Exception as exc:
                 logger.error("Process log forwarder error: %s — reconnecting in %ds",
-                             exc, backoff)
-                if self.running:
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, 30)
-
-    def _backend_log_forwarder(self):
-        """Subscribe to backend logs (Python logging) and forward to GUI.
-
-        Runs in a dedicated thread. Each log entry is pushed to all
-        connected WebSocket sessions as a ``backend_log`` message.
-        """
-        logger.info("Backend log forwarder started")
-        backoff = 1
-
-        while self.running:
-            try:
-                pubsub = get_redis_pubsub()
-                pubsub.subscribe(CH_BACKEND_LOGS)
-                backoff = 1
-
-                for message in pubsub.listen():
-                    if not self.running:
-                        return
-                    if message["type"] != "message":
-                        continue
-
-                    try:
-                        entry = json.loads(message["data"])
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-
-                    from captain_command.api import _ws_sessions
-                    for user_id in list(_ws_sessions.keys()):
-                        gui_push(user_id, {"type": "backend_log", **entry})
-
-            except Exception as exc:
-                logger.error("Backend log forwarder error: %s — reconnecting in %ds",
                              exc, backoff)
                 if self.running:
                     time.sleep(backoff)

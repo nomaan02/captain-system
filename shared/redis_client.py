@@ -31,7 +31,6 @@ CH_COMMANDS = "captain:commands"
 CH_ALERTS = "captain:alerts"
 CH_STATUS = "captain:status"
 CH_PROCESS_LOGS = "captain:process_logs"
-CH_BACKEND_LOGS = "captain:backend_logs"
 
 _client = None
 _client_lock = threading.Lock()
