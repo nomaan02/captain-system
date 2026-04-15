@@ -286,34 +286,36 @@ def _get_scaling_display(user_id: str) -> list[dict]:
 
 def _get_capital_silo(user_id: str, user_stream=None) -> dict:
     """Fetch capital silo summary — live balance from TopstepX, fallback to P3-D16."""
+    active_account_name = os.environ.get("TOPSTEP_ACCOUNT_NAME", "")
     result = {}
 
     # Try live data from UserStream first
     if user_stream and user_stream.account_data:
         ad = user_stream.account_data
-        result = {
-            "total_capital": ad.get("balance"),
-            "daily_pnl": None,       # Computed by reconciliation
-            "cumulative_pnl": None,   # Computed by reconciliation
-            "status": "LIVE" if ad.get("canTrade") else "RESTRICTED",
-            "source": "topstep_live",
-        }
+        if not active_account_name or ad.get("name") == active_account_name:
+            result = {
+                "total_capital": ad.get("balance"),
+                "daily_pnl": None,       # Computed by reconciliation
+                "cumulative_pnl": None,   # Computed by reconciliation
+                "status": "LIVE" if ad.get("canTrade") else "RESTRICTED",
+                "source": "topstep_live",
+            }
 
-    # If no live data, try REST API
+    # If no live data, try REST API — match by TOPSTEP_ACCOUNT_NAME
     if not result.get("total_capital"):
         try:
             client = get_topstep_client()
             if client.is_authenticated:
-                accounts = client.get_accounts(only_active=True)
-                if accounts:
-                    acc = accounts[0]
-                    result = {
-                        "total_capital": acc.get("balance"),
-                        "daily_pnl": None,
-                        "cumulative_pnl": None,
-                        "status": "LIVE" if acc.get("canTrade") else "RESTRICTED",
-                        "source": "topstep_rest",
-                    }
+                for acc in client.get_accounts(only_active=True):
+                    if acc.get("name") == active_account_name or not active_account_name:
+                        result = {
+                            "total_capital": acc.get("balance"),
+                            "daily_pnl": None,
+                            "cumulative_pnl": None,
+                            "status": "LIVE" if acc.get("canTrade") else "RESTRICTED",
+                            "source": "topstep_rest",
+                        }
+                        break
         except TopstepXClientError as exc:
             logger.debug("TopstepX REST fallback for capital silo: %s", exc)
 
@@ -588,18 +590,32 @@ def get_aim_detail(aim_id: int) -> dict:
 
 
 def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
-    """Fetch TSM status per account from P3-D08, enriched with live TopstepX balance."""
-    # Resolve live balance from TopstepX (same cascade as _get_capital_silo)
+    """Fetch TSM status per account from P3-D08, enriched with live TopstepX balance.
+
+    Uses TOPSTEP_ACCOUNT_NAME to identify the active account. Live balance
+    enrichment and result ordering are aligned to that account.
+    """
+    active_account_name = os.environ.get("TOPSTEP_ACCOUNT_NAME", "")
+
+    # Resolve live balance + active account ID from TopstepX
     live_balance = None
+    active_account_id = None
+
     if user_stream and user_stream.account_data:
-        live_balance = user_stream.account_data.get("balance")
+        ad = user_stream.account_data
+        if not active_account_name or ad.get("name") == active_account_name:
+            live_balance = ad.get("balance")
+            active_account_id = str(ad.get("id", ""))
+
     if live_balance is None:
         try:
             client = get_topstep_client()
             if client.is_authenticated:
-                accounts = client.get_accounts(only_active=True)
-                if accounts:
-                    live_balance = accounts[0].get("balance")
+                for acc in client.get_accounts(only_active=True):
+                    if acc.get("name") == active_account_name or not active_account_name:
+                        live_balance = acc.get("balance")
+                        active_account_id = str(acc.get("id", ""))
+                        break
         except TopstepXClientError:
             pass
 
@@ -618,10 +634,12 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
             )
             results = []
             for r in cur.fetchall():
+                account_id = r[0]
                 mdd_limit = r[3] or 0
                 starting_bal = r[7] or 0
-                # Use live TopstepX balance when available, fall back to DB
-                current_bal = live_balance if live_balance is not None else (r[2] or 0)
+                # Only enrich the active account with live balance
+                is_active = active_account_id and str(account_id) == active_account_id
+                current_bal = live_balance if (live_balance is not None and is_active) else (r[2] or 0)
                 current_dd = r[8] or 0
                 # Drawdown used = peak - current (current_drawdown tracks this),
                 # or infer from starting_balance if current_drawdown not set
@@ -633,7 +651,7 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                 daily_pct = (daily_used / mll * 100) if mll > 0 else 0
 
                 results.append({
-                    "account_id": r[0], "tsm_name": r[1],
+                    "account_id": account_id, "tsm_name": r[1],
                     "starting_balance": starting_bal,
                     "current_balance": current_bal,
                     "mdd_limit": mdd_limit, "mdd_used_pct": round(min(mdd_used_pct, 100), 1),
@@ -642,6 +660,11 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                     "profit_target": r[9] or 0,
                     "pass_probability": r[6],
                 })
+
+            # Active account first so frontend tsmStatus[0] picks it up
+            if active_account_id:
+                results.sort(key=lambda r: str(r["account_id"]) != active_account_id)
+
             return results
     except Exception as exc:
         logger.error("TSM status query failed: %s", exc, exc_info=True)
