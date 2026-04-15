@@ -430,9 +430,13 @@ def _get_aim_states(user_id: str) -> list[dict]:
     """Fetch AIM states from P3-D01 (latest row per aim_id+asset_id).
 
     QuestDB LATEST ON PARTITION BY only works with SYMBOL columns, and
-    aim_id is INT.  So we fetch all rows ordered by last_updated DESC
-    and deduplicate in Python — keeping the first (most recent) row
-    per (aim_id, asset_id) pair.
+    aim_id is INT.  So we fetch a limited number of recent rows ordered
+    by last_updated DESC and deduplicate in Python — keeping the first
+    (most recent) row per (aim_id, asset_id) pair.
+
+    We LIMIT the scan to avoid OOM on large tables (8M+ rows).  With
+    ~160 (aim_id, asset_id) combinations and frequent updates, the most
+    recent 5000 rows are more than enough to cover all combinations.
     """
     try:
         with get_cursor() as cur:
@@ -440,7 +444,8 @@ def _get_aim_states(user_id: str) -> list[dict]:
                 """SELECT aim_id, asset_id, status, warmup_progress,
                           current_modifier
                    FROM p3_d01_aim_model_states
-                   ORDER BY last_updated DESC"""
+                   ORDER BY last_updated DESC
+                   LIMIT 5000"""
             )
             seen: dict[tuple, dict] = {}
             for r in cur.fetchall():
@@ -485,7 +490,8 @@ def get_aim_detail(aim_id: int) -> dict:
                           last_retrained
                    FROM p3_d01_aim_model_states
                    WHERE aim_id = %s
-                   ORDER BY last_updated DESC""",
+                   ORDER BY last_updated DESC
+                   LIMIT 500""",
                 (aim_id,),
             )
             for r in cur.fetchall():
