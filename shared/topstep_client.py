@@ -60,7 +60,6 @@ class OrderType:
     UNKNOWN = 0
     LIMIT = 1
     MARKET = 2
-    STOP_LIMIT = 3
     STOP = 4
     TRAILING_STOP = 5
     JOIN_BID = 6
@@ -303,7 +302,7 @@ class TopstepXClient:
 
     def search_positions(self, account_id: int) -> list[dict]:
         """Get open positions for an account."""
-        resp = self._post("/Position/search", {"accountId": account_id})
+        resp = self._post("/Position/searchOpen", {"accountId": account_id})
         return resp.get("positions", [])
 
     def close_position(self, account_id: int, contract_id: str,

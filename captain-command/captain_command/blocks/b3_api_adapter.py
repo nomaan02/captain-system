@@ -245,10 +245,14 @@ class TopstepXAdapter(APIAdapter):
                     "error": entry_resp.get("errorCode"),
                 }
 
+            fill_info = self.receive_fill(str(entry_oid))
+            fill_price = fill_info.get("fill_price")
+
             result = {
                 "order_id": str(entry_oid),
                 "status": "PLACED",
                 "entry_order_id": entry_oid,
+                "fill_price": fill_price,
                 "sl_order_id": None,
                 "tp_order_id": None,
             }
@@ -291,6 +295,43 @@ class TopstepXAdapter(APIAdapter):
                             "Failed to publish SL failure alert: %s",
                             alert_exc,
                         )
+                    logger.critical(
+                        "Flattening position %s after SL failure — "
+                        "closing %d contracts of %s",
+                        entry_oid, size, contract_id,
+                    )
+                    try:
+                        self._client.close_position(
+                            self._account_id, contract_id, size,
+                        )
+                        result["status"] = "FLATTENED_SL_FAIL"
+                        logger.warning(
+                            "Position %s flattened after SL failure", entry_oid,
+                        )
+                    except Exception as flatten_exc:
+                        logger.critical(
+                            "EMERGENCY — flatten ALSO FAILED for %s: %s. "
+                            "MANUAL INTERVENTION REQUIRED.",
+                            entry_oid, flatten_exc,
+                        )
+                        result["status"] = "EMERGENCY_UNPROTECTED"
+                        try:
+                            get_redis_client().publish(CH_ALERTS, json.dumps({
+                                "notif_id": f"EMRG-{uuid.uuid4().hex[:12].upper()}",
+                                "priority": "EMERGENCY",
+                                "event_type": "FLATTEN_FAILED",
+                                "message": (
+                                    f"EMERGENCY: SL failed AND flatten failed "
+                                    f"for entry {entry_oid}. Position is "
+                                    f"UNPROTECTED. Manual close required. "
+                                    f"Error: {flatten_exc}"
+                                ),
+                                "source": "B3_API_ADAPTER",
+                                "asset": order.get("asset", ""),
+                                "timestamp": now_et().isoformat(),
+                            }))
+                        except Exception:
+                            pass
 
             # Take profit
             tp_price = order.get("tp")

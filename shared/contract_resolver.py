@@ -96,6 +96,15 @@ def get_asset_for_contract(contract_id: str) -> str | None:
     return None
 
 
+def get_tick_size(asset_id: str) -> float:
+    """Return tick size for *asset_id* from contract_ids.json. Falls back to 0.25."""
+    config = _load_config()
+    entry = config.get("contracts", {}).get(asset_id)
+    if entry:
+        return float(entry.get("tick_size", 0.25))
+    return 0.25
+
+
 def invalidate(asset_id: str | None = None):
     """Clear cache for one asset or all (e.g., after contract roll)."""
     with _cache_lock:

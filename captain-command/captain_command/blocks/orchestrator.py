@@ -514,10 +514,12 @@ class CommandOrchestrator:
         status = result.get("status", "UNKNOWN")
 
         if status == "PLACED":
-            logger.info("AUTO-EXECUTE SUCCESS: order_id=%s", result.get("order_id"))
+            logger.info("AUTO-EXECUTE SUCCESS: order_id=%s fill_price=%s",
+                        result.get("order_id"), result.get("fill_price"))
             self.plog.info(
                 f"Order PLACED: {sanitised_order.get('asset')} {direction} "
-                f"x{sanitised_order.get('size')} (order_id={result.get('order_id')})",
+                f"x{sanitised_order.get('size')} (order_id={result.get('order_id')}, "
+                f"fill={result.get('fill_price')})",
                 source="b3_api",
             )
             gui_push(sanitised_order.get("user_id", "unknown"), {
@@ -525,6 +527,28 @@ class CommandOrchestrator:
                 "command": "AUTO_EXECUTED",
                 "order": sanitised_order,
                 "result": result,
+            })
+            publish_to_stream(STREAM_COMMANDS, {
+                "type": "TAKEN_SKIPPED",
+                "_source": "orchestrator",
+                "action": "TAKEN",
+                "signal_id": sanitised_order.get("signal_id"),
+                "user_id": sanitised_order.get("user_id"),
+                "asset": sanitised_order.get("asset"),
+                "direction": direction,
+                "actual_entry_price": result.get("fill_price"),
+                "entry_price": sanitised_order.get("entry_price"),
+                "contracts": sanitised_order.get("size", 0),
+                "tp_level": sanitised_order.get("tp"),
+                "sl_level": sanitised_order.get("sl"),
+                "point_value": sanitised_order.get("point_value", 50.0),
+                "risk_amount": sanitised_order.get("risk_amount", 0),
+                "account_id": account_id,
+                "session": sanitised_order.get("session"),
+                "regime_state": sanitised_order.get("regime_state"),
+                "combined_modifier": sanitised_order.get("combined_modifier"),
+                "aim_breakdown": sanitised_order.get("aim_breakdown"),
+                "tsm_id": sanitised_order.get("tsm_id"),
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)

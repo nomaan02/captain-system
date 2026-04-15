@@ -94,8 +94,8 @@ class TestSLPlacementFailure:
 
         result = adapter.send_signal(_base_order())
 
-        # Entry should still be reported as PLACED
-        assert result["status"] == "PLACED"
+        # SL failure triggers automatic flatten — status reflects that
+        assert result["status"] == "FLATTENED_SL_FAIL"
         assert result["entry_order_id"] == "ENTRY-001"
 
         # SL failure flags present
@@ -108,6 +108,9 @@ class TestSLPlacementFailure:
         # TP should succeed normally
         assert result["tp_order_id"] == "TP-001"
         assert result.get("tp_failed") is None
+
+        # Position was flattened via close_position
+        adapter._client.close_position.assert_called_once()
 
         # CRITICAL alert published to CH_ALERTS
         publish_calls = redis_mock.publish.call_args_list
@@ -148,11 +151,12 @@ class TestSLPlacementFailure:
 
         result = adapter.send_signal(_base_order())
 
-        # Verify cancel was never called
+        # Verify cancel was never called — we flatten, not cancel
         adapter._client.cancel_order.assert_not_called()
-        # Position entry is still reported
+        # Position was flattened after SL failure
+        adapter._client.close_position.assert_called_once()
         assert result["entry_order_id"] == "ENTRY-002"
-        assert result["status"] == "PLACED"
+        assert result["status"] == "FLATTENED_SL_FAIL"
 
 
 class TestTPPlacementFailure:

@@ -3,7 +3,7 @@
 **Purpose:** End-to-end validation that a Captain System tower is correctly configured and will execute trades. Run this sequence on any tower before its first live session.
 
 **Time required:** ~10 minutes
-**Prerequisites:** All 9 Docker containers running and healthy
+**Prerequisites:** All Docker containers running and healthy
 
 ---
 
@@ -92,7 +92,51 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-on
 
 ---
 
-### Test 5: Captain-Command Adapter Connection
+### Test 5: QuestDB Data Integrity
+
+Verify critical tables have data and D08 TSM state exists with correct trading limits.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-command python3 -c "
+from shared.questdb_client import get_cursor
+tables = {
+    'p3_d00_asset_universe': 10,
+    'p3_d01_aim_model_states': 60,
+    'p3_d02_aim_meta_weights': 60,
+    'p3_d05_ewma_states': 60,
+    'p3_d08_tsm_state': 1,
+    'p3_d12_kelly_parameters': 60,
+    'p3_d16_user_capital_silos': 1,
+    'p3_d25_circuit_breaker_params': 1,
+}
+with get_cursor() as cur:
+    for table, expected in tables.items():
+        cur.execute(f'SELECT count() FROM {table}')
+        count = cur.fetchone()[0]
+        status = 'OK' if count >= expected else 'LOW'
+        print(f'  {table}: {count} rows (expect >= {expected}) {status}')
+
+# D08 trading limits check
+with get_cursor() as cur:
+    cur.execute('SELECT account_id, max_daily_loss, max_drawdown_limit, profit_target FROM p3_d08_tsm_state ORDER BY last_updated DESC LIMIT 1')
+    row = cur.fetchone()
+    if row:
+        print(f'  D08 account={row[0]}, max_daily_loss=\${row[1]}, max_drawdown=\${row[2]}, profit_target=\${row[3]}')
+    else:
+        print('  D08: NO TSM STATE ROW — run fix_bootstrap_data.py')
+"
+```
+
+**Expected:** All tables show `OK`. D08 shows correct account ID with trading limits ($2,250 max daily loss for 150K combine).
+
+**Fail if:**
+- Any table shows `LOW` or 0 rows — bootstrap/seed scripts were not run. See TOWER_DEPLOYMENT_GUIDE.md Phase 4.
+- D08 says `NO TSM STATE ROW` — run `fix_bootstrap_data.py` (bootstrap_production.py does NOT create D08).
+- D08 account ID doesn't match this tower's TopstepX account — run account migration (see Account Migration section below).
+
+---
+
+### Test 6: Captain-Command Adapter Connection
 
 Queries the live health API endpoint inside the running orchestrator process.
 
@@ -112,11 +156,11 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-co
 }
 ```
 
-**Fail if:** `"connected": 0` — the TopstepX adapter failed to initialize. Check command startup logs (Test 6).
+**Fail if:** `"connected": 0` — the TopstepX adapter failed to initialize. Check command startup logs (Test 7).
 
 ---
 
-### Test 6: Captain-Command Startup Logs
+### Test 7: Captain-Command Startup Logs
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml logs captain-command \
@@ -134,7 +178,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml logs captain-co
 
 ---
 
-### Test 7: Account ID Match Verification
+### Test 8: Account ID Match Verification
 
 Verify the account ID in the adapter matches QuestDB.
 
@@ -171,7 +215,30 @@ with get_cursor() as cur:
 
 ---
 
-### Test 8: TopstepX Order Round Trip
+### Test 9: Command Execution Path Dry Run
+
+Validates the full captain-command execution path: adapter registration, API connectivity, account status, contract resolution for all 8 tradeable assets, compliance gate, and AUTO_EXECUTE setting.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-command \
+  python3 /app/dry_run_command.py
+```
+
+**Expected:**
+- `Adapter registration: PASS`
+- `Adapter connectivity: PASS`
+- `API latency: PASS` (with ping time)
+- `Account status: PASS` (canTrade=True)
+- `Contract resolution: PASS` (8/8 resolved)
+- `Compliance gate: PASS`
+- `AUTO_EXECUTE: PASS`
+- `7/7 checks PASSED`
+
+**Fail if:** Any check shows `FAIL`. The summary lists all failures. Most common: adapter not registered (captain-command startup issue) or contract resolution failure (contract ID expired — check `config/contract_ids.json`).
+
+---
+
+### Test 10: TopstepX Order Round Trip
 
 Places a limit order that will never fill and immediately cancels it. Proves the full API auth → account → contract resolution → order placement → cancellation path.
 
@@ -194,7 +261,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-co
 
 ---
 
-### Test 9: AUTO_EXECUTE Enabled
+### Test 11: AUTO_EXECUTE Enabled
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-command \
@@ -207,7 +274,35 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-co
 
 ---
 
-### Test 10: Instance Parity (Multi-Instance Only)
+### Test 12: VIX Data Freshness
+
+```bash
+tail -1 ~/captain-system/data/vix/vix_daily_close.csv
+tail -1 ~/captain-system/data/vix/vxv_daily_close.csv
+```
+
+**Expected:** Both files show a recent date (within last 2 trading days). The AIM regime module uses VIX/VXV ratio for volatility regime classification.
+
+**Fail if:** Dates are stale (weeks/months old). Run the VIX update manually:
+```bash
+bash ~/captain-system/scripts/update_vix_data.sh
+```
+
+---
+
+### Test 13: .env Permissions
+
+```bash
+stat -c '%a' ~/captain-system/.env
+```
+
+**Expected:** `600` (owner read/write only).
+
+**Fail if:** `644` or wider — credentials readable by other users. Fix: `chmod 600 ~/captain-system/.env`
+
+---
+
+### Test 14: Instance Parity (Multi-Instance Only)
 
 Only relevant if two towers are running. Skip for single-instance deployments.
 
@@ -232,20 +327,24 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml exec captain-co
 | 2 | NY signal pipeline (B1-B5C) |
 | 3 | LON signal pipeline (MGC) |
 | 4 | APAC signal pipeline (NKD) |
-| 5 | API adapter connected |
-| 6 | Correct account linked |
-| 7 | D16 ↔ adapter account match |
-| 8 | Order placement works |
-| 9 | Auto-execute enabled |
-| 10 | Parity correctly assigned |
+| 5 | QuestDB data + D08 TSM state exists |
+| 6 | API adapter connected |
+| 7 | Correct account linked |
+| 8 | D16 ↔ adapter account match |
+| 9 | Command execution path (7 checks) |
+| 10 | Order placement works |
+| 11 | Auto-execute enabled |
+| 12 | VIX data fresh |
+| 13 | .env permissions locked |
+| 14 | Parity correctly assigned (multi-instance) |
 
-**All 10 pass = system will trade at next session open.**
+**All tests pass = system will trade at next session open.**
 
 ---
 
 ## Account Migration
 
-If Test 7 reveals a mismatch between the TopstepX account ID and QuestDB, or if setting up a new tower with a different account, the D16/D08/D25 tables need updating.
+If Test 8 reveals a mismatch between the TopstepX account ID and QuestDB, or if setting up a new tower with a different account, the D16/D08/D25 tables need updating.
 
 ### Getting the account ID
 
@@ -324,6 +423,6 @@ Check captain-command logs for TopstepX auth errors. Common causes:
 
 ### Signals generated but no orders placed
 - Check `AUTO_EXECUTE=true` in `.env`
-- Verify account ID match (Test 7)
+- Verify account ID match (Test 8)
 - Check compliance gate: `config/compliance_gate.json`
 - Check command logs for "Auto-execute: adapter not connected" or "no adapter for account"

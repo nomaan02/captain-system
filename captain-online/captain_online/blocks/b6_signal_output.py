@@ -20,6 +20,7 @@ Writes: Redis signals channel, P3-D17 (session_log)
 
 import json
 import logging
+import math
 import random
 import time
 import uuid
@@ -28,6 +29,7 @@ from zoneinfo import ZoneInfo
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS, get_redis_client, CH_ALERTS
 from shared.questdb_client import get_cursor
+from shared.contract_resolver import get_tick_size
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
 
@@ -91,8 +93,8 @@ def run_signal_output(
                            u, asset_features.get("or_direction"),
                            strategy.get("default_direction"))
             continue
-        tp_level = _compute_tp(strategy, asset_features, direction)
-        sl_level = _compute_sl(strategy, asset_features, direction)
+        tp_level = _compute_tp(strategy, asset_features, direction, u)
+        sl_level = _compute_sl(strategy, asset_features, direction, u)
 
         # Aggregate size across accounts for this asset
         total_size = sum(
@@ -211,7 +213,7 @@ def _determine_direction(strategy: dict, features: dict) -> int:
     return strategy.get("default_direction", 0)
 
 
-def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
+def _compute_tp(strategy: dict, features: dict, direction: int, asset_id: str = "") -> float | None:
     """Compute take-profit level from strategy params."""
     tp_multiple = strategy.get("tp_multiple", 0.70)
     or_range = features.get("or_range")
@@ -219,12 +221,20 @@ def _compute_tp(strategy: dict, features: dict, direction: int) -> float | None:
 
     if or_range and entry:
         tp_dist = tp_multiple * or_range
-        return entry + (tp_dist * direction) if direction != 0 else None
+        tp = entry + (tp_dist * direction) if direction != 0 else None
+    else:
+        tp = strategy.get("tp_level")
 
-    return strategy.get("tp_level")
+    if tp is not None:
+        tick = get_tick_size(asset_id)
+        if direction == 1:
+            tp = math.floor(tp / tick) * tick
+        elif direction == -1:
+            tp = math.ceil(tp / tick) * tick
+    return tp
 
 
-def _compute_sl(strategy: dict, features: dict, direction: int) -> float | None:
+def _compute_sl(strategy: dict, features: dict, direction: int, asset_id: str = "") -> float | None:
     """Compute stop-loss level from strategy params."""
     sl_multiple = strategy.get("sl_multiple", 0.35)
     or_range = features.get("or_range")
@@ -232,9 +242,17 @@ def _compute_sl(strategy: dict, features: dict, direction: int) -> float | None:
 
     if or_range and entry:
         sl_dist = sl_multiple * or_range
-        return entry - (sl_dist * direction) if direction != 0 else None
+        sl = entry - (sl_dist * direction) if direction != 0 else None
+    else:
+        sl = strategy.get("sl_level")
 
-    return strategy.get("sl_level")
+    if sl is not None:
+        tick = get_tick_size(asset_id)
+        if direction == 1:
+            sl = math.ceil(sl / tick) * tick
+        elif direction == -1:
+            sl = math.floor(sl / tick) * tick
+    return sl
 
 
 def _build_per_account(

@@ -49,6 +49,8 @@ _ET = ZoneInfo(SYSTEM_TIMEZONE)
 
 logger = logging.getLogger(__name__)
 
+REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
+
 # Session open times — loaded from session_registry.json via B9 session controller.
 SESSION_OPEN_TIMES = get_session_open_times()
 
@@ -77,6 +79,8 @@ class OnlineOrchestrator:
         write_checkpoint("ONLINE", "ORCHESTRATOR_START", "init", "session_loop")
         self._publish_pipeline_stage("WAITING")
 
+        self._reconcile_positions_from_redis()
+
         # Redis command listener in background
         thread = threading.Thread(target=self._command_listener, daemon=True)
         thread.start()
@@ -87,6 +91,31 @@ class OnlineOrchestrator:
     def stop(self):
         self.running = False
         logger.info("Online orchestrator stopping...")
+
+    def _reconcile_positions_from_redis(self):
+        try:
+            client = get_redis_client()
+            stored = client.hgetall(REDIS_KEY_OPEN_POSITIONS)
+            if not stored:
+                logger.info("Position reconciliation: no positions found in Redis")
+                return
+            recovered = 0
+            with self._position_lock:
+                for sig_id, raw in stored.items():
+                    key = sig_id if isinstance(sig_id, str) else sig_id.decode()
+                    val = raw if isinstance(raw, str) else raw.decode()
+                    try:
+                        pos = json.loads(val)
+                        if pos.get("entry_time") and isinstance(pos["entry_time"], str):
+                            pos["entry_time"] = datetime.fromisoformat(pos["entry_time"])
+                        self.open_positions.append(pos)
+                        recovered += 1
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        logger.warning("Skipping corrupt position %s: %s", key, exc)
+            if recovered > 0:
+                logger.warning("POSITION RECONCILIATION: recovered %d position(s) from Redis after restart", recovered)
+        except Exception as exc:
+            logger.error("Position reconciliation failed: %s", exc)
 
     def _publish_pipeline_stage(self, stage: str):
         """Publish pipeline stage transition to Redis for GUI relay."""
@@ -686,6 +715,12 @@ class OnlineOrchestrator:
                     self.open_positions.remove(pos)
                 except ValueError:
                     logger.warning("Position already removed from tracking: %s", pos)
+                sig_id = pos.get("signal_id")
+                if sig_id:
+                    try:
+                        get_redis_client().hdel(REDIS_KEY_OPEN_POSITIONS, sig_id)
+                    except Exception as exc:
+                        logger.error("Failed to remove position %s from Redis: %s", sig_id, exc)
 
     def _run_shadow_monitor(self):
         """Run shadow position monitoring pass for theoretical outcomes."""
@@ -856,6 +891,12 @@ class OnlineOrchestrator:
                 self.shadow_positions = [
                     s for s in self.shadow_positions if s.get("signal_id") != signal_id
                 ]
+            pos_for_redis = dict(position)
+            pos_for_redis["entry_time"] = position["entry_time"].isoformat()
+            try:
+                get_redis_client().hset(REDIS_KEY_OPEN_POSITIONS, signal_id, json.dumps(pos_for_redis))
+            except Exception as exc:
+                logger.error("Failed to persist position to Redis: %s", exc)
             logger.info("Position opened: %s for user %s (%d contracts)",
                         data.get("asset"), user_id, position["contracts"])
 

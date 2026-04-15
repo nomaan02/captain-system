@@ -112,7 +112,10 @@ def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
     """Return the 6-field sanitised order — nothing else leaves Captain.
 
     Spec: Command lines 139-160.  PROHIBITED_FIELDS never sent externally.
+    Additional internal context (_context) is carried for TAKEN command
+    publishing but is NOT sent to the brokerage API.
     """
+    ctx = signal.get("_context", {})
     return {
         "asset": signal.get("asset"),
         "direction": signal.get("direction"),
@@ -120,6 +123,13 @@ def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
         "tp": signal.get("tp_level"),
         "sl": signal.get("sl_level"),
         "timestamp": signal.get("timestamp", now_et().isoformat()),
+        "signal_id": signal.get("signal_id"),
+        "user_id": signal.get("user_id"),
+        "session": signal.get("session"),
+        "entry_price": ctx.get("entry_price"),
+        "regime_state": ctx.get("regime_state"),
+        "combined_modifier": ctx.get("combined_modifier"),
+        "aim_breakdown": ctx.get("aim_breakdown"),
     }
 
 
