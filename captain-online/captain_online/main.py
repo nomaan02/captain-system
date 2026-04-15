@@ -13,6 +13,7 @@ then launches the 24/7 session orchestrator.
 import logging
 import os
 import sys
+import json
 import signal
 import threading
 import time
@@ -23,6 +24,7 @@ from shared.questdb_client import get_connection
 from shared.redis_client import (
     get_redis_client, ensure_consumer_group,
     STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
+    CH_USER_EVENTS,
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
@@ -106,6 +108,150 @@ def _start_market_streams():
     return None
 
 
+# Redis hash key — same constant as in online orchestrator (captain:open_positions)
+_REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
+
+
+def _start_user_stream():
+    """Start UserStream for real-time order/position/trade updates.
+
+    UserStream connects to a SEPARATE SignalR hub (wss://...hubs/user) from
+    MarketStream (wss://...hubs/market).  Both run in captain-online to avoid
+    GatewayLogout conflicts — TopstepX may only allow one WebSocket session
+    per account.  Callbacks publish events to Redis for cross-process use.
+
+    Returns the UserStream on success, None on failure (non-fatal).
+    """
+    from shared.topstep_client import get_topstep_client, TopstepXClientError
+    from shared.topstep_stream import UserStream
+
+    try:
+        client = get_topstep_client()  # Singleton — already authenticated
+
+        account_name = os.environ.get("TOPSTEP_ACCOUNT_NAME", "")
+        accounts = client.get_accounts(only_active=True)
+        account = None
+        for acc in accounts:
+            if acc.get("name") == account_name or not account_name:
+                account = acc
+                break
+
+        if not account:
+            logger.warning("UserStream: no matching account — skipping")
+            return None
+
+        account_id = account["id"]
+        redis = get_redis_client()
+
+        # Reverse map: contract_id -> asset symbol (for position matching)
+        contract_to_asset = {}
+        try:
+            contracts = preload_contracts()
+            for asset_id, cid in contracts.items():
+                contract_to_asset[cid] = asset_id
+        except Exception:
+            pass
+
+        def _on_position_update(data):
+            if not isinstance(data, dict):
+                return
+            pos_size = data.get("size", 0)
+            logger.info("UserStream POSITION: contract=%s size=%s avgPrice=%s",
+                        data.get("contractId"), pos_size,
+                        data.get("averagePrice"))
+            avg_price = data.get("averagePrice")
+            cid = str(data.get("contractId", ""))
+            asset = contract_to_asset.get(cid)
+
+            # Enrich matching position in Redis with brokerage fill price.
+            # Skip when size=0 (position closed) to avoid race with B7
+            # resolution which deletes the hash entry concurrently.
+            if avg_price and asset and pos_size:
+                try:
+                    stored = redis.hgetall(_REDIS_KEY_OPEN_POSITIONS)
+                    for sig_id, raw in stored.items():
+                        key = sig_id if isinstance(sig_id, str) else sig_id.decode()
+                        val = raw if isinstance(raw, str) else raw.decode()
+                        try:
+                            pos = json.loads(val)
+                            if pos.get("asset") == asset:
+                                pos["actual_entry_price"] = avg_price
+                                pos["entry_price"] = avg_price
+                                redis.hset(
+                                    _REDIS_KEY_OPEN_POSITIONS, key,
+                                    json.dumps(pos, default=str),
+                                )
+                                logger.info("Position %s enriched: brokerage avgPrice=%s",
+                                            key, avg_price)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                except Exception as exc:
+                    logger.error("Failed to update position from UserStream: %s", exc)
+
+            try:
+                redis.publish(CH_USER_EVENTS, json.dumps(
+                    {"type": "position_update", "data": data}, default=str))
+            except Exception as exc:
+                logger.error("Failed to publish position event: %s", exc)
+
+        def _on_trade_update(data):
+            if not isinstance(data, dict):
+                return
+            logger.info("UserStream TRADE: price=%s pnl=%s fees=%s",
+                        data.get("price"), data.get("profitAndLoss"),
+                        data.get("fees"))
+            try:
+                redis.publish(CH_USER_EVENTS, json.dumps(
+                    {"type": "trade_update", "data": data}, default=str))
+            except Exception as exc:
+                logger.error("Failed to publish trade event: %s", exc)
+
+        def _on_order_update(data):
+            if not isinstance(data, dict):
+                return
+            status = data.get("status")
+            logger.info("UserStream ORDER: id=%s status=%s type=%s",
+                        data.get("id"), status, data.get("type"))
+            if status in (6, "REJECTED"):
+                logger.warning("UserStream ORDER REJECTED: id=%s data=%s",
+                               data.get("id"), data)
+            try:
+                redis.publish(CH_USER_EVENTS, json.dumps(
+                    {"type": "order_update", "data": data}, default=str))
+            except Exception as exc:
+                logger.error("Failed to publish order event: %s", exc)
+
+        def _on_account_update(data):
+            if not isinstance(data, dict):
+                return
+            logger.info("UserStream ACCOUNT: balance=%s", data.get("balance"))
+            try:
+                redis.publish(CH_USER_EVENTS, json.dumps(
+                    {"type": "account_update", "data": data}, default=str))
+            except Exception as exc:
+                logger.error("Failed to publish account event: %s", exc)
+
+        stream = UserStream(
+            token=client.current_token,
+            account_id=account_id,
+            on_position_update=_on_position_update,
+            on_trade_update=_on_trade_update,
+            on_order_update=_on_order_update,
+            on_account_update=_on_account_update,
+        )
+        stream.start()
+        logger.info("UserStream STARTED for account %s (id=%s)",
+                     account.get("name"), account_id)
+        return stream
+
+    except TopstepXClientError as exc:
+        logger.error("UserStream init failed (TopstepX): %s", exc)
+        return None
+    except Exception as exc:
+        logger.error("UserStream init failed: %s", exc, exc_info=True)
+        return None
+
+
 def main():
     logger.info("Starting Captain Online...")
     plog = ProcessLogger("ONLINE", get_redis_client())
@@ -154,6 +300,14 @@ def main():
         plog.error("MarketStream FAILED after retries — exiting", source="stream")
         sys.exit(1)
 
+    # Start user event stream (position/trade/order updates from brokerage)
+    # Non-fatal: system can operate without real-time user events
+    user_stream = _start_user_stream()
+    if user_stream:
+        plog.info("UserStream started — real-time fills active", source="stream")
+    else:
+        logger.warning("UserStream not started — brokerage events unavailable")
+
     write_checkpoint(ROLE, "STREAMS_STARTED", "streams_ready", "starting_orchestrator")
 
     # Start the 24/7 session orchestrator (with OR tracker reference)
@@ -163,6 +317,8 @@ def main():
     def shutdown_handler(signum, frame):
         logger.info("Shutdown signal received")
         orchestrator.stop()
+        if user_stream:
+            user_stream.stop()
         if market_stream:
             market_stream.stop()
         write_checkpoint(ROLE, "SHUTDOWN", "running", "shutdown")

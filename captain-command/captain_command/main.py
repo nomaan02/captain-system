@@ -238,7 +238,8 @@ def _init_topstep():
     """Authenticate TopstepX API for REST operations (orders, accounts).
 
     ALL WebSocket streams (Market + User) are owned by captain-online.
-    TopstepX allows only ONE concurrent WebSocket per user account.
+    UserStream events are forwarded via Redis (captain:user_events channel
+    and captain:open_positions hash enrichment).
     """
     from shared.topstep_client import get_topstep_client, TopstepXClientError
     from captain_command.blocks.b2_gui_data_server import set_account_data
@@ -277,10 +278,11 @@ def _init_topstep():
             logger.info("Resolved %d contracts: %s", len(contracts), list(contracts.keys()))
 
             # NOTE: ALL WebSocket streams are owned by captain-online only.
-            # TopstepX allows ONE concurrent WebSocket per user account
-            # across ALL hubs (market + user). Any connection from Command
-            # sends GatewayLogout to Online, killing signal generation.
-            # Command uses REST API for orders and Redis for data.
+            # MarketStream (hubs/market) provides quotes for OR tracking.
+            # UserStream (hubs/user) provides real-time fills, positions,
+            # orders, and account updates — published to Redis as
+            # captain:user_events pub/sub and captain:open_positions hash.
+            # Command uses REST API for orders and Redis for brokerage events.
             logger.info("TopstepX WebSocket streams: SKIPPED (owned by captain-online)")
         else:
             logger.warning("TopstepX: no matching account found")
