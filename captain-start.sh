@@ -271,7 +271,19 @@ if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     err ""
 fi
 
-# ── Step 6c: Update VIX/VXV daily close CSVs ────────────────────────────────
+# ── Step 6c: Compact bloated QuestDB state tables ─────────────────────────────
+# QuestDB is append-only — state tables (D01, D02, D05, D12, D25) grow
+# unbounded.  Compaction keeps only the latest row per logical key.
+info "Compacting QuestDB state tables..."
+if $COMPOSE_CMD exec -T -e PYTHONPATH=/app captain-offline \
+    python /captain/scripts/compact_questdb_tables.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
+then
+    log "  QuestDB compaction complete"
+else
+    warn "  QuestDB compaction failed (non-fatal, continuing)"
+fi
+
+# ── Step 6d: Update VIX/VXV daily close CSVs ────────────────────────────────
 info "Updating VIX/VXV daily close data..."
 if docker compose $COMPOSE_FILES exec -T -e PYTHONPATH=/app captain-command \
     python /captain/scripts/update_vix_daily.py 2>&1 | while IFS= read -r line; do echo "  $line"; done
