@@ -217,8 +217,16 @@ class TopstepXClient:
     def place_order(self, account_id: int, contract_id: str,
                     order_type: int, side: int, size: int,
                     limit_price: float | None = None,
-                    stop_price: float | None = None) -> dict:
-        """Place an order. Returns {orderId, success, errorCode}."""
+                    stop_price: float | None = None,
+                    trail_price: float | None = None,
+                    custom_tag: str | None = None,
+                    stop_loss_bracket: dict | None = None,
+                    take_profit_bracket: dict | None = None) -> dict:
+        """Place an order. Returns {orderId, success, errorCode}.
+
+        Bracket params attach atomic SL/TP to the entry via the exchange.
+        Each is ``{"ticks": <int>, "type": <int>}`` per TopstepX API spec.
+        """
         payload: dict[str, Any] = {
             "accountId": account_id,
             "contractId": contract_id,
@@ -230,6 +238,14 @@ class TopstepXClient:
             payload["limitPrice"] = limit_price
         if stop_price is not None:
             payload["stopPrice"] = stop_price
+        if trail_price is not None:
+            payload["trailPrice"] = trail_price
+        if custom_tag is not None:
+            payload["customTag"] = custom_tag
+        if stop_loss_bracket is not None:
+            payload["stopLossBracket"] = stop_loss_bracket
+        if take_profit_bracket is not None:
+            payload["takeProfitBracket"] = take_profit_bracket
         return self._post("/Order/place", payload)
 
     def place_market_order(self, account_id: int, contract_id: str,
@@ -253,6 +269,22 @@ class TopstepXClient:
         return self.place_order(account_id, contract_id,
                                 OrderType.STOP, side, size,
                                 stop_price=stop_price)
+
+    def place_bracket_order(self, account_id: int, contract_id: str,
+                            side: int, size: int,
+                            sl_ticks: int, tp_ticks: int) -> dict:
+        """Place a market entry with atomic SL+TP brackets.
+
+        The exchange attaches SL and TP relative to the fill price.
+        SL uses Stop (type 4) for guaranteed fill; TP uses Limit (type 1).
+        Brackets are OCO — one triggers, the other cancels automatically.
+        """
+        return self.place_order(
+            account_id, contract_id,
+            OrderType.MARKET, side, size,
+            stop_loss_bracket={"ticks": int(sl_ticks), "type": OrderType.STOP},
+            take_profit_bracket={"ticks": int(tp_ticks), "type": OrderType.LIMIT},
+        )
 
     def modify_order(self, account_id: int, order_id: int,
                      size: int | None = None,

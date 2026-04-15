@@ -303,3 +303,162 @@ class TestSuccessfulSLTPPlacement:
                  or "TP_PLACEMENT_FAILED" in c[0][1])
         ]
         assert len(alert_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# Bracket order tests
+# ---------------------------------------------------------------------------
+
+class TestBracketOrder:
+    """Native bracket order — single API call with atomic SL+TP."""
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=0.25)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_bracket_success(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """Bracket order succeeds — no separate SL/TP calls."""
+        adapter = _make_adapter()
+        adapter._client.place_bracket_order.return_value = {
+            "success": True,
+            "orderId": "BRK-001",
+        }
+
+        order = _base_order(entry_price=5500.0, sl=5490.0, tp=5520.0)
+        result = adapter.send_signal(order)
+
+        assert result["status"] == "PLACED"
+        assert result["entry_order_id"] == "BRK-001"
+        assert result["bracket"] is True
+        assert result["sl_order_id"] == "BRACKET"
+        assert result["tp_order_id"] == "BRACKET"
+
+        # Bracket used tick offsets: SL=40 ticks (10/0.25), TP=80 ticks (20/0.25)
+        adapter._client.place_bracket_order.assert_called_once()
+        call_kwargs = adapter._client.place_bracket_order.call_args
+        assert call_kwargs[1]["sl_ticks"] == 40   # (5500-5490)/0.25
+        assert call_kwargs[1]["tp_ticks"] == 80   # (5520-5500)/0.25
+
+        # No separate SL/TP orders placed
+        adapter._client.place_market_order.assert_not_called()
+        adapter._client.place_stop_order.assert_not_called()
+        adapter._client.place_limit_order.assert_not_called()
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=5.0)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.NKD.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_bracket_nkd_tick_calculation(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """NKD tick size is 5 — verify tick math."""
+        adapter = _make_adapter()
+        adapter._client.place_bracket_order.return_value = {
+            "success": True,
+            "orderId": "BRK-NKD",
+        }
+
+        # NKD: entry ~38000, SL 50 points away = 10 ticks, TP 100 points = 20 ticks
+        order = _base_order(
+            asset="NKD", entry_price=38000.0, sl=37950.0, tp=38100.0,
+        )
+        result = adapter.send_signal(order)
+
+        assert result["bracket"] is True
+        call_kwargs = adapter._client.place_bracket_order.call_args
+        assert call_kwargs[1]["sl_ticks"] == 10   # (38000-37950)/5
+        assert call_kwargs[1]["tp_ticks"] == 20   # (38100-38000)/5
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=0.25)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_bracket_fails_falls_back_to_separate(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """Bracket fails — falls back to separate entry + SL + TP."""
+        adapter = _make_adapter()
+        adapter._client.place_bracket_order.return_value = {
+            "success": False,
+            "errorMessage": "bracket not supported",
+        }
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-FB",
+        }
+        adapter._client.place_stop_order.return_value = {
+            "success": True,
+            "orderId": "SL-FB",
+        }
+        adapter._client.place_limit_order.return_value = {
+            "success": True,
+            "orderId": "TP-FB",
+        }
+
+        order = _base_order(entry_price=5500.0, sl=5490.0, tp=5520.0)
+        result = adapter.send_signal(order)
+
+        # Bracket was attempted then fell back
+        adapter._client.place_bracket_order.assert_called_once()
+        adapter._client.place_market_order.assert_called_once()
+        adapter._client.place_stop_order.assert_called_once()
+        adapter._client.place_limit_order.assert_called_once()
+
+        assert result["status"] == "PLACED"
+        assert result["entry_order_id"] == "ENTRY-FB"
+        assert result["sl_order_id"] == "SL-FB"
+        assert result["tp_order_id"] == "TP-FB"
+        assert result.get("bracket") is None
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=0.25)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_no_entry_price_skips_bracket(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """No entry_price in order — bracket skipped, goes straight to separate."""
+        adapter = _make_adapter()
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-NE",
+        }
+        adapter._client.place_stop_order.return_value = {
+            "success": True,
+            "orderId": "SL-NE",
+        }
+        adapter._client.place_limit_order.return_value = {
+            "success": True,
+            "orderId": "TP-NE",
+        }
+
+        # No entry_price — bracket not attempted
+        order = _base_order()
+        result = adapter.send_signal(order)
+
+        adapter._client.place_bracket_order.assert_not_called()
+        adapter._client.place_market_order.assert_called_once()
+        assert result["status"] == "PLACED"
+        assert result.get("bracket") is None

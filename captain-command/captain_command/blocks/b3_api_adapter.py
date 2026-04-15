@@ -32,7 +32,7 @@ from shared.redis_client import get_redis_client, CH_ALERTS
 from captain_command.blocks.b9_incident_response import create_incident
 from captain_command.blocks.b12_compliance_gate import check_compliance_gate, compliance_check
 from shared.constants import PROHIBITED_EXTERNAL_FIELDS, SANITISED_SIGNAL_FIELDS, now_et
-from shared.contract_resolver import resolve_contract_id
+from shared.contract_resolver import resolve_contract_id, get_tick_size
 from shared.topstep_client import (
     TopstepXClient, get_topstep_client,
     OrderSide, OrderType, OrderStatus, PositionType,
@@ -233,7 +233,65 @@ class TopstepXAdapter(APIAdapter):
         size = int(order.get("size", 1))
 
         try:
-            # Entry order (market)
+            sl_price = order.get("sl")
+            tp_price = order.get("tp")
+            entry_est = order.get("entry_price")
+            tick_size = get_tick_size(asset_id)
+
+            # ── Primary: Atomic bracket order (single API call) ──────
+            # Exchange attaches SL+TP to the fill. They are OCO — when
+            # one triggers the other is cancelled automatically. No
+            # software monitoring required for protection.
+            bracket_ok = False
+            if (sl_price is not None and tp_price is not None
+                    and entry_est is not None and tick_size > 0):
+                sl_ticks = max(1, int(round(
+                    abs(float(entry_est) - float(sl_price)) / tick_size
+                )))
+                tp_ticks = max(1, int(round(
+                    abs(float(tp_price) - float(entry_est)) / tick_size
+                )))
+                logger.info(
+                    "Bracket order: %s %s x%d, SL=%d ticks, TP=%d ticks "
+                    "(tick_size=%s, entry_est=%s)",
+                    order.get("direction"), asset_id, size,
+                    sl_ticks, tp_ticks, tick_size, entry_est,
+                )
+                bracket_resp = self._client.place_bracket_order(
+                    self._account_id, contract_id, side, size,
+                    sl_ticks=sl_ticks, tp_ticks=tp_ticks,
+                )
+                if bracket_resp.get("success"):
+                    bracket_ok = True
+                    entry_oid = bracket_resp.get("orderId")
+                    fill_info = self.receive_fill(str(entry_oid))
+                    fill_price = fill_info.get("fill_price")
+                    result = {
+                        "order_id": str(entry_oid),
+                        "status": "PLACED",
+                        "entry_order_id": entry_oid,
+                        "fill_price": fill_price,
+                        "sl_order_id": "BRACKET",
+                        "tp_order_id": "BRACKET",
+                        "bracket": True,
+                    }
+                    logger.info(
+                        "TopstepX BRACKET order PLACED: entry=%s fill=%s "
+                        "SL=%dt TP=%dt (%s x%d @ %s)",
+                        entry_oid, fill_price, sl_ticks, tp_ticks,
+                        order.get("direction"), size, contract_id,
+                    )
+                    return result
+                else:
+                    logger.warning(
+                        "Bracket order FAILED: %s — falling back to "
+                        "separate orders",
+                        bracket_resp.get("errorMessage"),
+                    )
+
+            # ── Fallback: Separate entry + SL + TP orders ────────────
+            # Used when bracket fails or when entry_price is unknown.
+            # SL/TP are tick-aligned by B6. If SL fails, flatten immediately.
             entry_resp = self._client.place_market_order(
                 self._account_id, contract_id, side, size,
             )
@@ -257,8 +315,7 @@ class TopstepXAdapter(APIAdapter):
                 "tp_order_id": None,
             }
 
-            # Stop loss
-            sl_price = order.get("sl")
+            # Stop loss (separate order — not OCO with TP)
             if sl_price is not None:
                 sl_resp = self._client.place_stop_order(
                     self._account_id, contract_id, exit_side, size,
@@ -333,8 +390,7 @@ class TopstepXAdapter(APIAdapter):
                         except Exception:
                             pass
 
-            # Take profit
-            tp_price = order.get("tp")
+            # Take profit (separate order — not OCO with SL)
             if tp_price is not None:
                 tp_resp = self._client.place_limit_order(
                     self._account_id, contract_id, exit_side, size,
@@ -372,7 +428,8 @@ class TopstepXAdapter(APIAdapter):
                         )
 
             logger.info(
-                "TopstepX order PLACED: entry=%s sl=%s tp=%s (%s x%d @ %s)",
+                "TopstepX FALLBACK order PLACED: entry=%s sl=%s tp=%s "
+                "(%s x%d @ %s)",
                 result["entry_order_id"], result["sl_order_id"],
                 result["tp_order_id"], order.get("direction"), size,
                 contract_id,

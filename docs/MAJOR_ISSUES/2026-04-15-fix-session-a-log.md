@@ -39,7 +39,23 @@
   - `shared/topstep_client.py`
   - `captain-online/captain_online/blocks/b6_signal_output.py`
   - `captain-command/captain_command/blocks/b3_api_adapter.py`
-- Tests updated: `tests/test_b3_api_adapter_sltp.py` — 2 tests updated to expect `FLATTENED_SL_FAIL` status (was `PLACED`), added `close_position` assertion. All 148 unit tests pass.
+- Tests updated: `tests/test_b3_api_adapter_sltp.py` — 2 tests updated to expect `FLATTENED_SL_FAIL` status (was `PLACED`), added `close_position` assertion.
+
+## Fix 1B: Native Bracket Orders (P2 — CRITICAL ARCHITECTURAL)
+- **Status:** APPLIED
+- **Files Modified:**
+  - `shared/topstep_client.py` — added `stop_loss_bracket`, `take_profit_bracket`, `trail_price`, `custom_tag` params to `place_order()` matching full API spec. Added `place_bracket_order()` convenience method.
+  - `captain-command/captain_command/blocks/b3_api_adapter.py` — rewrote `send_signal()` to attempt atomic bracket order first (single API call), falling back to separate 3-order approach if bracket fails or entry_price is unavailable. Added `get_tick_size` import.
+  - `tests/test_b3_api_adapter_sltp.py` — added 4 bracket-specific tests: success, NKD tick math, fallback on failure, skip when no entry_price.
+- **Changes:**
+  - Bracket order sends a single `/Order/place` call with `stopLossBracket: {ticks, type}` and `takeProfitBracket: {ticks, type}` per TopStepX API spec. SL uses type=4 (Stop, guaranteed fill), TP uses type=1 (Limit, fill at price or better).
+  - Tick offsets computed from signal entry_price: `sl_ticks = round(abs(entry - sl) / tick_size)`, `tp_ticks = round(abs(tp - entry) / tick_size)`. Exchange resolves actual SL/TP levels relative to fill price.
+  - Brackets are OCO (One-Cancels-Other) — when SL triggers, TP auto-cancels and vice versa. No orphan orders.
+  - Fallback to separate orders retains all P0/P1 safety nets (tick-aligned prices, flatten on SL failure).
+- **Validation:**
+  - Payload structure cross-checked against official API docs (`docs/official_topstep_api_docs/`)
+  - Tick math verified for all 10 assets (ES, MES, NQ, MNQ, M2K, MYM, NKD, MGC, ZB, ZN)
+  - All 152 unit tests pass (148 existing + 4 new bracket tests), 0 regressions
 - Next steps:
   - Rebuild Docker containers (`captain-online`, `captain-command`) to deploy the fixes
   - Monitor next trading session for tick-alignment in logs (TP/SL prices should now be clean multiples of tick size)
