@@ -122,7 +122,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "open_positions": _get_open_positions(user_id),
         "pending_signals": _get_pending_signals(user_id),
         "aim_states": _get_aim_states(user_id),
-        "tsm_status": _get_tsm_status(user_id),
+        "tsm_status": _get_tsm_status(user_id, stream),
         "decay_alerts": _get_decay_alerts(),
         "warmup_gauges": _get_warmup_gauges(),
         "regime_panel": _get_regime_panel(),
@@ -587,15 +587,30 @@ def get_aim_detail(aim_id: int) -> dict:
     }
 
 
-def _get_tsm_status(user_id: str) -> list[dict]:
-    """Fetch TSM status per account from P3-D08 (latest row per account)."""
+def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
+    """Fetch TSM status per account from P3-D08, enriched with live TopstepX balance."""
+    # Resolve live balance from TopstepX (same cascade as _get_capital_silo)
+    live_balance = None
+    if user_stream and user_stream.account_data:
+        live_balance = user_stream.account_data.get("balance")
+    if live_balance is None:
+        try:
+            client = get_topstep_client()
+            if client.is_authenticated:
+                accounts = client.get_accounts(only_active=True)
+                if accounts:
+                    live_balance = accounts[0].get("balance")
+        except TopstepXClientError:
+            pass
+
     try:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT account_id, name, current_balance,
                           max_drawdown_limit, max_daily_loss,
                           daily_loss_used, pass_probability,
-                          starting_balance, current_drawdown
+                          starting_balance, current_drawdown,
+                          profit_target
                    FROM p3_d08_tsm_state
                    WHERE user_id = %s
                    LATEST ON last_updated PARTITION BY account_id""",
@@ -605,7 +620,8 @@ def _get_tsm_status(user_id: str) -> list[dict]:
             for r in cur.fetchall():
                 mdd_limit = r[3] or 0
                 starting_bal = r[7] or 0
-                current_bal = r[2] or 0
+                # Use live TopstepX balance when available, fall back to DB
+                current_bal = live_balance if live_balance is not None else (r[2] or 0)
                 current_dd = r[8] or 0
                 # Drawdown used = peak - current (current_drawdown tracks this),
                 # or infer from starting_balance if current_drawdown not set
@@ -618,10 +634,12 @@ def _get_tsm_status(user_id: str) -> list[dict]:
 
                 results.append({
                     "account_id": r[0], "tsm_name": r[1],
+                    "starting_balance": starting_bal,
                     "current_balance": current_bal,
                     "mdd_limit": mdd_limit, "mdd_used_pct": round(min(mdd_used_pct, 100), 1),
-                    "daily_loss_limit": mll, "daily_loss_used": daily_used,
-                    "daily_loss_pct": round(min(daily_pct, 100), 1),
+                    "daily_dd_limit": mll, "daily_loss_used": daily_used,
+                    "daily_dd_used_pct": round(min(daily_pct, 100), 1),
+                    "profit_target": r[9] or 0,
                     "pass_probability": r[6],
                 })
             return results
