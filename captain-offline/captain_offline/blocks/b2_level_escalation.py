@@ -77,7 +77,7 @@ def _log_decay_event(asset_id: str, level: int, severity: float, source: str):
 
 def _set_sizing_override(asset_id: str, reduction_factor: float):
     """Write sizing override to P3-D12."""
-    override = json.dumps({asset_id: reduction_factor})
+    override = json.dumps(reduction_factor)
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d12_kelly_parameters

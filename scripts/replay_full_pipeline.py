@@ -207,8 +207,10 @@ def run_phase_a(session_id: int) -> dict | None:
         "user_kelly_ceiling": row[8] or 1.0,
     }
     accounts = json.loads(user_silo["accounts"]) if isinstance(user_silo["accounts"], str) else user_silo["accounts"]
-    logger.info("User: %s, accounts: %s, capital: $%,.0f",
-                user_silo["user_id"], accounts, user_silo["total_capital"])
+    logger.info(
+        f"User: {user_silo['user_id']}, accounts: {accounts}, "
+        f"capital: ${user_silo['total_capital']:,.0f}"
+    )
 
     # B4: Kelly sizing
     b4 = run_kelly_sizing(
