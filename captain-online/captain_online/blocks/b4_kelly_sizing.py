@@ -153,6 +153,8 @@ def run_kelly_sizing(
         # Step 5b: Level 2 sizing override (pre-TSM, on Kelly fraction — PG-24 L6→L7)
         override = sizing_overrides.get(u)
         if override is not None:
+            if isinstance(override, dict):
+                override = override.get(u, next(iter(override.values()), 1.0))
             override_val = float(override) if not isinstance(override, float) else override
             kelly_with_aim *= override_val
 
