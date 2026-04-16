@@ -98,14 +98,34 @@ def route_signal_batch(payload: dict, gui_push_fn: Callable, api_route_fn: Calla
         })
 
 
-def sanitise_for_gui(signal: dict) -> dict:
-    """Strip PROHIBITED_EXTERNAL_FIELDS before GUI WebSocket push.
+# Fields inside `signal["_context"]` that the GUI is allowed to display.
+# Everything else in `_context` (aim_breakdown, combined_modifier, regime_*,
+# expected_edge, win_rate, payoff_ratio, user_total_capital, user_daily_pnl,
+# quality_multiplier, data_maturity, sl_method, entry_conditions) is either
+# proprietary per PG-26 or unused by the GUI and stays stripped.
+_GUI_CONTEXT_LIFT_FIELDS = ("entry_price", "quality_score", "confidence_tier")
 
-    Spec: Doc 20 PG-26.  The GUI may display signal metadata (asset,
-    direction, confidence tier, quality score, etc.) but must never
-    receive proprietary model internals.
+
+def sanitise_for_gui(signal: dict) -> dict:
+    """Strip PROHIBITED_EXTERNAL_FIELDS and lift GUI-safe fields out of
+    `_context` before GUI WebSocket push.
+
+    Spec: Doc 20 PG-26. The GUI may display signal metadata (asset, direction,
+    confidence tier, quality score, entry price, TP/SL, etc.) but must never
+    receive proprietary model internals. B6 emits those internals nested
+    inside `_context`; the top-level filter alone does not prevent nested
+    leaks, so we drop `_context` after lifting only the whitelisted fields
+    the GUI actually renders.
     """
-    return {k: v for k, v in signal.items() if k not in PROHIBITED_EXTERNAL_FIELDS}
+    ctx = signal.get("_context") or {}
+    out = {
+        k: v for k, v in signal.items()
+        if k not in PROHIBITED_EXTERNAL_FIELDS and k != "_context"
+    }
+    for field in _GUI_CONTEXT_LIFT_FIELDS:
+        if field in ctx and field not in out:
+            out[field] = ctx[field]
+    return out
 
 
 def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
