@@ -71,6 +71,9 @@ services:
       TZ: America/New_York
       VIX_CSV_PATH: /captain/data/vix/vix_daily_close.csv
       VXV_CSV_PATH: /captain/data/vix/vxv_daily_close.csv
+      BOOTSTRAP_ACCOUNT_ID: ${BOOTSTRAP_ACCOUNT_ID:-}
+      BOOTSTRAP_USER_ID: ${BOOTSTRAP_USER_ID:-primary_user}
+      BOOTSTRAP_STARTING_CAPITAL: ${BOOTSTRAP_STARTING_CAPITAL:-150000}
     depends_on:
       questdb:
         condition: service_healthy
