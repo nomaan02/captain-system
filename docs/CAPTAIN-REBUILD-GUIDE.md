@@ -25,6 +25,132 @@ bash captain-rebuild.sh --compact  # Compact QuestDB only
 
 ---
 
+## Terminal Commands (Copy-Paste Ready)
+
+### Nomaan's Tower
+
+```bash
+# 1. Open WSL terminal (Windows Terminal → Ubuntu, or from PowerShell):
+wsl -d Ubuntu
+
+# 2. Navigate to project
+cd ~/captain-system
+
+# 3. Run whichever command you need:
+
+# Daily startup (no code changes)
+bash captain-start.sh
+
+# Startup with image rebuild (after code changes)
+bash captain-start.sh --build
+
+# Full heavy rebuild (after major changes, broken state, or schema changes)
+bash captain-rebuild.sh
+
+# Health check only (read-only, changes nothing)
+bash captain-rebuild.sh --status
+
+# Compact QuestDB tables (fix bloat without restart)
+bash captain-rebuild.sh --compact
+
+# Git pull + light rebuild
+bash scripts/captain-update.sh
+
+# Stop everything (data preserved)
+bash captain-stop.sh
+
+# Stop and wipe all data (DESTRUCTIVE — asks for confirmation)
+bash captain-stop.sh --wipe
+
+# Rebuild a single service after a code change
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build captain-online
+
+# View logs for a specific service
+docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f captain-command
+
+# View last 50 lines of all logs
+docker compose -f docker-compose.yml -f docker-compose.local.yml logs --tail 50
+
+# Check container status
+docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+
+# Run bootstrap manually inside container
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -e PYTHONPATH=/app captain-offline python /captain/scripts/bootstrap_production.py
+
+# Run compaction manually inside container
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -e PYTHONPATH=/app captain-offline python /captain/scripts/compact_questdb_tables.py
+
+# Open QuestDB web console
+# In browser: http://localhost:9000
+```
+
+### Isaac's Tower
+
+```bash
+# 1. Open WSL terminal (Windows Terminal → Ubuntu, or from PowerShell):
+wsl -d Ubuntu
+
+# 2. Navigate to project
+cd ~/captain-system
+
+# 3. Pull latest code from Nomaan
+git pull origin main
+
+# 4. Check if .env needs new variables (warnings will show if so)
+bash scripts/captain-update.sh
+
+# -- OR for a full rebuild after major changes: --
+bash captain-rebuild.sh
+
+# All other commands are identical to Nomaan's tower:
+bash captain-start.sh              # Daily startup
+bash captain-start.sh --build      # Rebuild after code changes
+bash captain-rebuild.sh --status   # Health check
+bash captain-rebuild.sh --compact  # Compact QuestDB
+bash captain-stop.sh               # Stop
+```
+
+### Fish Shell (Both Towers)
+
+If the Fish `captain` function is installed (see setup below), all commands become shorter:
+
+```fish
+# These work from any directory — no need to cd first
+captain start              # Daily startup
+captain start --build      # Rebuild images
+captain rebuild            # Full heavy rebuild
+captain status             # Health check
+captain compact            # Compact QuestDB
+captain update             # Git pull + light rebuild
+captain stop               # Stop containers
+captain logs captain-online  # Tail service logs
+captain restart captain-command  # Rebuild one service
+captain ps                 # Container status
+```
+
+#### Installing the Fish `captain` function
+
+The function file needs to exist at `~/.config/fish/functions/captain.fish`. If it's missing on Isaac's tower, copy it from this repo:
+
+```bash
+# On Isaac's tower (one-time setup)
+mkdir -p ~/.config/fish/functions ~/.config/fish/completions
+cp ~/captain-system/docs/fish/captain.fish ~/.config/fish/functions/captain.fish
+cp ~/captain-system/docs/fish/captain-completions.fish ~/.config/fish/completions/captain.fish
+
+# Add CAPTAIN_DIR to Fish config (one-time)
+echo 'set -gx CAPTAIN_DIR $HOME/captain-system' >> ~/.config/fish/config.fish
+```
+
+Or just add it directly in the Fish shell:
+
+```fish
+# This persists across sessions via Fish universal variable
+set -U CAPTAIN_DIR ~/captain-system
+```
+
+---
+
 ## When to Use What
 
 | Scenario | Command | Time | What happens |
