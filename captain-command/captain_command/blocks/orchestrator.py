@@ -27,6 +27,7 @@ from shared.questdb_client import get_cursor
 from shared.redis_client import (
     get_redis_client,
     get_redis_pubsub,
+    publish_to_stream,
     CH_COMMANDS,
     CH_ALERTS,
     CH_STATUS,

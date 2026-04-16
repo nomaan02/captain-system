@@ -9,13 +9,15 @@
 #   bash captain-start.sh --build      # Force rebuild (after code changes)
 #   CAPTAIN_DIR=/path bash captain-start.sh  # Custom project path
 #
-# Task Scheduler:
-#   wsl.exe -d Ubuntu -- bash /home/nomaan/captain-system/captain-start.sh
+# Task Scheduler (adjust path for your user):
+#   wsl.exe -d Ubuntu -- bash ~/captain-system/captain-start.sh
 
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-CAPTAIN_DIR="${CAPTAIN_DIR:-/home/nomaan/captain-system}"
+# Auto-detect from script location — works on any tower without hardcoded paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CAPTAIN_DIR="${CAPTAIN_DIR:-$SCRIPT_DIR}"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.local.yml"
 HEALTH_TIMEOUT=180          # seconds to wait for containers (first run builds images)
 HEALTH_INTERVAL=5           # seconds between health polls

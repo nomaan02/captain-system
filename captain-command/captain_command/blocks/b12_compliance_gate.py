@@ -133,7 +133,7 @@ def _get_account_tsm(account_id: str) -> dict | None:
                 "SELECT max_contracts, fee_schedule "
                 "FROM p3_d08_tsm_state "
                 "WHERE account_id = %s "
-                "ORDER BY ts DESC LIMIT 1",
+                "ORDER BY last_updated DESC LIMIT 1",
                 (account_id,),
             )
             row = cur.fetchone()

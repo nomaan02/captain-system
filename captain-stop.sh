@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-CAPTAIN_DIR="${CAPTAIN_DIR:-/home/nomaan/captain-system}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CAPTAIN_DIR="${CAPTAIN_DIR:-$SCRIPT_DIR}"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.local.yml"
 
 RED='\033[0;31m'

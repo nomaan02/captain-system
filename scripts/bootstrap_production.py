@@ -128,13 +128,14 @@ def _build_session_hours(spec: dict) -> str:
 def phase1_update_d00(dry_run: bool = False):
     """INSERT new D00 rows with locked_strategy and asset specs for all 10 active assets.
 
-    QuestDB append-only — these supersede older rows.
+    Idempotent: inserts a base row if the asset doesn't exist in D00, then
+    overlays strategy/spec fields.  Safe to re-run.
     """
     print("\n  PHASE 1: D00 locked strategies + asset specs")
     print("  " + "─" * 50)
 
     if not dry_run:
-        from shared.questdb_client import get_cursor
+        from shared.questdb_client import get_cursor, read_d00_row, update_d00_fields, D00_COLUMNS
 
     for asset_id in ACTIVE_ASSETS:
         spec = ASSET_SPECS[asset_id]
@@ -149,7 +150,23 @@ def phase1_update_d00(dry_run: bool = False):
                   f"tick={spec['tick_size']}, margin={spec['margin']}")
             continue
 
-        from shared.questdb_client import update_d00_fields
+        # Ensure asset exists in D00 before updating (fixes empty-table crash)
+        existing = read_d00_row(asset_id)
+        if existing is None:
+            with get_cursor() as cur:
+                defaults = {col: None for col in D00_COLUMNS}
+                defaults["asset_id"] = asset_id
+                defaults["p1_status"] = "SURVIVED"
+                defaults["p2_status"] = "SURVIVED"
+                cols = D00_COLUMNS + ["last_updated"]
+                placeholders = ", ".join(["%s"] * len(D00_COLUMNS) + ["now()"])
+                col_names = ", ".join(cols)
+                cur.execute(
+                    f"INSERT INTO p3_d00_asset_universe ({col_names}) VALUES ({placeholders})",
+                    tuple(defaults[k] for k in D00_COLUMNS),
+                )
+            print(f"    [NEW] {asset_id}: base row inserted into D00")
+
         update_d00_fields(asset_id, {
             "captain_status": "ACTIVE",
             "locked_strategy": locked_strategy,
@@ -174,7 +191,10 @@ def phase1_update_d00(dry_run: bool = False):
 # ---------------------------------------------------------------------------
 
 def phase2_update_capital_silo(dry_run: bool = False):
-    """INSERT new D16 row linking account to user with capital."""
+    """INSERT new D16 row linking account to user with capital.
+
+    Idempotent: skips if a silo already exists for USER_ID.
+    """
     print("\n  PHASE 2: D16 capital silo linkage")
     print("  " + "─" * 50)
 
@@ -186,6 +206,15 @@ def phase2_update_capital_silo(dry_run: bool = False):
         return
 
     from shared.questdb_client import get_cursor
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT count() FROM p3_d16_user_capital_silos WHERE user_id = %s",
+            (USER_ID,),
+        )
+        if cur.fetchone()[0] > 0:
+            print(f"    [SKIP] {USER_ID}: silo already exists")
+            return
+
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d16_user_capital_silos (
@@ -216,23 +245,33 @@ def phase2_update_capital_silo(dry_run: bool = False):
 # ---------------------------------------------------------------------------
 
 def phase3_seed_aim_weights(dry_run: bool = False):
-    """Seed D02 with initial equal-weight DMA meta-weights for all Tier 1 AIMs."""
+    """Seed D02 with initial equal-weight DMA meta-weights for all Tier 1 AIMs.
+
+    Idempotent: skips if D02 already has >= expected rows.
+    """
     print("\n  PHASE 3: D02 AIM meta-weights")
     print("  " + "─" * 50)
 
-    # Equal initial weight: each AIM starts fully included
+    expected = len(ACTIVE_ASSETS) * len(TIER1_AIMS)
     initial_probability = 1.0 / len(TIER1_AIMS)
+
+    if dry_run:
+        print(f"    [DRY-RUN] Would seed {expected} rows "
+              f"({len(ACTIVE_ASSETS)} assets x {len(TIER1_AIMS)} AIMs)")
+        return
+
+    from shared.questdb_client import get_cursor
+    with get_cursor() as cur:
+        cur.execute("SELECT count() FROM p3_d02_aim_meta_weights")
+        existing = cur.fetchone()[0]
+
+    if existing >= expected:
+        print(f"    [SKIP] D02 already has {existing} rows (need >= {expected})")
+        return
+
     count = 0
-
-    if not dry_run:
-        from shared.questdb_client import get_cursor
-
     for asset_id in ACTIVE_ASSETS:
         for aim_id in TIER1_AIMS:
-            if dry_run:
-                count += 1
-                continue
-
             with get_cursor() as cur:
                 cur.execute(
                     """INSERT INTO p3_d02_aim_meta_weights (
@@ -243,12 +282,8 @@ def phase3_seed_aim_weights(dry_run: bool = False):
                 )
             count += 1
 
-    if dry_run:
-        print(f"    [DRY-RUN] Would seed {count} rows "
-              f"({len(ACTIVE_ASSETS)} assets x {len(TIER1_AIMS)} AIMs)")
-    else:
-        print(f"    [OK] {count} rows ({len(ACTIVE_ASSETS)} assets x {len(TIER1_AIMS)} AIMs, "
-              f"initial_p={initial_probability:.4f})")
+    print(f"    [OK] {count} rows ({len(ACTIVE_ASSETS)} assets x {len(TIER1_AIMS)} AIMs, "
+          f"initial_p={initial_probability:.4f})")
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +293,7 @@ def phase3_seed_aim_weights(dry_run: bool = False):
 def phase4_seed_circuit_breaker(dry_run: bool = False):
     """Seed D25 with cold-start circuit breaker params for account.
 
+    Idempotent: skips if D25 already has a row for ACCOUNT_ID.
     beta_b=0 disables layers 3-4 until enough trade history accumulates.
     """
     print("\n  PHASE 4: D25 circuit breaker params")
@@ -268,6 +304,15 @@ def phase4_seed_circuit_breaker(dry_run: bool = False):
         return
 
     from shared.questdb_client import get_cursor
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT count() FROM p3_d25_circuit_breaker_params WHERE account_id = %s",
+            (ACCOUNT_ID,),
+        )
+        if cur.fetchone()[0] > 0:
+            print(f"    [SKIP] {ACCOUNT_ID}: circuit breaker row already exists")
+            return
+
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d25_circuit_breaker_params (

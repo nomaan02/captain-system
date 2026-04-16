@@ -812,6 +812,8 @@ class OfflineOrchestrator:
         last_weekly = None
         last_monthly = None
         last_quarterly = None
+        last_compaction = time.monotonic()  # QuestDB state table compaction (every 48h)
+        COMPACTION_INTERVAL = 48 * 3600     # 48 hours in seconds
 
         while self.running:
             now = now_et()
@@ -841,6 +843,12 @@ class OfflineOrchestrator:
             if now.day == 1 and now.month in (1, 4, 7, 10) and last_quarterly != now.month:
                 last_quarterly = now.month
                 self._run_quarterly()
+
+            # QuestDB state table compaction (every 48h) — prevents OOM from
+            # unbounded append-only growth in D01, D02, D05, D12, D25
+            if current_time - last_compaction >= COMPACTION_INTERVAL:
+                last_compaction = current_time
+                self._run_compaction()
 
             time.sleep(30)
 
@@ -1008,3 +1016,29 @@ class OfflineOrchestrator:
 
         except Exception as e:
             logger.error("Quarterly tasks error: %s", e, exc_info=True)
+
+    def _run_compaction(self):
+        """Compact QuestDB append-only state tables (D01, D02, D05, D12, D25).
+
+        Runs every 48 hours to prevent unbounded row growth that causes OOM.
+        Non-fatal — logs errors but does not affect trading.
+        Uses subprocess to invoke the compaction script at /captain/scripts/.
+        """
+        logger.info("Running QuestDB state table compaction (48h cycle)...")
+        self.plog.info("QuestDB compaction starting (48h cycle)", source="scheduler")
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["python", "/captain/scripts/compact_questdb_tables.py"],
+                capture_output=True, text=True, timeout=300,
+                env={**os.environ, "PYTHONPATH": "/app"},
+            )
+            if result.returncode == 0:
+                logger.info("QuestDB compaction complete")
+                self.plog.info("QuestDB compaction done", source="scheduler")
+            else:
+                logger.warning("QuestDB compaction returned %d: %s",
+                               result.returncode, result.stderr[:500])
+        except Exception as e:
+            logger.warning("QuestDB compaction error (non-fatal): %s", e)

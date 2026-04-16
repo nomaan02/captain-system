@@ -227,10 +227,11 @@ def _compute_tp(strategy: dict, features: dict, direction: int, asset_id: str = 
 
     if tp is not None:
         tick = get_tick_size(asset_id)
+        ndigits = max(0, len(str(tick).rstrip('0').split('.')[-1])) if '.' in str(tick) else 0
         if direction == 1:
-            tp = math.floor(tp / tick) * tick
+            tp = round(math.floor(tp / tick) * tick, ndigits)
         elif direction == -1:
-            tp = math.ceil(tp / tick) * tick
+            tp = round(math.ceil(tp / tick) * tick, ndigits)
     return tp
 
 
@@ -248,10 +249,11 @@ def _compute_sl(strategy: dict, features: dict, direction: int, asset_id: str = 
 
     if sl is not None:
         tick = get_tick_size(asset_id)
+        ndigits = max(0, len(str(tick).rstrip('0').split('.')[-1])) if '.' in str(tick) else 0
         if direction == 1:
-            sl = math.ceil(sl / tick) * tick
+            sl = round(math.ceil(sl / tick) * tick, ndigits)
         elif direction == -1:
-            sl = math.floor(sl / tick) * tick
+            sl = round(math.floor(sl / tick) * tick, ndigits)
     return sl
 
 
