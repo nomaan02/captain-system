@@ -22,6 +22,7 @@ What happens:
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import math
@@ -29,6 +30,7 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta, date, timezone
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 # Ensure project root on path
@@ -447,15 +449,132 @@ def run_phase_b(asset_id: str, or_state: dict, phase_a: dict,
     signals = result.get("signals", [])
     logger.info("B6: Published %d signals to Redis", len(signals))
     for sig in signals:
-        logger.info("  SIGNAL: %s %s x%s — TP=%.2f SL=%.2f confidence=%s",
-                     sig.get("direction"), sig.get("asset"),
-                     sig.get("per_account", {}).get(
-                         list(sig.get("per_account", {}).keys())[0] if sig.get("per_account") else "?", {}
-                     ).get("contracts", "?"),
-                     sig.get("tp_level", 0), sig.get("sl_level", 0),
-                     sig.get("confidence_tier", "?"))
+        tp = sig.get("tp_level")
+        sl = sig.get("sl_level")
+        per_acc = sig.get("per_account") or {}
+        contracts = next(iter(per_acc.values()), {}).get("contracts", "?") if per_acc else "?"
+        logger.info(
+            "  SIGNAL: %s %s x%s — TP=%s SL=%s confidence=%s",
+            sig.get("direction"), sig.get("asset"), contracts,
+            f"{tp:.2f}" if isinstance(tp, (int, float)) else "None",
+            f"{sl:.2f}" if isinstance(sl, (int, float)) else "None",
+            sig.get("confidence_tier", "?"),
+        )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Replay harness helpers (not live code)
+# ---------------------------------------------------------------------------
+
+def _seed_quote_cache(all_bars: dict[str, list[dict]]) -> int:
+    """Populate shared.topstep_stream.quote_cache so B1's Data Moderator sees
+    a fresh quote per asset (live MarketStream would do this)."""
+    from shared.topstep_stream import quote_cache
+    now_iso = datetime.now(timezone.utc).isoformat()
+    seeded = 0
+    for asset, bars in all_bars.items():
+        cid = CONTRACT_MAP.get(asset)
+        if not cid or not bars:
+            continue
+        px = bars[0].get("c") or bars[0].get("close")
+        if not px:
+            continue
+        quote_cache.update(cid, {"lastPrice": float(px), "timestamp": now_iso})
+        seeded += 1
+    logger.info("Seeded quote_cache for %d/%d assets", seeded, len(all_bars))
+    return seeded
+
+
+class _FrozenDatetime:
+    """Shim for `datetime` inside b8_or_tracker. `.now()` returns a harness-set
+    time; everything else delegates to the real stdlib datetime."""
+    _current: datetime | None = None
+
+    @classmethod
+    def set(cls, t: datetime) -> None:
+        cls._current = t
+
+    @classmethod
+    def now(cls, tz=None):
+        if cls._current is None:
+            return datetime.now(tz)
+        return cls._current.astimezone(tz) if tz else cls._current
+
+    @classmethod
+    def combine(cls, *a, **kw):
+        return datetime.combine(*a, **kw)
+
+    @classmethod
+    def fromisoformat(cls, s):
+        return datetime.fromisoformat(s)
+
+    @classmethod
+    def fromtimestamp(cls, *a, **kw):
+        return datetime.fromtimestamp(*a, **kw)
+
+    @classmethod
+    def strptime(cls, *a, **kw):
+        return datetime.strptime(*a, **kw)
+
+
+@contextlib.contextmanager
+def _replay_clock():
+    """Scope-limited monkey-patch of b8_or_tracker.datetime. Only affects the
+    OR tracker module's namespace; production containers are untouched."""
+    from captain_online.blocks import b8_or_tracker
+    with patch.object(b8_or_tracker, "datetime", _FrozenDatetime):
+        yield _FrozenDatetime
+
+
+def _fmt(v, nd=2):
+    if isinstance(v, (int, float)):
+        return f"{v:.{nd}f}"
+    return "None"
+
+
+def _print_replay_summary(tracker, signals_by_asset: dict, cb_blocks: dict) -> None:
+    """One compact table: OR + signal + CB flags per asset. Loud markers if
+    or_range==0 (harness clock regression) or TP/SL missing (latent B6 bug)."""
+    logger.info("")
+    logger.info("=" * 88)
+    logger.info("REPLAY DIAGNOSTIC TABLE")
+    logger.info("=" * 88)
+    logger.info("%-5s %-6s %6s %4s %9s %9s %9s %-20s",
+                "asset", "or_rng", "ticks", "dir", "entry", "tp", "sl", "flags")
+    logger.info("-" * 88)
+    issue3 = issue4 = 0
+    for asset in sorted(signals_by_asset.keys() | {a for a in tracker.get_all_states()}):
+        st = tracker.get_state(asset)
+        sig = signals_by_asset.get(asset) or {}
+        or_rng = st.or_range if st else None
+        ticks = st.tick_count if st else 0
+        direction = sig.get("direction") or (st.direction if st else 0)
+        entry = sig.get("entry_price") or (st.entry_price if st else None)
+        tp = sig.get("tp_level")
+        sl = sig.get("sl_level")
+        flags = []
+        if or_rng == 0 or or_rng is None:
+            flags.append("OR=0")
+            issue3 += 1
+        if sig and (tp is None or sl is None):
+            flags.append("TP/SL=None")
+            issue4 += 1
+        cb_reason = cb_blocks.get(asset)
+        if cb_reason:
+            flags.append(f"CB:{cb_reason[:14]}")
+        logger.info("%-5s %6s %6d %4s %9s %9s %9s %-20s",
+                    asset, _fmt(or_rng, 4), ticks, str(direction),
+                    _fmt(entry), _fmt(tp), _fmt(sl), ",".join(flags) or "OK")
+    logger.info("-" * 88)
+    if issue3:
+        logger.warning("!! ISSUE 3: %d assets with or_range=0 (harness clock failure)", issue3)
+    if issue4:
+        logger.warning("!! ISSUE 4: %d signals with None TP/SL (latent B6 bug)", issue4)
+    if not issue3 and not issue4:
+        logger.info("No harness-side regressions detected.")
+    logger.info("=" * 88)
 
 
 def run_replay(target_date: date, session_type: str = "NY"):
@@ -503,6 +622,10 @@ def run_replay(target_date: date, session_type: str = "NY"):
         logger.error("No bars fetched — cannot replay")
         return
 
+    # Seed quote_cache so B1 Data Moderator sees a fresh quote per asset
+    # (substitute for live MarketStream; see docs2/e2e-script-issues/claude-analysis.)
+    _seed_quote_cache(all_bars)
+
     # Step 2: Run Phase A
     phase_a = run_phase_a(session_id)
     if phase_a is None:
@@ -540,33 +663,36 @@ def run_replay(target_date: date, session_type: str = "NY"):
     logger.info("REPLAYING TICKS — OR detection active")
     logger.info("=" * 60)
 
-    for ts, asset, cid, bar in merged_bars:
-        # Construct synthetic quote (what MarketStream would send)
-        close = bar.get("c") or bar.get("close", 0)
-        high = bar.get("h") or bar.get("high", close)
-        low = bar.get("l") or bar.get("low", close)
+    with _replay_clock() as clk:
+        for ts, asset, cid, bar in merged_bars:
+            clk.set(ts)  # advance OR-tracker clock to bar time
 
-        # Feed high, low, and close as separate ticks to capture the range
-        for price in [high, low, close]:
-            if price and price > 0:
-                quote = {"contractId": cid, "lastPrice": float(price)}
-                tracker.on_quote(quote)
+            # Construct synthetic quote (what MarketStream would send)
+            close = bar.get("c") or bar.get("close", 0)
+            high = bar.get("h") or bar.get("high", close)
+            low = bar.get("l") or bar.get("low", close)
 
-        # Check for breakout
-        tracker.check_expirations()
-        state = tracker.get_state(asset)
-        if state and state.is_resolved and asset not in resolved_assets:
-            resolved_assets.add(asset)
-            if state.direction != 0:
-                t_et = ts.astimezone(ET)
-                logger.info("*** OR BREAKOUT: %s %s at %.2f (range=%.4f) at %s ***",
-                            asset,
-                            "LONG" if state.direction == 1 else "SHORT",
-                            state.entry_price or 0,
-                            state.or_range or 0,
-                            t_et.strftime("%H:%M:%S ET"))
-            else:
-                logger.info("*** OR EXPIRED: %s — no breakout within cutoff ***", asset)
+            # Feed high, low, and close as separate ticks to capture the range
+            for price in [high, low, close]:
+                if price and price > 0:
+                    quote = {"contractId": cid, "lastPrice": float(price)}
+                    tracker.on_quote(quote)
+
+            # Check for breakout
+            tracker.check_expirations()
+            state = tracker.get_state(asset)
+            if state and state.is_resolved and asset not in resolved_assets:
+                resolved_assets.add(asset)
+                if state.direction != 0:
+                    t_et = ts.astimezone(ET)
+                    logger.info("*** OR BREAKOUT: %s %s at %.2f (range=%.4f) at %s ***",
+                                asset,
+                                "LONG" if state.direction == 1 else "SHORT",
+                                state.entry_price or 0,
+                                state.or_range or 0,
+                                t_et.strftime("%H:%M:%S ET"))
+                else:
+                    logger.info("*** OR EXPIRED: %s — no breakout within cutoff ***", asset)
 
     # Step 5: Run Phase B for all resolved assets
     logger.info("")
@@ -574,6 +700,7 @@ def run_replay(target_date: date, session_type: str = "NY"):
     logger.info("PHASE B: Generating signals for %d resolved assets", len(resolved_assets))
     logger.info("=" * 60)
 
+    signals_by_asset: dict[str, dict] = {}
     for asset in resolved_assets:
         state = tracker.get_state(asset)
         if state and state.direction != 0:
@@ -584,8 +711,24 @@ def run_replay(target_date: date, session_type: str = "NY"):
                 "or_range": state.or_range or 0,
                 "state": state.state.value,
             }
-            run_phase_b(asset, state_dict, phase_a,
-                        bars=all_bars.get(asset, []), session_type=session_type)
+            result = run_phase_b(asset, state_dict, phase_a,
+                                 bars=all_bars.get(asset, []), session_type=session_type)
+            for sig in (result or {}).get("signals", []):
+                signals_by_asset[sig.get("asset", asset)] = sig
+
+    # CB block reasons per asset (from Phase A B5C output, if available)
+    cb_blocks: dict[str, str] = {}
+    b5c = (phase_a or {}).get("b5c") or {}
+    for asset_map in (b5c.get("account_skip_reason") or {}).values() if isinstance(b5c.get("account_skip_reason"), dict) else []:
+        pass  # shape varies — covered by per-asset scan below
+    for a, per_acc in (b5c.get("account_skip_reason") or {}).items():
+        if isinstance(per_acc, dict):
+            for reason in per_acc.values():
+                if reason and "L" in str(reason):
+                    cb_blocks[a] = str(reason)
+                    break
+
+    _print_replay_summary(tracker, signals_by_asset, cb_blocks)
 
     # Summary
     logger.info("")
