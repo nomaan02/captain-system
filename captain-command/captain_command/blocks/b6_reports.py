@@ -364,11 +364,12 @@ def _rpt07_daily_prop(user_id: str, params: dict) -> dict:
     try:
         with get_cursor() as cur:
             cur.execute(
-                """SELECT account_id, tsm_name, current_balance, starting_balance,
+                """SELECT account_id, name, current_balance, starting_balance,
                           max_drawdown_limit, max_daily_loss, daily_loss_used,
                           pass_probability
                    FROM p3_d08_tsm_state
-                   WHERE user_id = %s""",
+                   WHERE user_id = %s
+                   LATEST ON last_updated PARTITION BY account_id""",
                 (user_id,),
             )
             accounts = []

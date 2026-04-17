@@ -425,14 +425,14 @@ def _reset_daily_counters():
             for (ac_id,) in accounts:
                 cur.execute(
                     """INSERT INTO p3_d23_circuit_breaker_intraday(
-                           timestamp, account_id, L_t, n_t,
-                           L_b, n_b, reset_flag
-                       ) VALUES(%s, %s, %s, %s, %s, %s, %s)""",
+                           account_id, l_t, n_t,
+                           l_b, n_b, last_updated
+                       ) VALUES(%s, %s, %s, %s, %s, %s)""",
                     (
-                        now_et().isoformat(), ac_id,
+                        ac_id,
                         0.0, 0,
                         json.dumps({}), json.dumps({}),
-                        True,
+                        now_et().isoformat(),
                     ),
                 )
 
@@ -471,12 +471,13 @@ def _get_all_accounts() -> list[dict]:
     try:
         with get_cursor() as cur:
             cur.execute(
-                """SELECT account_id, user_id, tsm_name,
+                """SELECT account_id, user_id, name,
                           current_balance, starting_balance,
                           max_drawdown_limit, max_daily_loss,
                           topstep_optimisation, topstep_state,
                           scaling_plan_active
                    FROM p3_d08_tsm_state
+                   LATEST ON last_updated PARTITION BY account_id
                    ORDER BY account_id"""
             )
             results = []
@@ -611,15 +612,18 @@ def _log_reconciliation(ac_id: str, user_id: str, method: str,
         with get_cursor() as cur:
             cur.execute(
                 """INSERT INTO p3_d19_reconciliation_log(
-                       timestamp, account_id, user_id, method,
-                       system_balance, broker_balance, mismatch,
-                       auto_corrected
+                       recon_id, account_id, user_id, source,
+                       mismatches, corrected, status, ts
                    ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    now_et().isoformat(),
+                    f"{ac_id}_{now_et().strftime('%Y%m%d_%H%M%S')}",
                     ac_id, user_id, method,
-                    system_balance, broker_balance, mismatch,
+                    json.dumps({"system_balance": system_balance,
+                                "broker_balance": broker_balance,
+                                "mismatch": mismatch}),
                     mismatch is not None and mismatch > 1.0,
+                    "corrected" if (mismatch is not None and mismatch > 1.0) else "ok",
+                    now_et().isoformat(),
                 ),
             )
     except Exception as exc:
