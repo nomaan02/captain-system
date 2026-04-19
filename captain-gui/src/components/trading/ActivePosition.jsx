@@ -47,7 +47,7 @@ const ActivePosition = ({ className = "" }) => {
         entry_price: selectedSignal.entry_price,
         sl_level: selectedSignal.sl_level,
         tp_level: selectedSignal.tp_level,
-        contracts: selectedSignal.contracts ?? 1,
+        contracts: selectedSignal.contracts ?? selectedSignal.size ?? 1,
         order_id: selectedSignal.signal_id,
         entry_time: selectedSignal.timestamp,
         current_pnl: selectedSignal.pnl ?? null,

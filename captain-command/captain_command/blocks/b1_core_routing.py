@@ -406,6 +406,7 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
     """Insert a row into P3-D17 session_log for auditing."""
     try:
         with get_cursor() as cur:
+            ctx = signal.get("_context") or {}
             cur.execute(
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id,
@@ -419,11 +420,12 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
                     signal.get("asset", ""),
                     json.dumps({
                         "direction": signal.get("direction"),
-                        "entry_price": signal.get("entry_price"),
+                        "entry_price": ctx.get("entry_price"),
                         "tp_level": signal.get("tp_level"),
                         "sl_level": signal.get("sl_level"),
-                        "confidence_tier": signal.get("confidence_tier"),
-                        "quality_score": signal.get("quality_score"),
+                        "confidence_tier": ctx.get("confidence_tier"),
+                        "quality_score": ctx.get("quality_score"),
+                        "size": signal.get("size"),
                     }),
                 ),
             )
