@@ -690,7 +690,7 @@ def _create_incident(incident_type: str, severity: str, component: str, details:
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d21_incident_log
-               (incident_id, incident_type, severity, component, details, status, ts)
+               (incident_id, incident_type, severity, component, details, status, timestamp)
                VALUES (%s, %s, %s, %s, %s, 'OPEN', now())""",
             (incident_id, incident_type, severity, component, details),
         )

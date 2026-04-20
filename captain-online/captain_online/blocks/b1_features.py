@@ -1277,7 +1277,7 @@ def store_opening_volatility(asset_id: str):
             cur.execute(
                 """INSERT INTO p3_d33_opening_volatility
                    (asset_id, session_date, opening_range_pct)
-                   VALUES (%s, %s, %s)""",
+                   VALUES (%s, to_timestamp(%s, 'yyyy-MM-dd'), %s)""",
                 (asset_id, today_str, vol),
             )
         logger.info("Stored opening vol for %s: %.6f", asset_id, vol)
