@@ -42,6 +42,7 @@ def _connect():
                 user=QUESTDB_USER,
                 password=QUESTDB_PASSWORD,
                 database=QUESTDB_DB,
+                connect_timeout=5,
             )
             conn.autocommit = True
             if attempt > 1:
@@ -62,6 +63,30 @@ def _connect():
                     _CONNECT_MAX_ATTEMPTS, exc,
                 )
     raise last_exc
+
+
+def wait_for_questdb(max_wait_seconds: int = 30) -> bool:
+    """Poll QuestDB until reachable or timeout. Returns True on success."""
+    for attempt in range(1, max_wait_seconds + 1):
+        try:
+            conn = psycopg2.connect(
+                host=QUESTDB_HOST,
+                port=QUESTDB_PORT,
+                user=QUESTDB_USER,
+                password=QUESTDB_PASSWORD,
+                database=QUESTDB_DB,
+                connect_timeout=5,
+            )
+            conn.autocommit = True
+            conn.cursor().execute("SELECT 1")
+            conn.close()
+            logger.info("QuestDB reachable (attempt %d)", attempt)
+            return True
+        except Exception as exc:
+            logger.info("QuestDB not yet reachable (attempt %d/%d): %s", attempt, max_wait_seconds, exc)
+            time.sleep(1)
+    logger.error("QuestDB unreachable after %d seconds", max_wait_seconds)
+    return False
 
 
 def get_connection():

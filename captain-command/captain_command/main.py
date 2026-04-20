@@ -19,7 +19,7 @@ import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from shared.questdb_client import get_connection
+from shared.questdb_client import get_connection, wait_for_questdb
 from shared.redis_client import (
     get_redis_client, ensure_consumer_group,
     STREAM_SIGNALS, GROUP_COMMAND_SIGNALS,
@@ -42,13 +42,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def verify_connections():
     """Verify QuestDB and Redis are reachable."""
-    try:
-        conn = get_connection()
-        conn.close()
-        logger.info("QuestDB: connected")
-    except Exception as e:
-        logger.error("QuestDB: FAILED — %s", e)
-        sys.exit(1)
+    if not wait_for_questdb(30):
+        logger.critical("QuestDB unreachable after 30s — aborting")
+        sys.exit(2)
 
     try:
         client = get_redis_client()

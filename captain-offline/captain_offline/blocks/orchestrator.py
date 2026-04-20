@@ -844,11 +844,10 @@ class OfflineOrchestrator:
                 last_quarterly = now.month
                 self._run_quarterly()
 
-            # QuestDB state table compaction (every 48h) — prevents OOM from
-            # unbounded append-only growth in D01, D02, D05, D12, D25
-            if current_time - last_compaction >= COMPACTION_INTERVAL:
-                last_compaction = current_time
-                self._run_compaction()
+            # PAUSED: migration in progress, re-enable after Session 3
+            # if current_time - last_compaction >= COMPACTION_INTERVAL:
+            #     last_compaction = current_time
+            #     self._run_compaction()
 
             time.sleep(30)
 
