@@ -26,6 +26,7 @@ Subscribes to Redis: captain:trade_outcomes, captain:commands
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -844,10 +845,12 @@ class OfflineOrchestrator:
                 last_quarterly = now.month
                 self._run_quarterly()
 
-            # PAUSED: migration in progress, re-enable after Session 3
-            # if current_time - last_compaction >= COMPACTION_INTERVAL:
-            #     last_compaction = current_time
-            #     self._run_compaction()
+            # Feature flag — set CAPTAIN_COMPACTION_ENABLED=false in .env to pause
+            # (required during QuestDB schema migration; re-enable after Session 3)
+            if os.getenv("CAPTAIN_COMPACTION_ENABLED", "true").lower() == "true":
+                if current_time - last_compaction >= COMPACTION_INTERVAL:
+                    last_compaction = current_time
+                    self._run_compaction()
 
             time.sleep(30)
 
