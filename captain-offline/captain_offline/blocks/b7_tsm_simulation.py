@@ -168,14 +168,76 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
         if pass_probability < 0.7:
             alert = {"priority": "HIGH", "message": f"Non-trivial capital risk: {pass_probability:.1%} survival"}
 
-    # Store to P3-D08
+    # Store to P3-D08 — read-modify-write to avoid partial-row clobber under DEDUP
     with get_cursor() as cur:
         cur.execute(
-            """INSERT INTO p3_d08_tsm_state
-               (account_id, pass_probability, simulation_date, risk_goal, last_updated)
-               VALUES (%s, %s, now(), %s, now())""",
-            (account_id, pass_probability, risk_goal),
+            """SELECT account_id, user_id, name, classification,
+                      starting_balance, current_balance, current_drawdown,
+                      daily_loss_used, profit_target,
+                      max_drawdown_limit, max_daily_loss, max_contracts,
+                      scaling_plan, commission_per_contract,
+                      instrument_permissions, overnight_allowed,
+                      trading_hours, margin_per_contract, margin_buffer_pct,
+                      evaluation_end_date, evaluation_stages,
+                      topstep_optimisation, topstep_params, topstep_state,
+                      fee_schedule, payout_rules, scaling_plan_active,
+                      scaling_tier_micros
+               FROM p3_d08_tsm_state
+               WHERE account_id = %s
+               ORDER BY last_updated DESC LIMIT 1""",
+            (account_id,),
         )
+        existing = cur.fetchone()
+        if existing is None:
+            logger.warning(
+                "No D08 row for %s — skipping simulation persist until TSM config is loaded",
+                account_id,
+            )
+        else:
+            p = list(existing)  # 28 cols without pass_probability/simulation_date/risk_goal/last_updated
+            cur.execute(
+                """INSERT INTO p3_d08_tsm_state(
+                       account_id, user_id, name, classification,
+                       starting_balance, current_balance, current_drawdown,
+                       daily_loss_used, profit_target,
+                       max_drawdown_limit, max_daily_loss, max_contracts,
+                       scaling_plan, commission_per_contract,
+                       instrument_permissions, overnight_allowed,
+                       trading_hours, margin_per_contract, margin_buffer_pct,
+                       pass_probability, simulation_date, risk_goal,
+                       evaluation_end_date, evaluation_stages,
+                       topstep_optimisation, topstep_params, topstep_state,
+                       fee_schedule, payout_rules, scaling_plan_active,
+                       scaling_tier_micros, last_updated
+                   ) VALUES(
+                       %s, %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, now(), %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, now()
+                   )""",
+                (
+                    p[0], p[1], p[2], p[3],
+                    p[4], p[5], p[6],
+                    p[7], p[8],
+                    p[9], p[10], p[11],
+                    p[12], p[13],
+                    p[14], p[15],
+                    p[16], p[17], p[18],
+                    pass_probability, risk_goal,
+                    p[19], p[20],
+                    p[21], p[22], p[23],
+                    p[24], p[25], p[26],
+                    p[27],
+                ),
+            )
 
     # Publish alert if needed
     if alert:

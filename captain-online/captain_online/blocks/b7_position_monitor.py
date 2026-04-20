@@ -307,7 +307,11 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
     with get_cursor() as cur:
         # ── Read both current states ──
         cur.execute(
-            """SELECT total_capital, accounts FROM p3_d16_user_capital_silos
+            """SELECT status, role, starting_capital, total_capital, accounts,
+                      max_simultaneous_positions, max_portfolio_risk_pct,
+                      correlation_threshold, user_kelly_ceiling,
+                      capital_history, telegram_chat_id, created
+               FROM p3_d16_user_capital_silos
                WHERE user_id = %s
                LATEST ON last_updated PARTITION BY user_id""",
             (user_id,),
@@ -325,8 +329,8 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
         # ── Compute new states ──
         # D16 capital
         if d16_row:
-            new_capital = (d16_row[0] or 0) + net_pnl
-            d16_accounts = d16_row[1]
+            new_capital = (d16_row[3] or 0) + net_pnl
+            d16_accounts = d16_row[4]
         else:
             new_capital = net_pnl
             d16_accounts = None
@@ -343,10 +347,16 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
         # ── Write both back-to-back ──
         if d16_row:
             cur.execute(
-                """INSERT INTO p3_d16_user_capital_silos
-                   (user_id, total_capital, accounts, last_updated)
-                   VALUES (%s, %s, %s, now())""",
-                (user_id, new_capital, d16_accounts),
+                """INSERT INTO p3_d16_user_capital_silos (
+                       user_id, status, role, starting_capital, total_capital, accounts,
+                       max_simultaneous_positions, max_portfolio_risk_pct,
+                       correlation_threshold, user_kelly_ceiling,
+                       capital_history, telegram_chat_id, created, last_updated
+                   ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                (user_id, d16_row[0], d16_row[1], d16_row[2],
+                 new_capital, d16_accounts,
+                 d16_row[5], d16_row[6], d16_row[7], d16_row[8],
+                 d16_row[9], d16_row[10], d16_row[11]),
             )
 
         cur.execute(

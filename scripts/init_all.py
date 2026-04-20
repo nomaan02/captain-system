@@ -1,11 +1,4 @@
-# region imports
-try:
-    from AlgorithmImports import *
-except ImportError:
-    pass
-# endregion
-"""
-Master initialization script — runs all Phase 1 setup in order.
+"""Master initialization script — runs all Phase 1 setup in order.
 
 Prerequisites: docker-compose up -d (QuestDB + Redis must be healthy)
 
@@ -62,10 +55,21 @@ def main():
     if not wait_for_redis():
         sys.exit(1)
 
-    # Step 2: Create QuestDB tables (Task 1.2 + 1.2b)
-    print("\n--- Task 1.2/1.2b: QuestDB Schema ---")
-    from scripts.init_questdb import init_questdb
-    if not init_questdb():
+    # Step 2: Create QuestDB tables from canonical schemas (no hand-written DDL)
+    print("\n--- QuestDB Schema (canonical_schemas.py) ---")
+    from shared.canonical_schemas import CANONICAL_DDLS, table_name_of
+    from shared.questdb_client import get_cursor
+    schema_ok = True
+    for ddl in CANONICAL_DDLS:
+        table = table_name_of(ddl)
+        try:
+            with get_cursor() as cur:
+                cur.execute(ddl)
+            print(f"  [OK] {table}")
+        except Exception as exc:
+            print(f"  [FAIL] {table}: {exc}")
+            schema_ok = False
+    if not schema_ok:
         print("[FAIL] QuestDB schema creation failed.")
         sys.exit(1)
 
@@ -107,7 +111,6 @@ def main():
     print("\n" + "=" * 60)
     print("PHASE 1 INITIALIZATION SUMMARY")
     print("=" * 60)
-    from shared.questdb_client import get_cursor
     with get_cursor() as cur:
         cur.execute("SELECT count() FROM tables()")
         table_count = cur.fetchone()[0]
