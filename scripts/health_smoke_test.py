@@ -124,8 +124,8 @@ def main():
             )
         print("   dedup-replace write (val=2.0) OK")
 
-        # Verify the replace landed (poll up to 5s for WAL commit)
-        deadline = time.monotonic() + 5.0
+        # Verify the replace landed (poll up to 10s for WAL commit)
+        deadline = time.monotonic() + 10.0
         dedup_ok = False
         while time.monotonic() < deadline:
             with get_cursor() as cur:
@@ -140,8 +140,9 @@ def main():
             time.sleep(0.3)
 
         if not dedup_ok:
-            # WAL dedup is async — report but don't fail the smoke test
-            print(f"   dedup not yet applied (count={cnt}, max_val={max_val}) — WAL still committing, non-fatal")
+            print(f"FAIL: dedup did not collapse within 10s (count={cnt}, max_val={max_val})")
+            _drop_scratch()
+            sys.exit(1)
 
     except Exception as exc:
         print(f"FAIL: scratch table error: {exc}")
