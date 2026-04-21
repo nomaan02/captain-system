@@ -86,6 +86,24 @@ ls -lh ~/backups/ | tail -5
 
 Confirm both archives exist and are non-empty.
 
+### 1a. Export tower-collected live-table delta (1 minute)
+
+The committed seed CSVs under `data/seed/` are refreshed manually and lag the
+live tables by ~3 weeks (the "seed frontier"). Every day between that frontier
+and now has been written to QuestDB by `b1_features.py` and is NOT in any
+committed file — the wipe would lose it. Dump the four live-written tables
+to CSV so §6 can restore the delta after the seed chain finishes.
+
+```fish
+# While QuestDB is still running (before §3 teardown).
+python3 scripts/backup_live_tables.py --backup-root ~/captain-backups
+```
+
+Expected output: `[OK] p3_d30_daily_ohlcv: N rows`, same for d29, d33,
+spread_history. Record the `live-tables-<stamp>` directory name printed at
+the top — §6 needs it. A fresh tower (no post-seed activity yet) will print
+0 rows for every table; that is fine and the restore in §6 becomes a no-op.
+
 ---
 
 ## 2. Pause crons (30 seconds)
@@ -187,6 +205,28 @@ python3 scripts/roll_calendar_update.py --update # D00 roll_calendar + config/co
 ```
 
 Row counts must land within ±5 % of the expected values above.
+
+### 6a. Restore post-frontier delta from §1a backup (1 minute)
+
+Re-inserts the rows the tower collected between the committed seed frontier
+and the wipe. Filters §1a's CSVs per-asset against `data/seed/`'s max date and
+INSERTs only the strictly-newer rows. `spread_history` has no committed seed
+and is restored wholesale — DEDUP `UPSERT KEYS(timestamp, asset_id, session_id)`
+naturally collapses duplicates. D29/D30 use the session/trade date as the ts,
+making the restore idempotent under re-runs (DEDUP collapses on the stable key).
+
+```fish
+# Resolve the most-recent backup dir produced in §1a.
+set -l backup_dir (ls -dt ~/captain-backups/live-tables-* | head -1)
+echo "Restoring delta from: $backup_dir"
+
+python3 scripts/restore_live_delta.py --backup-dir $backup_dir --dry-run
+python3 scripts/restore_live_delta.py --backup-dir $backup_dir
+```
+
+Dry-run reports rows-that-would-insert per table. Live run prints the same
+counts but actually writes. Zero inserts is valid on a tower whose §1a dump
+was empty (fresh install with no collected data yet).
 
 ### Verify seeded state
 
