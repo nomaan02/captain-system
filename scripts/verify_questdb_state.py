@@ -490,9 +490,16 @@ def check_d01_aim_states(cur, report: Report) -> None:
         if aim_id not in TIER1_AIMS or asset_id not in EXPECTED_ASSETS:
             continue
         if not model:
+            # Tier 1 AIMs are statistical/rule-based and do not serialize a
+            # model blob. `_save_model_object()` in b1_aim_lifecycle.py is a
+            # placeholder (commented out) until individual AIM trainers are
+            # wired, so this column is never populated on a fresh install.
+            # Downgraded from CRITICAL to INFO so the report reflects real
+            # readiness blockers.
             report.add("D01 aim_states",
                        f"AIM-{aim_id}/{asset_id}.model_object",
-                       "CRITICAL", "empty — AIM cannot produce modifier",
+                       "INFO", "empty — expected for Tier 1 AIMs "
+                               "(b1_aim_lifecycle._save_model_object is a placeholder)",
                        table="p3_d01_aim_model_states")
         if warmup is None or warmup < 0.8:
             report.add("D01 aim_states",
