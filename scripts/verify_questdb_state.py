@@ -82,7 +82,10 @@ EXPECTED_BOOTSTRAP_ROWS = {
     "p3_d05_ewma_states":           (60, "asset_id,regime,session"),
     "p3_d12_kelly_parameters":      (60, "asset_id,regime,session"),
     "p3_d16_user_capital_silos":    (1,  "user_id"),
-    "p3_d26_hmm_opportunity_state": (1,  "(singleton)"),
+    # D26 HMM opportunity state is written by captain-offline b1_aim16_hmm at
+    # runtime (Baum-Welch EM on ≥20 days of session observations). On a fresh
+    # install there is no history, so the row legitimately does not exist —
+    # the dedicated check_d26() emits WARN with the correct remediation.
 }
 
 # All tables that init_questdb.py creates. Missing tables are CRITICAL.
@@ -900,8 +903,20 @@ def check_freshness(cur, report: Report) -> None:
         ts = max_timestamp(cur, table, ts_col)
         rc = raw_count(cur, table)
         if rc == 0:
-            report.add("Freshness", table, "CRITICAL",
-                       "0 rows — external data not seeded",
+            # Two runtime-populated tables (D22 captain-offline diagnostic,
+            # D17 monitor heartbeat) are legitimately empty on a fresh install
+            # until the containers complete their first cycle — downgrade
+            # those to WARN. Everything else in this map is seedable external
+            # data, so 0 rows is still a blocker.
+            runtime_populated = {
+                "p3_d22_system_health_diagnostic",
+                "p3_d17_system_monitor_state",
+            }
+            level = "WARN" if table in runtime_populated else "CRITICAL"
+            msg = ("0 rows — will populate once captain-offline writes its "
+                   "first cycle" if table in runtime_populated
+                   else "0 rows — external data not seeded")
+            report.add("Freshness", table, level, msg,
                        table=table,
                        fix={
                            "p3_d30_daily_ohlcv":
