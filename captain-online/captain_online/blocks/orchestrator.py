@@ -108,6 +108,11 @@ class OnlineOrchestrator:
                         pos = json.loads(val)
                         if pos.get("entry_time") and isinstance(pos["entry_time"], str):
                             pos["entry_time"] = datetime.fromisoformat(pos["entry_time"])
+                        d = pos.get("direction", 1)
+                        pos["direction"] = 1 if d in (1, "BUY") else -1 if d in (-1, "SELL") else int(d or 1)
+                        for _f in ("entry_price", "tp_level", "sl_level", "point_value", "risk_amount", "contracts"):
+                            if pos.get(_f) is not None:
+                                pos[_f] = float(pos[_f]) if _f != "contracts" else int(pos[_f])
                         self.open_positions.append(pos)
                         recovered += 1
                     except (json.JSONDecodeError, ValueError) as exc:
@@ -866,7 +871,7 @@ class OnlineOrchestrator:
                 "signal_id": signal_id,
                 "user_id": user_id,
                 "asset": data.get("asset"),
-                "direction": data.get("direction", 1),
+                "direction": 1 if data.get("direction") in (1, "BUY") else -1 if data.get("direction") in (-1, "SELL") else int(data.get("direction") or 1),
                 "entry_price": data.get("actual_entry_price", data.get("entry_price")),
                 "signal_entry_price": data.get("entry_price"),
                 "actual_entry_price": data.get("actual_entry_price"),

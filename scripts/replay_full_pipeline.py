@@ -9,8 +9,8 @@ and publishes signals to Redis so the GUI displays them.
 AUTO_EXECUTE must be disabled on captain-command before running.
 
 Usage (from host, with containers running):
-    PYTHONPATH=.:captain-online:captain-command \
-        python scripts/replay_full_pipeline.py --date 2026-03-30 --session NY
+PYTHONPATH=.:captain-online:captain-command \
+    python scripts/replay_full_pipeline.py --date 2026-03-30 --session NY
 
 What happens:
     1. Fetches 1-min bars from TopstepX for the target date
