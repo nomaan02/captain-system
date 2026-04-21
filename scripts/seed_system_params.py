@@ -45,7 +45,7 @@ SYSTEM_PARAMS = {
     "manual_halt_all": {"value": False, "category": "execution"},
 
     # --- Sizing ---
-    "tsm_budget_divisor_default": {"value": 20, "category": "sizing"},
+    "tsm_budget_divisor_default": {"value": 10, "category": "sizing"},
     "kelly_shrinkage_start": {"value": 0.5, "category": "sizing"},
 
     # --- AIM ---

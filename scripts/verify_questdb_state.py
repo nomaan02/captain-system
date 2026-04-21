@@ -63,7 +63,7 @@ SESSIONS = [1, 2, 3]
 # Required locked_strategy keys (subset — must at minimum identify the strategy)
 LOCKED_STRATEGY_REQUIRED = {"model", "feature", "OO"}
 # Optional but expected for risk management
-LOCKED_STRATEGY_OPTIONAL = {"regime_class", "regime_method", "tp_mult", "sl_mult",
+LOCKED_STRATEGY_OPTIONAL = {"regime_class", "regime_method", "tp_multiple", "sl_multiple",
                             "accuracy_OOS", "confidence_flag", "source"}
 
 # Valid enum values
@@ -435,7 +435,7 @@ def check_d00_fields(cur, report: Report) -> None:
                                    table="p3_d00_asset_universe")
                     missing_opt = LOCKED_STRATEGY_OPTIONAL - set(parsed.keys())
                     # Only warn about tp_mult/sl_mult (directly used by sizing)
-                    risk_missing = {"tp_mult", "sl_mult"} & missing_opt
+                    risk_missing = {"tp_multiple", "sl_multiple"} & missing_opt
                     if risk_missing:
                         report.add("D00 asset_universe",
                                    f"{asset_id}.locked_strategy TP/SL",
