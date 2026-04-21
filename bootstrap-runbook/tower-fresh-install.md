@@ -86,6 +86,24 @@ ls -lh ~/backups/ | tail -5
 
 Confirm both archives exist and are non-empty.
 
+
+
+note: 5th comand above may need :
+
+ set -e QUESTDB_USER
+
+  set -x QUESTDB_PASSWORD z3ehOXUmTspH2Q7Ofa-OFA
+
+  # Confirm
+
+  echo "user=$QUESTDB_USER pw=$QUESTDB_PASSWORD"
+
+  # Should print: user= pw=z3ehOXUmTspH2Q7Ofa-OFA
+
+  # (user empty is fine — client defaults to "captain" which matches the container)
+
+  ~/.venv-captain/bin/python3 scripts/backup_live_[tables.py](http://tables.py) --backup-root ~/captain-backups
+
 ### 1a. Export tower-collected live-table delta (1 minute)
 
 The committed seed CSVs under `data/seed/` are refreshed manually and lag the
@@ -94,13 +112,19 @@ and now has been written to QuestDB by `b1_features.py` and is NOT in any
 committed file — the wipe would lose it. Dump the four live-written tables
 to CSV so §6 can restore the delta after the seed chain finishes.
 
-Host-side scripts need `psycopg2` + `redis` and the `.env` loaded into the
-shell. Do this once per session (it also primes §5 / §6):
+Host-side scripts need the full captain-offline Python stack (psycopg2,
+redis, numpy, scipy, scikit-learn, hmmlearn, pydantic, river — the seed
+chain imports offline blocks that depend on all of these) and the `.env`
+loaded into the shell. Do this once per session (it also primes §5 / §6):
 
 ```fish
-# One-time venv setup (first install only)
+# One-time venv setup (first install only) — installs ALL deps for host scripts
 python3 -m venv ~/.venv-captain
-~/.venv-captain/bin/pip install 'psycopg2-binary>=2.9' 'redis>=5.0'
+~/.venv-captain/bin/pip install -r captain-offline/requirements.txt
+
+# One-time .env hygiene — strip any Windows CRLF line endings that would
+# leak into env vars (shows up as user_id='primary_user\r', breaks D16 verify)
+file .env | grep -q CRLF; and sed -i 's/\r$//' .env
 
 # Per-session env load — .env into fish + point Python at the host QuestDB
 cd ~/captain-system
@@ -114,8 +138,9 @@ set -x REDIS_HOST 127.0.0.1
 set -x REDIS_PORT 6379
 set -x PYTHONPATH ~/captain-system
 
-# Sanity — must print "yes"
+# Sanity — must print "yes" and the user/acct must NOT show trailing chars
 test -n "$QUESTDB_PASSWORD"; and echo "QUESTDB_PASSWORD: yes"; or echo "QUESTDB_PASSWORD: NO"
+echo "user=[$BOOTSTRAP_USER_ID] acct=[$BOOTSTRAP_ACCOUNT_ID]"
 ```
 
 ```fish
@@ -378,9 +403,9 @@ Expected diff scope:
 - `cron`: paths differ only by the `/home/USER/` prefix; schedules identical.
 - `data/`: directory listing identical (same files).
 - `vix`: both towers must show **today's** date on a weekday, previous Friday
-  on a Monday morning. Any lag > 1 business day is Defect 6 reoccurring.
+on a Monday morning. Any lag > 1 business day is Defect 6 reoccurring.
 - `verify_questdb_state`: all D-table row counts must match exactly; live
-  L-tables may diverge (expected).
+L-tables may diverge (expected).
 
 ---
 
@@ -401,11 +426,12 @@ Roll-back time budget: ~5 minutes.
 ## Notes
 
 - Scripts run on the **host**, not inside containers. The container runtime has
-  historically drifted (captain-command does not mount `./scripts`).
+historically drifted (captain-command does not mount `./scripts`).
 - `CAPTAIN_COMPACTION_ENABLED=true` is the default and must remain so until at
-  least two weeks of production monitoring on the canonical DDL. Compaction is
-  the primary dedup mechanism for state tables whose writers use `now()` for
-  the designated timestamp (see `.bootstrap-state.md § DEDUP Behaviour Notes`).
+least two weeks of production monitoring on the canonical DDL. Compaction is
+the primary dedup mechanism for state tables whose writers use `now()` for
+the designated timestamp (see `.bootstrap-state.md § DEDUP Behaviour Notes`).
 - `roll_calendar_update.py --update` does not call TopstepX despite the header
-  comment — it is safe to run offline during a fresh install.
+comment — it is safe to run offline during a fresh install.
 - `data/qdb_export/` is **not** a seed source. Prior-state dumps only; ignore.
+
