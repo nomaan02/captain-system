@@ -151,14 +151,14 @@ def fix_tsm_daily_loss(dry_run=False):
                 starting_balance, current_balance, current_drawdown, daily_loss_used,
                 profit_target, max_drawdown_limit, max_daily_loss, max_contracts,
                 commission_per_contract, instrument_permissions,
-                overnight_allowed, margin_buffer_pct,
+                overnight_allowed, margin_buffer_pct, risk_goal,
                 topstep_optimisation, scaling_plan_active, scaling_tier_micros,
                 last_updated
             ) VALUES (
                 '20319811', 'primary_user', 'Topstep 150K Trading Combine', %s,
                 150000.0, 150000.0, 0.0, 0.0,
                 6000.0, 4500.0, 2250.0, 15,
-                0.0, %s, false, 1.5, true, false, 0, now()
+                0.0, %s, false, 1.5, 'PASS_EVAL', true, false, 0, now()
             )""",
             (
                 _json.dumps({"provider": "TopstepX", "category": "PROP_EVAL", "stage": "STAGE_1", "risk_goal": "PASS_EVAL"}),
