@@ -102,8 +102,8 @@ def _build_locked_strategy(asset_id: str) -> str:
         "regime_label": "REGIME_NEUTRAL",
         # Runtime ORB trading parameters for B4/B6
         "default_direction": 0,     # ORB: resolved at Opening Range close
-        "tp_multiple": 0.70,        # TP = 0.70x Opening Range width (2:1 ratio with SL)
-        "sl_multiple": 0.35,        # SL = 0.35x Opening Range width
+        "tp_multiple": 0.90,        # TP = 0.90x Opening Range width (9:1 ratio with SL)
+        "sl_multiple": 0.10,        # SL = 0.10x Opening Range width
         "sl_method": "OR_RANGE",
         "threshold": spec["sl_distance"],  # SL distance in points (B4 Kelly fallback)
         "entry_conditions": {},
@@ -150,24 +150,7 @@ def phase1_update_d00(dry_run: bool = False):
                   f"tick={spec['tick_size']}, margin={spec['margin']}")
             continue
 
-        # Ensure asset exists in D00 before updating (fixes empty-table crash)
-        existing = read_d00_row(asset_id)
-        if existing is None:
-            with get_cursor() as cur:
-                defaults = {col: None for col in D00_COLUMNS}
-                defaults["asset_id"] = asset_id
-                defaults["p1_status"] = "SURVIVED"
-                defaults["p2_status"] = "SURVIVED"
-                cols = D00_COLUMNS + ["last_updated"]
-                placeholders = ", ".join(["%s"] * len(D00_COLUMNS) + ["now()"])
-                col_names = ", ".join(cols)
-                cur.execute(
-                    f"INSERT INTO p3_d00_asset_universe ({col_names}) VALUES ({placeholders})",
-                    tuple(defaults[k] for k in D00_COLUMNS),
-                )
-            print(f"    [NEW] {asset_id}: base row inserted into D00")
-
-        update_d00_fields(asset_id, {
+        updates = {
             "captain_status": "ACTIVE",
             "locked_strategy": locked_strategy,
             "point_value": spec["point_value"],
@@ -178,7 +161,29 @@ def phase1_update_d00(dry_run: bool = False):
             "exchange_timezone": spec["tz"],
             "warm_up_progress": 1.0,
             "data_quality_flag": "CLEAN",
-        })
+        }
+
+        # Use one cursor so INSERT + LATEST-ON see the same session state.
+        # For missing rows, merge defaults with updates into a single INSERT
+        # (avoids WAL eventual-consistency between insert-then-update).
+        with get_cursor() as cur:
+            existing = read_d00_row(asset_id, cur=cur)
+            if existing is None:
+                row = {col: None for col in D00_COLUMNS}
+                row["asset_id"] = asset_id
+                row["p1_status"] = "SURVIVED"
+                row["p2_status"] = "SURVIVED"
+                row.update(updates)
+                cols = D00_COLUMNS + ["last_updated"]
+                placeholders = ", ".join(["%s"] * len(D00_COLUMNS) + ["now()"])
+                col_names = ", ".join(cols)
+                cur.execute(
+                    f"INSERT INTO p3_d00_asset_universe ({col_names}) VALUES ({placeholders})",
+                    tuple(row[k] for k in D00_COLUMNS),
+                )
+                print(f"    [NEW] {asset_id}: row inserted with full spec")
+            else:
+                update_d00_fields(asset_id, updates, cur=cur)
         p2 = P2_STRATEGIES[asset_id]
         print(f"    [OK] {asset_id}: m={p2['m']}, k={p2['k']}, OO={p2['OO']:.4f}, "
               f"pv={spec['point_value']}, margin={spec['margin']}")
@@ -208,11 +213,13 @@ def phase2_update_capital_silo(dry_run: bool = False):
     from shared.questdb_client import get_cursor
     with get_cursor() as cur:
         cur.execute(
-            "SELECT count() FROM p3_d16_user_capital_silos WHERE user_id = %s",
+            "SELECT starting_capital FROM p3_d16_user_capital_silos "
+            "WHERE user_id = %s LATEST ON last_updated PARTITION BY user_id",
             (USER_ID,),
         )
-        if cur.fetchone()[0] > 0:
-            print(f"    [SKIP] {USER_ID}: silo already exists")
+        row = cur.fetchone()
+        if row is not None and row[0] and row[0] > 0:
+            print(f"    [SKIP] {USER_ID}: silo already bootstrapped (capital=${row[0]:,.0f})")
             return
 
     with get_cursor() as cur:

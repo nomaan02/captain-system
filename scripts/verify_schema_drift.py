@@ -79,7 +79,7 @@ def _live_columns(table_name: str):
     try:
         with get_cursor() as cur:
             cur.execute(
-                f"SELECT columnName, columnType FROM table_columns('{table_name}')"
+                f"SELECT \"column\", \"type\" FROM table_columns('{table_name}')"
             )
             rows = cur.fetchall()
         if not rows:
