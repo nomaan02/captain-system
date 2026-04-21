@@ -24,6 +24,24 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, "/app")
 
+ACCOUNT_ID = os.environ.get("BOOTSTRAP_ACCOUNT_ID", "20319811")
+USER_ID = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
+STARTING_CAPITAL = float(os.environ.get("BOOTSTRAP_STARTING_CAPITAL", "150000.0"))
+
+
+def _tsm_limits(capital: float) -> dict:
+    """TopstepX account limits by combine tier."""
+    if capital >= 150000:
+        return dict(profit_target=6000.0, max_drawdown=4500.0, daily_loss=2250.0, max_contracts=15,
+                    name=f"Topstep 150K Trading Combine")
+    elif capital >= 100000:
+        return dict(profit_target=6000.0, max_drawdown=3000.0, daily_loss=2000.0, max_contracts=10,
+                    name=f"Topstep 100K Trading Combine")
+    else:
+        return dict(profit_target=3000.0, max_drawdown=2000.0, daily_loss=1000.0, max_contracts=6,
+                    name=f"Topstep 50K Trading Combine")
+
+
 # Dollar conversion factors: r_mi * or_range * point_value = dollars
 # From shared/signal_replay.py DEFAULT_OR_RANGES and POINT_VALUES
 DOLLAR_FACTOR = {
@@ -130,15 +148,15 @@ def fix_aim_status(dry_run=False):
 
 
 def fix_tsm_daily_loss(dry_run=False):
-    """Set max_daily_loss for TopstepX 150K Trading Combine.
-
-    TopstepX 150K combine rules: max daily loss = $2,250.
-    """
+    """Insert D08 TSM row for the configured account."""
     print("\n  FIX 3: Set TSM max_daily_loss")
     print("  " + "─" * 50)
 
+    limits = _tsm_limits(STARTING_CAPITAL)
+
     if dry_run:
-        print("    [DRY-RUN] Would set max_daily_loss=$2250 for account 20319811")
+        print(f"    [DRY-RUN] Would insert D08 row for account {ACCOUNT_ID} "
+              f"(${STARTING_CAPITAL:,.0f}, daily_loss=${limits['daily_loss']:,.0f})")
         return
 
     import json as _json
@@ -155,17 +173,20 @@ def fix_tsm_daily_loss(dry_run=False):
                 topstep_optimisation, scaling_plan_active, scaling_tier_micros,
                 last_updated
             ) VALUES (
-                '20319811', 'primary_user', 'Topstep 150K Trading Combine', %s,
-                150000.0, 150000.0, 0.0, 0.0,
-                6000.0, 4500.0, 2250.0, 15,
+                %s, %s, %s, %s,
+                %s, %s, 0.0, 0.0,
+                %s, %s, %s, %s,
                 0.0, %s, false, 1.5, 'PASS_EVAL', true, false, 0, now()
             )""",
             (
+                ACCOUNT_ID, USER_ID, limits["name"],
                 _json.dumps({"provider": "TopstepX", "category": "PROP_EVAL", "stage": "STAGE_1", "risk_goal": "PASS_EVAL"}),
+                STARTING_CAPITAL, STARTING_CAPITAL,
+                limits["profit_target"], limits["max_drawdown"], limits["daily_loss"], limits["max_contracts"],
                 _json.dumps([]),
             ),
         )
-    print("    [OK] account 20319811: complete TSM row with max_daily_loss=$2,250")
+    print(f"    [OK] account {ACCOUNT_ID}: TSM row inserted (daily_loss=${limits['daily_loss']:,.0f})")
 
 
 def verify(dry_run=False):
@@ -220,7 +241,8 @@ def verify(dry_run=False):
 
     # Check TSM daily loss
     with get_cursor() as cur:
-        cur.execute("SELECT max_daily_loss FROM p3_d08_tsm_state WHERE account_id = '20319811' ORDER BY last_updated DESC LIMIT 1")
+        cur.execute("SELECT max_daily_loss FROM p3_d08_tsm_state WHERE account_id = %s ORDER BY last_updated DESC LIMIT 1",
+                    (ACCOUNT_ID,))
         row = cur.fetchone()
     mdl = row[0] if row else None
     print(f"    TSM max_daily_loss: ${mdl}")
