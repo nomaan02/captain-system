@@ -94,9 +94,33 @@ and now has been written to QuestDB by `b1_features.py` and is NOT in any
 committed file — the wipe would lose it. Dump the four live-written tables
 to CSV so §6 can restore the delta after the seed chain finishes.
 
+Host-side scripts need `psycopg2` + `redis` and the `.env` loaded into the
+shell. Do this once per session (it also primes §5 / §6):
+
+```fish
+# One-time venv setup (first install only)
+python3 -m venv ~/.venv-captain
+~/.venv-captain/bin/pip install 'psycopg2-binary>=2.9' 'redis>=5.0'
+
+# Per-session env load — .env into fish + point Python at the host QuestDB
+cd ~/captain-system
+for line in (grep -v '^#' .env | grep -v '^\s*$')
+    set -l parts (string split -m 1 = $line)
+    set -x $parts[1] $parts[2]
+end
+set -x QUESTDB_HOST 127.0.0.1
+set -x QUESTDB_PORT 8812
+set -x REDIS_HOST 127.0.0.1
+set -x REDIS_PORT 6379
+set -x PYTHONPATH ~/captain-system
+
+# Sanity — must print "yes"
+test -n "$QUESTDB_PASSWORD"; and echo "QUESTDB_PASSWORD: yes"; or echo "QUESTDB_PASSWORD: NO"
+```
+
 ```fish
 # While QuestDB is still running (before §3 teardown).
-python3 scripts/backup_live_tables.py --backup-root ~/captain-backups
+~/.venv-captain/bin/python3 scripts/backup_live_tables.py --backup-root ~/captain-backups
 ```
 
 Expected output: `[OK] p3_d30_daily_ohlcv: N rows`, same for d29, d33,
@@ -162,27 +186,18 @@ shows the real names).
 
 ## 5. Initialise canonical schema + bootstrap (2 minutes)
 
-Scripts run on the **host**, not inside a container, because the host has
-`psycopg2` and `redis` installed and because captain-command does not mount
-`./scripts`. The container-side path is kept as a fallback only.
+Scripts run on the **host** (via the `~/.venv-captain` created in §1a), not
+inside a container, because captain-command does not mount `./scripts`. If
+you started a fresh fish session since §1a, re-run the env-load block from
+there before continuing.
 
 ```fish
-# Load .env into the current fish session so Python sees the same vars
-for line in (grep -v '^#' .env | grep -v '^\s*$')
-    set -l parts (string split -m 1 = $line)
-    set -x $parts[1] $parts[2]
-end
-set -x QUESTDB_HOST 127.0.0.1
-set -x QUESTDB_PORT 8812
-set -x REDIS_HOST 127.0.0.1
-set -x REDIS_PORT 6379
-set -x PYTHONPATH ~/captain-system
-
-python3 scripts/init_all.py                      # 39 canonical tables + SQLite journals + D17 + test seed
-python3 scripts/bootstrap_production.py          # D00 × 10, D16 silo, D02 × 60, D25 × 1
-python3 scripts/verify_schema_drift.py           # must print "PASS: all 39 canonical tables match"
-python3 scripts/verify_bootstrap.py              # must print "PASS: D00 10 assets, D16 primary_user, D02 60 rows, D25 …"
-python3 scripts/health_smoke_test.py             # must print "PASS: QuestDB reachable, 7 critical tables readable, scratch …"
+set -l py ~/.venv-captain/bin/python3
+$py scripts/init_all.py                          # 39 canonical tables + SQLite journals + D17 + test seed
+$py scripts/bootstrap_production.py              # D00 × 10, D16 silo, D02 × 60, D25 × 1
+$py scripts/verify_schema_drift.py               # must print "PASS: all 39 canonical tables match"
+$py scripts/verify_bootstrap.py                  # must print "PASS: D00 10 assets, D16 primary_user, D02 60 rows, D25 …"
+$py scripts/health_smoke_test.py                 # must print "PASS: QuestDB reachable, 7 critical tables readable, scratch …"
 ```
 
 Any non-PASS output — STOP, investigate, do not proceed to seeding.
@@ -194,14 +209,15 @@ Any non-PASS output — STOP, investigate, do not proceed to seeding.
 Dependency order is fixed per `.seed-audit.md § 6`. Do not re-order.
 
 ```fish
-python3 scripts/seed_all_assets.py               # D00 to 17 assets, D01/D04/D05/D12 from P1/P2
-python3 scripts/seed_ohlcv_from_qc.py            # D30 ≈ 2,829 rows
-python3 scripts/seed_iv_rv_from_extract.py       # D31 = 122 rows (ES only)
-python3 scripts/seed_skew_from_extract.py        # D32 = 81 rows  (ES only)
-python3 scripts/seed_or_volumes_from_qc.py       # D29 = 240 rows
-python3 scripts/seed_opening_vol_from_qc.py      # D33 = 240 rows
-python3 scripts/seed_system_params.py            # D17 = 43 rows
-python3 scripts/roll_calendar_update.py --update # D00 roll_calendar + config/contract_ids.json
+set -l py ~/.venv-captain/bin/python3
+$py scripts/seed_all_assets.py                   # D00 to 17 assets, D01/D04/D05/D12 from P1/P2
+$py scripts/seed_ohlcv_from_qc.py                # D30 ≈ 2,829 rows
+$py scripts/seed_iv_rv_from_extract.py           # D31 = 122 rows (ES only)
+$py scripts/seed_skew_from_extract.py            # D32 = 81 rows  (ES only)
+$py scripts/seed_or_volumes_from_qc.py           # D29 = 240 rows
+$py scripts/seed_opening_vol_from_qc.py          # D33 = 240 rows
+$py scripts/seed_system_params.py                # D17 = 43 rows
+$py scripts/roll_calendar_update.py --update     # D00 roll_calendar + config/contract_ids.json
 ```
 
 Row counts must land within ±5 % of the expected values above.
@@ -216,12 +232,13 @@ naturally collapses duplicates. D29/D30 use the session/trade date as the ts,
 making the restore idempotent under re-runs (DEDUP collapses on the stable key).
 
 ```fish
+set -l py ~/.venv-captain/bin/python3
 # Resolve the most-recent backup dir produced in §1a.
 set -l backup_dir (ls -dt ~/captain-backups/live-tables-* | head -1)
 echo "Restoring delta from: $backup_dir"
 
-python3 scripts/restore_live_delta.py --backup-dir $backup_dir --dry-run
-python3 scripts/restore_live_delta.py --backup-dir $backup_dir
+$py scripts/restore_live_delta.py --backup-dir $backup_dir --dry-run
+$py scripts/restore_live_delta.py --backup-dir $backup_dir
 ```
 
 Dry-run reports rows-that-would-insert per table. Live run prints the same
@@ -231,7 +248,7 @@ was empty (fresh install with no collected data yet).
 ### Verify seeded state
 
 ```fish
-python3 scripts/verify_questdb_state.py          # hard floors for D29/D30/D31/D32/D33
+~/.venv-captain/bin/python3 scripts/verify_questdb_state.py   # hard floors for D29/D30/D31/D32/D33
 ```
 
 Seeding is idempotent for tables with session-date–designated timestamps
