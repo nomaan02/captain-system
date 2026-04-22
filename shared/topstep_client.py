@@ -347,12 +347,38 @@ class TopstepXClient:
         The exchange attaches SL and TP relative to the fill price.
         SL uses Stop (type 4) for guaranteed fill; TP uses Limit (type 1).
         Brackets are OCO — one triggers, the other cancels automatically.
+
+        Callers MUST pass positive magnitudes for ``sl_ticks`` and ``tp_ticks``
+        (i.e. the absolute tick distance between fill and the bracket). The
+        TopstepX engine requires the bracket ticks to be a *signed* offset
+        from the fill price:
+
+        - BUY (long):  SL is below fill -> negative; TP is above -> positive
+        - SELL (short): SL is above fill -> positive; TP is below -> negative
+
+        Sending the wrong sign returns ``errorCode 2``: "Invalid stop loss
+        ticks (N). Ticks should be less than zero when longing." (and the
+        symmetric case for shorting). This method handles the sign so all
+        callers can keep working with positive magnitudes.
         """
+        sl_mag = abs(int(sl_ticks))
+        tp_mag = abs(int(tp_ticks))
+        if side == OrderSide.BUY:
+            sl_signed = -sl_mag
+            tp_signed = tp_mag
+        elif side == OrderSide.SELL:
+            sl_signed = sl_mag
+            tp_signed = -tp_mag
+        else:
+            raise ValueError(
+                f"place_bracket_order: invalid side={side}; "
+                f"expected {OrderSide.BUY} (BUY) or {OrderSide.SELL} (SELL)"
+            )
         return self.place_order(
             account_id, contract_id,
             OrderType.MARKET, side, size,
-            stop_loss_bracket={"ticks": int(sl_ticks), "type": OrderType.STOP},
-            take_profit_bracket={"ticks": int(tp_ticks), "type": OrderType.LIMIT},
+            stop_loss_bracket={"ticks": sl_signed, "type": OrderType.STOP},
+            take_profit_bracket={"ticks": tp_signed, "type": OrderType.LIMIT},
         )
 
     def modify_order(self, account_id: int, order_id: int,
