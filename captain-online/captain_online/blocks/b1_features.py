@@ -492,9 +492,17 @@ def compute_robust_kelly(return_bounds: tuple[float, float], standard_kelly: flo
 
 
 def get_or_window_minutes(locked_strategy: dict) -> int:
-    """OR formation window in minutes from strategy params."""
+    """OR formation window in minutes from strategy params.
+
+    Default is 5 to align with `config/session_registry.json` and the bootstrap
+    in `scripts/bootstrap_opening_volumes.py` (S1-RESOLUTION-LOG, 2026-04-22).
+    Historically this defaulted to 15, which caused `_get_historical_or_range`
+    to query an empty `or_minutes=15` bucket while the actual data was stored
+    at `or_minutes=5`, forcing `resolve_sizing_sl` to fall back to
+    `DEFAULT_SL_POINTS`.
+    """
     strategy_params = locked_strategy.get("strategy_params", {})
-    return strategy_params.get("OR_window_minutes", 15)
+    return strategy_params.get("OR_window_minutes", 5)
 
 
 # ===========================================================================
@@ -1250,6 +1258,14 @@ def _get_historical_or_range(asset_id: str, minutes: int, lookback: int = 20) ->
     `lookback` rows matching `(asset_id, or_minutes=minutes)`. Returns the average
     of non-null values, or None if fewer than 5 historical rows have non-null range.
 
+    Tolerant fallback (S1-RESOLUTION-LOG, 2026-04-22): if the requested `minutes`
+    bucket has fewer than 5 non-null rows for the asset, the helper looks across
+    all `or_minutes` buckets for that asset and reuses the bucket with the most
+    non-null rows. This protects against the historical mismatch where
+    `bootstrap_opening_volumes.py` defaulted to `or_minutes=5` while
+    `get_or_window_minutes` defaulted to 15 — both have since been aligned to 5,
+    but the tolerance keeps replays of older data working without a re-bootstrap.
+
     Used by `shared.sizing_helpers.resolve_sizing_sl` (Phase 2) so that B4 sizing can
     derive an expected SL distance before today's OR closes (Phase A) — the live
     `or_range` from the OR tracker is only available in Phase B.
@@ -1257,22 +1273,48 @@ def _get_historical_or_range(asset_id: str, minutes: int, lookback: int = 20) ->
     Mirror of `_get_historical_volume_first_N_min` above.
     """
     from shared.questdb_client import get_cursor
+
+    def _fetch(cur, mins: int) -> list[float]:
+        cur.execute(
+            """SELECT or_range_first_m_min FROM p3_d29_opening_volumes
+               WHERE asset_id = %s AND or_minutes = %s
+               ORDER BY ts DESC LIMIT %s""",
+            (asset_id, int(mins), lookback),
+        )
+        return [float(r[0]) for r in cur.fetchall() if r[0] is not None and r[0] > 0]
+
     try:
         with get_cursor() as cur:
+            ranges = _fetch(cur, minutes)
+            if len(ranges) >= 5:
+                return sum(ranges) / len(ranges)
+
             cur.execute(
-                """SELECT or_range_first_m_min FROM p3_d29_opening_volumes
-                   WHERE asset_id = %s AND or_minutes = %s
-                   ORDER BY ts DESC LIMIT %s""",
-                (asset_id, int(minutes), lookback),
+                """SELECT or_minutes, count(or_range_first_m_min) AS n
+                   FROM p3_d29_opening_volumes
+                   WHERE asset_id = %s AND or_range_first_m_min IS NOT NULL
+                   GROUP BY or_minutes
+                   ORDER BY n DESC LIMIT 1""",
+                (asset_id,),
             )
-            rows = cur.fetchall()
-        if not rows:
-            return None
-        ranges = [float(r[0]) for r in rows if r[0] is not None and r[0] > 0]
-        if len(ranges) < 5:
-            return None
-        return sum(ranges) / len(ranges)
-    except Exception:
+            row = cur.fetchone()
+            if not row or row[0] is None or int(row[1]) < 5:
+                return None
+            fallback_minutes = int(row[0])
+            if fallback_minutes == int(minutes):
+                return None
+            ranges = _fetch(cur, fallback_minutes)
+            if len(ranges) < 5:
+                return None
+            logger.warning(
+                "[_get_historical_or_range] %s: requested or_minutes=%d had %d non-null rows; "
+                "falling back to or_minutes=%d (%d rows). Avg=%.4f",
+                asset_id, int(minutes), len(ranges), fallback_minutes, len(ranges),
+                sum(ranges) / len(ranges),
+            )
+            return sum(ranges) / len(ranges)
+    except Exception as e:
+        logger.debug("[_get_historical_or_range] %s minutes=%d failed: %s", asset_id, minutes, e)
         return None
 
 
