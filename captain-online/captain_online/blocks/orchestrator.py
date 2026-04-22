@@ -628,6 +628,7 @@ class OnlineOrchestrator:
                 proposed_contracts=trades["final_contracts"],
                 locked_strategies=data["locked_strategies"],
                 assets_detail=data["assets_detail"],
+                open_positions=self.open_positions,
             )
 
             rec_count = len(cb_result["recommended_trades"])

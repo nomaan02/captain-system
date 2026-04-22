@@ -278,6 +278,9 @@ def run_phase_a(session_id: int) -> dict | None:
         tsm_configs=b1["tsm_configs"],
         session_id=session_id,
         proposed_contracts=b5["final_contracts"],
+        locked_strategies=b1.get("locked_strategies"),
+        assets_detail=b1.get("assets_detail"),
+        open_positions=[],  # No live positions in replay
     )
 
     logger.info("B5C: %d trades pass circuit breaker", len(b5c.get("recommended_trades", [])))

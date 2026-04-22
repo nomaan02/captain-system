@@ -138,9 +138,9 @@ class TestL0ScalingCap:
         tsm = {
             "scaling_plan_active": True,
             "scaling_tier_micros": 30,
-            "current_open_micros": 25,
         }
-        reason = _layer0_scaling_cap(tsm, proposed_contracts=10)
+        open_positions = [{"account": "xfa_1", "contracts": 25}]
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=open_positions, ac_id="xfa_1")
         assert reason is not None
         assert "L0" in reason
         assert "scaling cap" in reason
@@ -149,9 +149,9 @@ class TestL0ScalingCap:
         tsm = {
             "scaling_plan_active": True,
             "scaling_tier_micros": 30,
-            "current_open_micros": 10,
         }
-        reason = _layer0_scaling_cap(tsm, proposed_contracts=10)
+        open_positions = [{"account": "xfa_1", "contracts": 10}]
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=open_positions, ac_id="xfa_1")
         assert reason is None
 
     def test_live_account_skips_scaling(self):
@@ -159,6 +159,118 @@ class TestL0ScalingCap:
         tsm = {"scaling_plan_active": False}
         reason = _layer0_scaling_cap(tsm, proposed_contracts=100)
         assert reason is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (F-09): Layer 0 via open_positions kwarg
+# ---------------------------------------------------------------------------
+
+class TestL0ScalingCapViaOpenPositions:
+    """Layer 0 uses open_positions list, not tsm.current_open_micros."""
+
+    def test_blocks_when_open_positions_exceed_tier(self):
+        """Positions for ac_id=A1 total 25; proposed 10 -> 35 > tier 30 -> BLOCKED."""
+        tsm = {"scaling_plan_active": True, "scaling_tier_micros": 30}
+        open_positions = [
+            {"account": "A1", "contracts": 15},
+            {"account": "A1", "contracts": 10},
+            {"account": "A2", "contracts": 100},  # Different account — must NOT count
+        ]
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=open_positions, ac_id="A1")
+        assert reason is not None
+        assert "L0" in reason
+
+    def test_only_counts_matching_account(self):
+        """Other accounts' positions do not count toward this account's cap."""
+        tsm = {"scaling_plan_active": True, "scaling_tier_micros": 30}
+        open_positions = [{"account": "OTHER", "contracts": 999}]
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=open_positions, ac_id="A1")
+        assert reason is None  # 0 + 10 <= 30
+
+    def test_empty_positions_passes(self):
+        """No open positions -> 0 open micros -> not blocked (below tier)."""
+        tsm = {"scaling_plan_active": True, "scaling_tier_micros": 30}
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=[], ac_id="A1")
+        assert reason is None
+
+    def test_none_positions_passes(self):
+        """open_positions=None treated as empty list."""
+        tsm = {"scaling_plan_active": True, "scaling_tier_micros": 30}
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=10, open_positions=None, ac_id="A1")
+        assert reason is None
+
+    def test_live_account_not_blocked_by_open_positions(self):
+        """Eval/Live accounts (scaling_plan_active=False) skip L0 entirely."""
+        tsm = {"scaling_plan_active": False}
+        open_positions = [{"account": "A1", "contracts": 100}]
+        reason = _layer0_scaling_cap(tsm, proposed_contracts=100, open_positions=open_positions, ac_id="A1")
+        assert reason is None
+
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=lambda accounts, model_m=None: {ac: {"beta_b": 0.0, "r_bar": 50.0, "sigma": 100.0, "rho_bar": 0.0, "n_observations": 200, "p_value": 0.5} for ac in accounts})
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=lambda accounts: {ac: {"l_t": 0.0, "n_t": 0, "l_b": {}, "n_b": {}} for ac in accounts})
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
+    def test_run_circuit_breaker_screen_blocks_via_open_positions(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
+        """Integration: run_circuit_breaker_screen respects open_positions for L0."""
+        tsm = make_tsm_configs(
+            ["xfa_acc"],
+            current_balance=150_000.0,
+            topstep_optimisation=True,
+            scaling_plan_active=True,
+            scaling_tier_micros=30,
+            topstep_params=json.dumps({"p": 0.005, "e": 0.01, "c": 0.5, "lambda": 0}),
+        )
+        open_positions = [{"account": "xfa_acc", "contracts": 25}]
+        result = run_circuit_breaker_screen(
+            recommended_trades=["MNQ"],
+            final_contracts={"MNQ": {"xfa_acc": 10}},
+            account_recommendation={"MNQ": {"xfa_acc": "TRADE"}},
+            account_skip_reason={"MNQ": {"xfa_acc": None}},
+            accounts=["xfa_acc"],
+            tsm_configs=tsm,
+            session_id=1,
+            open_positions=open_positions,
+        )
+        # 25 open + 10 proposed = 35 > tier cap 30 -> BLOCKED
+        assert "MNQ" not in result["recommended_trades"]
+        assert result["account_recommendation"]["MNQ"]["xfa_acc"] == "BLOCKED"
+
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=lambda accounts, model_m=None: {ac: {"beta_b": 0.0, "r_bar": 50.0, "sigma": 100.0, "rho_bar": 0.0, "n_observations": 200, "p_value": 0.5} for ac in accounts})
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=lambda accounts: {ac: {"l_t": 0.0, "n_t": 0, "l_b": {}, "n_b": {}} for ac in accounts})
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
+    def test_eval_account_not_blocked_by_open_positions(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
+        """Integration (plan check): Eval account 20319784 (scaling_plan_active=False) unaffected by L0.
+
+        Uses tiny sl_distance/point_value (rho_j ≈ 0.5) so L1/L2 don't trigger,
+        leaving L0 as the only candidate blocker — which must skip for eval accounts.
+        """
+        tsm = make_tsm_configs(
+            ["20319784"],
+            current_balance=150_000.0,
+            topstep_optimisation=True,
+            topstep_params=json.dumps({"p": 0.005, "e": 0.01, "c": 0.5, "lambda": 0}),
+        )
+        # No scaling_plan_active=True -> L0 always skips regardless of open positions
+        open_positions = [{"account": "20319784", "contracts": 999}]
+        result = run_circuit_breaker_screen(
+            recommended_trades=["MNQ"],
+            final_contracts={"MNQ": {"20319784": 5}},
+            account_recommendation={"MNQ": {"20319784": "TRADE"}},
+            account_skip_reason={"MNQ": {"20319784": None}},
+            accounts=["20319784"],
+            tsm_configs=tsm,
+            session_id=1,
+            open_positions=open_positions,
+            sl_distance=0.1,   # tiny rho_j (~0.5) so L1/L2 don't fire
+            point_value=1.0,
+        )
+        # Eval account skips L0 -> all other layers pass with clean intraday state
+        assert "MNQ" in result["recommended_trades"]
 
 
 # ---------------------------------------------------------------------------

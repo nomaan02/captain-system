@@ -61,6 +61,7 @@ def run_circuit_breaker_screen(
     model_m: str | None = None,
     locked_strategies: dict | None = None,
     assets_detail: dict | None = None,
+    open_positions: list | None = None,
 ) -> dict:
     """P3-PG-27B: 7-layer circuit breaker screen (spec Layers 0-4 + safety L5/L6).
 
@@ -82,6 +83,9 @@ def run_circuit_breaker_screen(
         model_m: Model identifier (basket) for per-model CB param lookup.
         locked_strategies: {asset_id: strategy_dict} for per-asset SL resolution.
         assets_detail: {asset_id: detail_dict} for per-asset point_value resolution.
+        open_positions: Live open position snapshot from orchestrator. List of dicts with
+            "account" and "contracts" keys. Used by Layer 0 to compute current open micros
+            per account. Pass [] in replay (no live positions). Defaults to None (treated as []).
 
     Returns:
         dict with updated recommended_trades, final_contracts, account_recommendation,
@@ -142,6 +146,7 @@ def run_circuit_breaker_screen(
                 point_value=asset_pv,
                 fee_per_trade=ac_fee,
                 model_m=model_m,
+                open_positions=open_positions,
             )
 
             if block_result:
@@ -184,6 +189,7 @@ def _check_all_layers(
     point_value: float = 50.0,
     fee_per_trade: float = 0.0,
     model_m: str | None = None,
+    open_positions: list | None = None,
 ) -> str | None:
     """Check all 7 CB layers (L0-L6). Returns block reason string or None if OK.
 
@@ -195,7 +201,7 @@ def _check_all_layers(
         intraday = {}
 
     # Layer 0: Scaling cap (XFA only — Live accounts skip)
-    reason = _layer0_scaling_cap(tsm, contracts)
+    reason = _layer0_scaling_cap(tsm, contracts, open_positions=open_positions, ac_id=ac_id)
     if reason:
         return reason
 
@@ -239,7 +245,7 @@ def _check_all_layers(
 # Layer implementations
 # ---------------------------------------------------------------------------
 
-def _layer0_scaling_cap(tsm: dict, proposed_contracts: int) -> str | None:
+def _layer0_scaling_cap(tsm: dict, proposed_contracts: int, open_positions: list | None = None, ac_id: str = "") -> str | None:
     """Layer 0: Simultaneous open position limit (XFA only).
 
     XFA accounts have a scaling plan that limits max contracts held open
@@ -254,7 +260,13 @@ def _layer0_scaling_cap(tsm: dict, proposed_contracts: int) -> str | None:
     if scaling_tier_micros <= 0:
         return None  # No cap configured
 
-    current_open_micros = tsm.get("current_open_micros", 0)
+    # Derive current open contracts from live position snapshot (passed by orchestrator).
+    # Only count positions for this account — do NOT sum across accounts.
+    current_open_micros = sum(
+        p.get("contracts", 0)
+        for p in (open_positions or [])
+        if p.get("account") == ac_id
+    )
     proposed_micros = proposed_contracts  # Already in micro-equivalent units
 
     if current_open_micros + proposed_micros > scaling_tier_micros:
