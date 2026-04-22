@@ -97,10 +97,23 @@ def _binary_regime(asset_id: str, features: dict, model: dict) -> Optional[dict]
 
     Per spec: sigma_today = compute_realised_vol(features[u])
     phi = classifier.pettersson_threshold (stored in P2-D07)
+
+    REGIME_NEUTRAL assets (P2 locked NEUTRAL — all 11 V1 assets) have no trained classifier
+    and no pettersson_threshold by design. They return 50/50 silently so the outer
+    run_regime_probability still marks regime_uncertain=True, keeping Robust Kelly Layer 4
+    active per spec (Isaac Q6 = b, P2_MULTI_ASSET_RESULTS_SUMMARY.md lines 50-62).
     """
+    if model.get("regime_label") == "REGIME_NEUTRAL":
+        # By design (P2 locked NEUTRAL): no classifier, no threshold.
+        # Return 50/50 silently — outer caller still flags regime_uncertain=True
+        # which keeps Robust Kelly Layer 4 active per spec.
+        return {"HIGH_VOL": 0.5, "LOW_VOL": 0.5}
+
     phi = model.get("pettersson_threshold")
     if phi is None:
-        logger.warning("ON-B2: No pettersson_threshold for %s", asset_id)
+        # Only reaches here for non-NEUTRAL assets — indicates a P2-D06 seed mismatch.
+        logger.error("ON-B2: No pettersson_threshold for %s (regime_label=%s) — P2-D06 seed mismatch",
+                     asset_id, model.get("regime_label"))
         return None
 
     # sigma_t from realised vol (P2-D01 EWMA-based)
