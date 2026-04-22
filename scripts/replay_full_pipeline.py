@@ -67,7 +67,7 @@ SESSION_CONFIG = {
 }
 
 # Session asset groups
-NY_ASSETS = ["ES", "MES", "NQ", "MNQ", "M2K", "MYM", "ZB", "ZN"]
+NY_ASSETS = ["ES", "MES", "NQ", "MNQ", "M2K", "MYM"]
 LON_ASSETS = ["MGC"]
 
 # Contract ID mapping

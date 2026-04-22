@@ -67,7 +67,7 @@ LOCKED_STRATEGY_OPTIONAL = {"regime_class", "regime_method", "tp_multiple", "sl_
                             "accuracy_OOS", "confidence_flag", "source"}
 
 # Valid enum values
-VALID_CAPTAIN_STATUS = {"ACTIVE", "WARM_UP", "DECAYED", "HALTED", "PAUSED"}
+VALID_CAPTAIN_STATUS = {"ACTIVE", "WARM_UP", "DECAYED", "HALTED", "PAUSED", "INACTIVE"}
 VALID_AIM_STATUS = {"INSTALLED", "BOOTSTRAPPED", "ACTIVE", "COLLECTING",
                     "TRAINED", "WARMUP", "DECAY_L1", "DECAY_L2", "DECAY_L3"}
 ELIMINATED_STATUS = {"P1_ELIMINATED", "P2_ELIMINATED"}

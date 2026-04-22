@@ -111,7 +111,7 @@ def main():
     logger.info("-" * 70)
     logger.info("4. Resolving contract IDs for tradeable assets...")
     from shared.contract_resolver import resolve_contract_id
-    test_assets = ["MNQ", "MYM", "MES", "M2K", "NQ", "ES", "ZB", "ZN"]
+    test_assets = ["MNQ", "MYM", "MES", "M2K", "NQ", "ES"]
     for asset in test_assets:
         cid = resolve_contract_id(asset)
         if cid:

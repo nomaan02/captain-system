@@ -46,7 +46,6 @@ ASSET_SESSION_MAP = {
     "M2K": "NY", "MYM": "NY",
     "NKD": "APAC",
     "MGC": "LON",
-    "ZB": "NY_PRE", "ZN": "NY_PRE",
 }
 
 ACTIVE_ASSETS = list(ASSET_SESSION_MAP.keys())
