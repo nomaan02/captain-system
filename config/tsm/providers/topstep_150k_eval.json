@@ -1,4 +1,9 @@
 {
+    "_notes": {
+        "pass_probability": "Intentionally absent. No historical pass-rate data exists for this account yet. B4 _apply_risk_goal falls back to the conservative 0.85 Kelly multiplier for PASS_EVAL accounts without a computed probability. Once Pseudotrader accumulates ≥30 sessions of data, a rolling pass probability should be seeded here (see plan: post-Phase-8 + 30 days). Do NOT hardcode 0.5 — that would over-conserve before data exists.",
+        "evaluation_end_date": "Intentionally null. Topstep 150K Combine STAGE_1 has time_limit_days=null (no fixed deadline per Topstep rules as of 2026-04). B4 _compute_tsm_cap falls back to tsm_budget_divisor_default (20 days) when evaluation_end_date is absent. This spreads the remaining MDD budget over a conservative 20-session window, which is appropriate for an open-ended combine.",
+        "max_daily_loss": "Intentionally absent. The Topstep 150K Combine does not impose a separate daily loss limit (MLL) — only the trailing max drawdown limit of $4,500 applies. Setting a false max_daily_loss would incorrectly cap daily contract counts via the MLL gate in _compute_tsm_cap. B4 correctly uses max_by_mll=999 (no limit) when this field is absent."
+    },
     "name": "Topstep 150K Trading Combine",
     "classification": {
         "provider": "TopstepX",

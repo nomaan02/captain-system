@@ -301,6 +301,13 @@ def _apply_risk_goal(kelly: float, risk_goal: str, tsm: dict) -> float:
             return kelly * 0.5
         elif pass_prob is not None and pass_prob < 0.7:
             return kelly * 0.7
+        if pass_prob is None:
+            logger.info(
+                "ON-B4: pass_probability absent for account %s (PASS_EVAL) — "
+                "using default 0.85 Kelly multiplier; seed pass_probability once "
+                "≥30 Pseudotrader sessions exist",
+                tsm.get("account_id", "unknown"),
+            )
         return kelly * 0.85
     elif risk_goal == "PRESERVE_CAPITAL":
         return kelly * 0.5
@@ -330,6 +337,13 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
                 budget_divisor = remaining_days
             except (ValueError, TypeError):
                 pass
+        else:
+            logger.info(
+                "ON-B4: evaluation_end_date absent for account %s — "
+                "using default budget_divisor=%d (open-ended combine; no fixed deadline)",
+                tsm.get("account_id", "unknown"),
+                budget_divisor,
+            )
 
         daily_budget = remaining_mdd / budget_divisor if budget_divisor > 0 else 0
         risk_per_contract = strategy_sl * point_value
@@ -342,6 +356,12 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
             max_by_mll = math.floor(remaining_mll / risk_per_contract)
         else:
             max_by_mll = 999
+            if not max_daily_loss:
+                logger.info(
+                    "ON-B4: max_daily_loss absent for account %s — "
+                    "max_by_mll=999 (no MLL on this combine; MDD-only risk limit applies)",
+                    tsm.get("account_id", "unknown"),
+                )
 
         max_contracts = tsm.get("max_contracts") or 999
 
