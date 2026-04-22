@@ -1275,13 +1275,21 @@ def _get_historical_or_range(asset_id: str, minutes: int, lookback: int = 20) ->
     from shared.questdb_client import get_cursor
 
     def _fetch(cur, mins: int) -> list[float]:
+        # Filter NULL / non-positive rows in SQL so LIMIT counts toward the
+        # most-recent N *non-null* rows rather than the most-recent N rows
+        # overall. Without this, sparsely-populated buckets (e.g. bootstrap
+        # rows with NULL or_range mixed with post-OR-close writes that have
+        # it) were dropping the in-Python list below the >=5 floor even when
+        # the bucket had 15+ non-null rows in total.
         cur.execute(
             """SELECT or_range_first_m_min FROM p3_d29_opening_volumes
                WHERE asset_id = %s AND or_minutes = %s
+                 AND or_range_first_m_min IS NOT NULL
+                 AND or_range_first_m_min > 0
                ORDER BY ts DESC LIMIT %s""",
             (asset_id, int(mins), lookback),
         )
-        return [float(r[0]) for r in cur.fetchall() if r[0] is not None and r[0] > 0]
+        return [float(r[0]) for r in cur.fetchall()]
 
     try:
         with get_cursor() as cur:
@@ -1290,9 +1298,11 @@ def _get_historical_or_range(asset_id: str, minutes: int, lookback: int = 20) ->
                 return sum(ranges) / len(ranges)
 
             cur.execute(
-                """SELECT or_minutes, count(or_range_first_m_min) AS n
+                """SELECT or_minutes, count(*) AS n
                    FROM p3_d29_opening_volumes
-                   WHERE asset_id = %s AND or_range_first_m_min IS NOT NULL
+                   WHERE asset_id = %s
+                     AND or_range_first_m_min IS NOT NULL
+                     AND or_range_first_m_min > 0
                    GROUP BY or_minutes
                    ORDER BY n DESC LIMIT 1""",
                 (asset_id,),
