@@ -328,8 +328,13 @@ class TopstepXClient:
     def modify_order(self, account_id: int, order_id: int,
                      size: int | None = None,
                      limit_price: float | None = None,
-                     stop_price: float | None = None) -> dict:
-        """Modify an existing order."""
+                     stop_price: float | None = None,
+                     trail_price: float | None = None) -> dict:
+        """Modify an existing order.
+
+        Per ProjectX spec, all of size/limitPrice/stopPrice/trailPrice are
+        Optional — at least one should be provided in practice.
+        """
         payload: dict[str, Any] = {
             "accountId": account_id,
             "orderId": order_id,
@@ -340,6 +345,8 @@ class TopstepXClient:
             payload["limitPrice"] = limit_price
         if stop_price is not None:
             payload["stopPrice"] = stop_price
+        if trail_price is not None:
+            payload["trailPrice"] = trail_price
         return self._post("/Order/modify", payload)
 
     def cancel_order(self, account_id: int, order_id: int) -> dict:
@@ -350,15 +357,15 @@ class TopstepXClient:
     def search_orders(self, account_id: int,
                       start_timestamp: str | None = None,
                       end_timestamp: str | None = None) -> list[dict]:
-        """Search orders by time range (startTimestamp required by API)."""
-        payload: dict[str, Any] = {"accountId": account_id}
-        if start_timestamp:
-            payload["startTimestamp"] = start_timestamp
-        else:
-            # Default to last 24 hours
-            from datetime import timedelta
-            dt = datetime.now(timezone.utc) - timedelta(hours=24)
-            payload["startTimestamp"] = dt.isoformat()
+        """Search orders by time range.
+
+        Per ProjectX spec, startTimestamp is REQUIRED. Defaults to last 24h
+        if caller omits it.
+        """
+        payload: dict[str, Any] = {
+            "accountId": account_id,
+            "startTimestamp": start_timestamp or self._default_start_timestamp(),
+        }
         if end_timestamp:
             payload["endTimestamp"] = end_timestamp
         resp = self._post("/Order/search", payload)
@@ -377,12 +384,26 @@ class TopstepXClient:
         return resp.get("positions", [])
 
     def close_position(self, account_id: int, contract_id: str,
-                       size: int) -> dict:
-        """Close a position."""
-        return self._post("/Position/close", {
+                       size: int | None = None) -> dict:
+        """Close (or partially close) a position.
+
+        Per ProjectX spec there are TWO endpoints:
+        - /Position/closeContract        — full close, payload {accountId, contractId}
+        - /Position/partialCloseContract — partial, payload {accountId, contractId, size}
+
+        If `size` is None, performs a full close. Otherwise partial.
+        The previous /Position/close endpoint does not exist; calls to it
+        404'd silently and let naked positions linger.
+        """
+        if size is None:
+            return self._post("/Position/closeContract", {
+                "accountId": account_id,
+                "contractId": contract_id,
+            })
+        return self._post("/Position/partialCloseContract", {
             "accountId": account_id,
             "contractId": contract_id,
-            "size": size,
+            "size": int(size),
         })
 
     # -- Trades -------------------------------------------------------------
@@ -390,14 +411,26 @@ class TopstepXClient:
     def search_trades(self, account_id: int,
                       start_timestamp: str | None = None,
                       end_timestamp: str | None = None) -> list[dict]:
-        """Get trade history for an account."""
-        payload: dict[str, Any] = {"accountId": account_id}
-        if start_timestamp:
-            payload["startTimestamp"] = start_timestamp
+        """Get trade history for an account.
+
+        Per ProjectX spec, startTimestamp is REQUIRED. Defaults to last 24h
+        if caller omits it (matches search_orders convention).
+        """
+        payload: dict[str, Any] = {
+            "accountId": account_id,
+            "startTimestamp": start_timestamp or self._default_start_timestamp(),
+        }
         if end_timestamp:
             payload["endTimestamp"] = end_timestamp
         resp = self._post("/Trade/search", payload)
         return resp.get("trades", [])
+
+    @staticmethod
+    def _default_start_timestamp() -> str:
+        """ISO datetime 24 hours ago — used as fallback startTimestamp."""
+        from datetime import timedelta
+        dt = datetime.now(timezone.utc) - timedelta(hours=24)
+        return dt.isoformat()
 
     # -- Internal -----------------------------------------------------------
 
