@@ -458,7 +458,8 @@ def _get_live_price(asset_id: str) -> float | None:
             now.isoformat(),
         )
         if bars:
-            return float(bars[-1]["close"])
+            close = bars[-1].get("c") if bars[-1].get("c") is not None else bars[-1].get("close")
+            return float(close) if close is not None else None
     except Exception as exc:
         logger.warning("_get_live_price REST fallback for %s: %s", asset_id, exc)
     return None

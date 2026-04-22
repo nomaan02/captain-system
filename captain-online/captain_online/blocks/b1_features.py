@@ -1109,7 +1109,12 @@ def _get_daily_closes(asset_id: str, lookback: int = 280) -> Optional[list[float
         end = (today - timedelta(days=1)).isoformat()
         bars = client.get_bars(contract_id, 4, 1, start, end)
         if bars:
-            return [float(b["close"]) for b in bars[-lookback:]]
+            out = []
+            for b in bars[-lookback:]:
+                c = b.get("c") if b.get("c") is not None else b.get("close")
+                if c is not None:
+                    out.append(float(c))
+            return out
     except TopstepXClientError:
         pass
     return closes  # return DB data even if shorter than requested
@@ -1448,7 +1453,13 @@ def _get_recent_5min_vol(asset_id: str) -> Optional[float]:
         )
         if not bars or len(bars) < 3:
             return None
-        closes = [float(b["close"]) for b in bars]
+        closes = []
+        for b in bars:
+            c = b.get("c") if b.get("c") is not None else b.get("close")
+            if c is not None:
+                closes.append(float(c))
+        if len(closes) < 3:
+            return None
         returns = []
         for i in range(1, len(closes)):
             if closes[i - 1] > 0:
