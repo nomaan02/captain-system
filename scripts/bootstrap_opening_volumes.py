@@ -18,7 +18,7 @@ import sys
 import os
 import json
 import logging
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -101,9 +101,9 @@ def bootstrap_opening_volumes():
         print("  [WARN] No active assets found in D00.")
         return False
 
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     start_date = (today - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    end_date = (today - timedelta(days=1)).isoformat()
+    end_date = today.isoformat()
 
     total_inserted = 0
 

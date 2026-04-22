@@ -183,9 +183,17 @@ class TopstepXClient:
 
     # -- Contracts ----------------------------------------------------------
 
-    def search_contracts(self, search_text: str = "ES") -> list[dict]:
-        """Search available contracts."""
-        resp = self._post("/Contract/search", {"searchText": search_text})
+    def search_contracts(self, search_text: str = "ES",
+                         live: bool | None = None) -> list[dict]:
+        """Search available contracts.
+
+        Per ProjectX Gateway API spec, `live` is REQUIRED. Defaults to True
+        when TRADING_ENVIRONMENT=LIVE, else False.
+        """
+        resp = self._post("/Contract/search", {
+            "searchText": search_text,
+            "live": self._resolve_live_flag(live),
+        })
         return resp.get("contracts", [])
 
     def get_contract_by_id(self, contract_id: str) -> dict | None:
@@ -197,20 +205,51 @@ class TopstepXClient:
     # -- Historical Bars ----------------------------------------------------
 
     def get_bars(self, contract_id: str, bar_unit: int, bar_unit_number: int,
-                 start_date: str, end_date: str) -> list[dict]:
-        """Fetch historical OHLCV bars.
+                 start_date: str, end_date: str,
+                 limit: int = 20000,
+                 include_partial_bar: bool = False,
+                 live: bool | None = None) -> list[dict]:
+        """Fetch historical OHLCV bars via /History/retrieveBars.
 
-        bar_unit: 1=Tick, 2=Minute, 3=Hour, 4=Day, 5=Week, 6=Month
-        Dates as ISO8601 strings.
+        bar_unit: 1=Second, 2=Minute, 3=Hour, 4=Day, 5=Week, 6=Month
+        start_date / end_date: ISO8601 (date-only accepted; normalised to
+            midnight UTC). Per ProjectX spec these map to startTime/endTime.
+        limit: max bars to retrieve (spec cap is 20000).
+        include_partial_bar: include the in-progress current bar.
+        live: True for LIVE data, False for sim. Defaults from
+            TRADING_ENVIRONMENT env var.
         """
-        resp = self._post("/History/bars", {
+        resp = self._post("/History/retrieveBars", {
             "contractId": contract_id,
-            "barUnit": bar_unit,
-            "barUnitNumber": bar_unit_number,
-            "startDate": start_date,
-            "endDate": end_date,
+            "live": self._resolve_live_flag(live),
+            "startTime": self._normalise_iso_datetime(start_date),
+            "endTime": self._normalise_iso_datetime(end_date),
+            "unit": bar_unit,
+            "unitNumber": bar_unit_number,
+            "limit": limit,
+            "includePartialBar": include_partial_bar,
         })
         return resp.get("bars", [])
+
+    def _resolve_live_flag(self, live: bool | None) -> bool:
+        """Return True for LIVE env, False for sim, unless caller overrides."""
+        if live is not None:
+            return live
+        return (self._environment or "").upper() == "LIVE"
+
+    @staticmethod
+    def _normalise_iso_datetime(value: str) -> str:
+        """Accept date or datetime; return ISO datetime suitable for the API.
+
+        ProjectX `/History/retrieveBars` requires `startTime`/`endTime` as
+        ISO8601 datetimes. If the caller passes just `YYYY-MM-DD`, append
+        `T00:00:00Z` so ASP.NET model binding accepts it.
+        """
+        if not value:
+            return value
+        if "T" in value:
+            return value
+        return f"{value}T00:00:00Z"
 
     # -- Orders -------------------------------------------------------------
 
