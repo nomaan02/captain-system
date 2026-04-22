@@ -269,23 +269,37 @@ def _layer0_scaling_cap(tsm: dict, proposed_contracts: int) -> str | None:
 def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: float) -> str | None:
     """Layer 1: Preemptive hard halt (account survival).
 
-    Formula: abs(L_t) + rho_j >= c * e * A
+    Formula: abs(L_t) + rho_j >= L_halt
     Where rho_j = contracts * (SL_distance * point_value + fee).
+
+    L_halt is SOD-frozen from p3_d08_tsm_state.topstep_state.computed_sod.L_halt,
+    set by b8_reconciliation._compute_sod_topstep_params at session start.
+    Fallback to live c * e * A only on cold start (SOD not yet run).
 
     This is PREEMPTIVE: blocks trades whose worst-case SL outcome would breach
     the halt threshold, not just trades where L_t has already breached it.
     When H = 0, all trading stops. No exceptions.
     """
-    topstep_params = parse_json(tsm.get("topstep_params"), {})
-
-    c = topstep_params.get("c", 0.5)    # Hard halt fraction
-    e = topstep_params.get("e", 0.01)   # Daily exposure fraction
     A = tsm.get("current_balance", 0)
 
     if A <= 0:
         return None  # Cannot compute — skip (safety layers still apply)
 
-    l_halt = c * e * A
+    # Prefer SOD-locked L_halt (frozen at reconciliation time)
+    topstep_state = parse_json(tsm.get("topstep_state"), {})
+    computed_sod = topstep_state.get("computed_sod", {})
+    l_halt = computed_sod.get("L_halt")
+    if l_halt is None or l_halt <= 0:
+        # Fallback: SOD hasn't run yet (cold start, day-1)
+        topstep_params = parse_json(tsm.get("topstep_params"), {})
+        c = topstep_params.get("c", 0.5)
+        e = topstep_params.get("e", 0.01)
+        l_halt = c * e * A
+        logger.warning(
+            "ON-B5C: L1 falling back to live L_halt=%.2f for %s (SOD not run)",
+            l_halt,
+            tsm.get("account_id"),
+        )
     l_t = intraday.get("l_t", 0.0)
 
     projected = abs(l_t) + rho_j
@@ -303,18 +317,34 @@ def _layer2_budget(intraday: dict, tsm: dict, rho_j: float) -> str | None:
     """Layer 2: Remaining dollar budget — IF remaining < rho_j -> BLOCKED.
 
     Spec: remaining_budget = E - |L_t|; IF remaining < rho_j -> BLOCK
-    where E = e * A (daily exposure budget in dollars).
+    where E = E_daily_exposure (daily exposure budget in dollars).
+
+    E_daily_exposure is SOD-frozen from
+    p3_d08_tsm_state.topstep_state.computed_sod.E_daily_exposure,
+    set by b8_reconciliation._compute_sod_topstep_params at session start.
+    Fallback to live e * A only on cold start (SOD not yet run).
+
     Blocks when worst-case signal risk exceeds remaining day budget.
     """
-    topstep_params = parse_json(tsm.get("topstep_params"), {})
-
-    e = topstep_params.get("e", 0.01)   # Daily exposure fraction
     A = tsm.get("current_balance", 0)
 
     if A <= 0:
         return None
 
-    E = e * A  # Daily exposure budget in dollars
+    # Prefer SOD-locked E_daily_exposure (frozen at reconciliation time)
+    topstep_state = parse_json(tsm.get("topstep_state"), {})
+    computed_sod = topstep_state.get("computed_sod", {})
+    E = computed_sod.get("E_daily_exposure")
+    if E is None or E <= 0:
+        # Fallback: SOD hasn't run yet (cold start, day-1)
+        topstep_params = parse_json(tsm.get("topstep_params"), {})
+        e = topstep_params.get("e", 0.01)
+        E = e * A
+        logger.warning(
+            "ON-B5C: L2 falling back to live E_daily_exposure=%.2f for %s (SOD not run)",
+            E,
+            tsm.get("account_id"),
+        )
     l_t = intraday.get("l_t", 0.0)
     remaining = E - abs(l_t)
 
