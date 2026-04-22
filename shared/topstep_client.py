@@ -187,8 +187,11 @@ class TopstepXClient:
                          live: bool | None = None) -> list[dict]:
         """Search available contracts.
 
-        Per ProjectX Gateway API spec, `live` is REQUIRED. Defaults to True
-        when TRADING_ENVIRONMENT=LIVE, else False.
+        Per ProjectX Gateway API spec, `live` is REQUIRED. Defaults to
+        False (sim/eval data subscription) — overridable per-call or via
+        TOPSTEP_LIVE_DATA=true env. The flag refers to the *data*
+        subscription, not the trading environment; most accounts (incl.
+        all Combine eval accounts) only have the sim subscription.
         """
         resp = self._post("/Contract/search", {
             "searchText": search_text,
@@ -216,12 +219,16 @@ class TopstepXClient:
             midnight UTC). Per ProjectX spec these map to startTime/endTime.
         limit: max bars to retrieve (spec cap is 20000).
         include_partial_bar: include the in-progress current bar.
-        live: True for LIVE data, False for sim. Defaults from
-            TRADING_ENVIRONMENT env var.
+        live: True for LIVE data feed, False for sim. Defaults to False
+            since most TopstepX accounts (all Combine evals) only have
+            the sim/historical feed; a True request without an active
+            live data subscription returns bars=[] silently with HTTP 200.
+            Override per-call or set TOPSTEP_LIVE_DATA=true.
         """
+        resolved_live = self._resolve_live_flag(live)
         resp = self._post("/History/retrieveBars", {
             "contractId": contract_id,
-            "live": self._resolve_live_flag(live),
+            "live": resolved_live,
             "startTime": self._normalise_iso_datetime(start_date),
             "endTime": self._normalise_iso_datetime(end_date),
             "unit": bar_unit,
@@ -229,13 +236,36 @@ class TopstepXClient:
             "limit": limit,
             "includePartialBar": include_partial_bar,
         })
-        return resp.get("bars", [])
+        bars = resp.get("bars", [])
+        if not bars:
+            logger.warning(
+                "retrieveBars returned 0 bars: contract=%s live=%s "
+                "window=%s..%s success=%s errorCode=%s errorMessage=%s",
+                contract_id, resolved_live,
+                self._normalise_iso_datetime(start_date),
+                self._normalise_iso_datetime(end_date),
+                resp.get("success"), resp.get("errorCode"),
+                resp.get("errorMessage"),
+            )
+        return bars
 
     def _resolve_live_flag(self, live: bool | None) -> bool:
-        """Return True for LIVE env, False for sim, unless caller overrides."""
+        """Return value for ProjectX `live` flag (data-subscription toggle).
+
+        Precedence: explicit kwarg > TOPSTEP_LIVE_DATA env > False default.
+
+        IMPORTANT: this controls the *market-data subscription*, not the
+        trading environment. TRADING_ENVIRONMENT=LIVE does NOT imply a live
+        data subscription — Combine eval accounts run on the sim feed even
+        when trading the live platform. Defaulting to False prevents silent
+        empty responses on the common case.
+        """
         if live is not None:
             return live
-        return (self._environment or "").upper() == "LIVE"
+        env_override = os.environ.get("TOPSTEP_LIVE_DATA", "").strip().lower()
+        if env_override in ("1", "true", "yes"):
+            return True
+        return False
 
     @staticmethod
     def _normalise_iso_datetime(value: str) -> str:
