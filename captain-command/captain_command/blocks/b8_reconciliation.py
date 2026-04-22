@@ -70,7 +70,7 @@ def run_daily_reconciliation(gui_push_fn: Callable,
                 _request_manual_reconciliation(ac_id, user_id, gui_push_fn)
 
             # Step 2: SOD Topstep parameter computation (V3)
-            if ac.get("scaling_plan_active"):
+            if ac.get("topstep_optimisation"):
                 _compute_sod_topstep_params(ac_id, user_id, ac, gui_push_fn, notify_fn)
 
         # Step 3: Daily counter resets (all accounts)
@@ -191,10 +191,10 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         scaling_tier = lookup(profit)
     """
     try:
-        ts_state = json.loads(ac.get("topstep_state", "{}"))
-        ts_params = ts_state.get("topstep_params", {})
-        payout_rules = ts_state.get("payout_rules", {})
-        fee_schedule = ts_state.get("fee_schedule", {})
+        ts_state = json.loads(ac.get("topstep_state", "{}") or "{}")
+        ts_params = json.loads(ac.get("topstep_params", "{}") or "{}")
+        payout_rules = json.loads(ac.get("payout_rules", "{}") or "{}")
+        fee_schedule = json.loads(ac.get("fee_schedule", "{}") or "{}")
 
         A = ac.get("current_balance", 0)
         starting = ac.get("starting_balance", 150000)
@@ -246,16 +246,32 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         balance_after_payout = A - W
         g_A = mdd_limit / balance_after_payout if balance_after_payout > 0 else 0
 
-        # Scaling tier
-        from captain_command.blocks.b4_tsm_manager import get_scaling_tier
-        scaling = get_scaling_tier(ac, profit)
+        # Scaling tier — XFA-specific (only populate when scaling_plan_active).
+        # Eval/Live accounts skip this sub-block but still receive SOD params.
+        if ac.get("scaling_plan_active"):
+            from captain_command.blocks.b4_tsm_manager import get_scaling_tier
+            scaling = get_scaling_tier(ac, profit)
+            scaling_plan = ts_state.get("scaling_plan", [])
+            scaling_tier_label = scaling.get("tier_label", "")
+            current_max_micros = scaling.get("max_micros", 0)
+            profit_to_next_tier = scaling.get("profit_to_next_tier", 0)
+            next_tier_label = scaling.get("next_tier_label", "")
+            tier_after_payout = scaling.get("tier_label", "")
+        else:
+            scaling = {}
+            scaling_plan = []
+            scaling_tier_label = ""
+            current_max_micros = 0
+            profit_to_next_tier = 0
+            next_tier_label = ""
+            tier_after_payout = ""
 
         # Store computed params in P3-D08 topstep_state
         computed = {
             "topstep_params": ts_params,
             "payout_rules": payout_rules,
             "fee_schedule": fee_schedule,
-            "scaling_plan": ts_state.get("scaling_plan", []),
+            "scaling_plan": scaling_plan,
             "computed_sod": {
                 "f_A": round(f_A, 6),
                 "R_eff": round(R_eff, 6),
@@ -266,16 +282,16 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
                 "g_A_post_payout_mdd": round(g_A, 6),
                 "computed_at": now_et().isoformat(),
             },
-            "scaling_tier": scaling.get("tier_label", ""),
-            "current_tier_label": scaling.get("tier_label", ""),
-            "current_max_micros": scaling.get("max_micros", 0),
-            "profit_to_next_tier": scaling.get("profit_to_next_tier", 0),
-            "next_tier_label": scaling.get("next_tier_label", ""),
+            "scaling_tier": scaling_tier_label,
+            "current_tier_label": scaling_tier_label,
+            "current_max_micros": current_max_micros,
+            "profit_to_next_tier": profit_to_next_tier,
+            "next_tier_label": next_tier_label,
             "payouts_remaining": payout_rules.get("max_total_payouts", 5),
-            "tier_after_payout": scaling.get("tier_label", ""),
+            "tier_after_payout": tier_after_payout,
         }
 
-        _update_topstep_state(ac_id, json.dumps(computed))
+        _persist_topstep_state_to_d08(ac_id, json.dumps(computed))
 
         logger.info("SOD Topstep params computed for %s: f(A)=%.4f N=%d E=%.2f L_halt=%.2f",
                     ac_id, f_A, N, E, L_halt)
@@ -475,7 +491,8 @@ def _get_all_accounts() -> list[dict]:
                           current_balance, starting_balance,
                           max_drawdown_limit, max_daily_loss,
                           topstep_optimisation, topstep_state,
-                          scaling_plan_active
+                          scaling_plan_active,
+                          topstep_params, fee_schedule, payout_rules
                    FROM p3_d08_tsm_state
                    LATEST ON last_updated PARTITION BY account_id
                    ORDER BY account_id"""
@@ -493,6 +510,9 @@ def _get_all_accounts() -> list[dict]:
                     "topstep_optimisation": r[7],
                     "topstep_state": r[8] or "{}",
                     "scaling_plan_active": r[9],
+                    "topstep_params": r[10] or "{}",
+                    "fee_schedule": r[11] or "{}",
+                    "payout_rules": r[12] or "{}",
                 })
             return results
     except Exception as exc:
@@ -586,10 +606,83 @@ def _update_account_balance(ac_id: str, new_balance: float):
         logger.error("Balance update failed for %s: %s", ac_id, exc, exc_info=True)
 
 
-def _update_topstep_state(ac_id: str, topstep_state_json: str):
-    """Update topstep_state in P3-D08 for an account."""
+def _persist_topstep_state_to_d08(ac_id: str, topstep_state_json: str):
+    """Persist computed topstep_state to P3-D08 (append-only row rewrite).
+
+    QuestDB is append-only, so we mirror the ``_update_account_balance``
+    pattern: read the latest D08 snapshot for the account, replace the
+    ``topstep_state`` column (index 26 in the canonical 31-column SELECT),
+    and INSERT a fresh row with ``last_updated = now_et()``.
+
+    Also writes a forensic audit entry to ``p3_session_event_log`` with
+    ``event_type = "TOPSTEP_SOD_UPDATE"``.
+    """
     try:
         with get_cursor() as cur:
+            # 1. Read latest D08 snapshot to carry forward all fields
+            cur.execute(
+                """SELECT account_id, user_id, name, classification,
+                          starting_balance, current_balance, current_drawdown,
+                          daily_loss_used, profit_target,
+                          max_drawdown_limit, max_daily_loss, max_contracts,
+                          scaling_plan, commission_per_contract,
+                          instrument_permissions, overnight_allowed,
+                          trading_hours, margin_per_contract, margin_buffer_pct,
+                          pass_probability, simulation_date, risk_goal,
+                          evaluation_end_date, evaluation_stages,
+                          topstep_optimisation, topstep_params, topstep_state,
+                          fee_schedule, payout_rules, scaling_plan_active,
+                          scaling_tier_micros
+                   FROM p3_d08_tsm_state
+                   WHERE account_id = %s
+                   ORDER BY last_updated DESC
+                   LIMIT 1""",
+                (ac_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                logger.warning(
+                    "No D08 row for account %s — cannot persist topstep_state", ac_id,
+                )
+                return
+
+            # 2. Insert corrected D08 row with updated topstep_state (col idx 26)
+            params = list(row)
+            params[26] = topstep_state_json  # topstep_state
+            params.append(now_et().isoformat())  # last_updated
+
+            cur.execute(
+                """INSERT INTO p3_d08_tsm_state(
+                       account_id, user_id, name, classification,
+                       starting_balance, current_balance, current_drawdown,
+                       daily_loss_used, profit_target,
+                       max_drawdown_limit, max_daily_loss, max_contracts,
+                       scaling_plan, commission_per_contract,
+                       instrument_permissions, overnight_allowed,
+                       trading_hours, margin_per_contract, margin_buffer_pct,
+                       pass_probability, simulation_date, risk_goal,
+                       evaluation_end_date, evaluation_stages,
+                       topstep_optimisation, topstep_params, topstep_state,
+                       fee_schedule, payout_rules, scaling_plan_active,
+                       scaling_tier_micros, last_updated
+                   ) VALUES(
+                       %s, %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s,
+                       %s, %s, %s,
+                       %s, %s, %s,
+                       %s, %s
+                   )""",
+                params,
+            )
+
+            # 3. Forensic audit trail in session event log (kept from prior impl)
             cur.execute(
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
@@ -600,8 +693,9 @@ def _update_topstep_state(ac_id: str, topstep_state_json: str):
                     topstep_state_json,
                 ),
             )
+            logger.info("D08 topstep_state persisted for %s", ac_id)
     except Exception as exc:
-        logger.error("Topstep state update failed for %s: %s", ac_id, exc, exc_info=True)
+        logger.error("Topstep state persistence failed for %s: %s", ac_id, exc, exc_info=True)
 
 
 def _log_reconciliation(ac_id: str, user_id: str, method: str,

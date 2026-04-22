@@ -236,7 +236,8 @@ def _load_tsm_configs() -> dict:
                       margin_buffer_pct, pass_probability, risk_goal,
                       evaluation_end_date, topstep_optimisation,
                       fee_schedule, payout_rules, scaling_plan_active,
-                      scaling_tier_micros
+                      scaling_tier_micros,
+                      topstep_params, topstep_state
                FROM p3_d08_tsm_state
                ORDER BY last_updated DESC""",
         )
@@ -277,6 +278,8 @@ def _load_tsm_configs() -> dict:
             "payout_rules": parse_json(r[24], None),
             "scaling_plan_active": r[25] if r[25] is not None else False,
             "scaling_tier_micros": r[26] or 0,
+            "topstep_params": parse_json(r[27], {}),
+            "topstep_state": parse_json(r[28], {}),
         }
     return result
 
