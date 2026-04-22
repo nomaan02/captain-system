@@ -99,9 +99,25 @@ const useDashboardStore = create((set, get) => ({
 
   addSignal: (signal) => {
     const normalized = { ...signal, direction: normalizeDirection(signal.direction) };
-    set((state) => ({
-      pendingSignals: [normalized, ...state.pendingSignals],
-    }));
+    set((state) => {
+      // Dedup by signal_id: B6 retries, Redis stream re-delivery (PEL recovery),
+      // or replay-harness re-emits can publish the same signal twice. The
+      // panel must show each signal_id at most once. When a duplicate arrives,
+      // refresh the existing entry in place (keeps newer fields like updated
+      // contract counts or jittered timestamps) without changing list length.
+      if (normalized.signal_id) {
+        const idx = state.pendingSignals.findIndex(
+          (s) => s.signal_id === normalized.signal_id,
+        );
+        if (idx !== -1) {
+          const merged = { ...state.pendingSignals[idx], ...normalized };
+          const next = [...state.pendingSignals];
+          next[idx] = merged;
+          return { pendingSignals: next };
+        }
+      }
+      return { pendingSignals: [normalized, ...state.pendingSignals] };
+    });
   },
 
   setSelectedSignalId: (id) =>

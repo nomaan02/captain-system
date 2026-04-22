@@ -472,9 +472,17 @@ def run_phase_b(asset_id: str, or_state: dict, phase_a: dict,
                 or_state.get("entry_price", 0),
                 or_state.get("or_range", 0))
 
+    # Filter recommended_trades to JUST this asset. Without the filter, every
+    # Phase B call publishes signals for every previously-resolved asset too,
+    # because `features` is mutated in place each call (or_direction stays set
+    # for prior assets). The live orchestrator does the same filtering via
+    # `assets=newly_resolved` in `_run_b6_for_user`; the replay must mirror it
+    # to avoid emitting cumulative batches that flood the GUI signal panel.
+    all_recommended = b5c.get("recommended_trades", [])
+    recommended_for_asset = [asset_id] if asset_id in all_recommended else []
 
     result = run_signal_output(
-        recommended_trades=b5c.get("recommended_trades", []),
+        recommended_trades=recommended_for_asset,
         available_not_recommended=b5b.get("available_not_recommended", []),
         quality_results=b5b,
         final_contracts=b5c.get("final_contracts", b5["final_contracts"]),
