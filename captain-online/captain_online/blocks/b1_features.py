@@ -757,7 +757,8 @@ def _get_latest_price(asset_id: str) -> Optional[float]:
             (now - timedelta(minutes=5)).isoformat(), now.isoformat(),
         )
         if bars:
-            return float(bars[-1]["close"])
+            close = bars[-1].get("c") if bars[-1].get("c") is not None else bars[-1].get("close")
+            return float(close) if close is not None else None
     except TopstepXClientError:
         pass
     return None
@@ -777,7 +778,8 @@ def _get_open_price(asset_id: str, date) -> Optional[float]:
             contract_id, 4, 1, d.isoformat(), d.isoformat(),
         )
         if bars:
-            return float(bars[0]["open"])
+            opn = bars[0].get("o") if bars[0].get("o") is not None else bars[0].get("open")
+            return float(opn) if opn is not None else None
     except TopstepXClientError:
         pass
     return None
@@ -794,7 +796,8 @@ def _get_prior_close_for_date(asset_id: str, date) -> Optional[float]:
         end = (d - timedelta(days=1)).isoformat()
         bars = client.get_bars(contract_id, 4, 1, start, end)
         if bars:
-            return float(bars[-1]["close"])
+            close = bars[-1].get("c") if bars[-1].get("c") is not None else bars[-1].get("close")
+            return float(close) if close is not None else None
     except TopstepXClientError:
         pass
     return None
@@ -1352,16 +1355,21 @@ def store_daily_ohlcv(asset_id: str):
             bars = client.get_bars(contract_id, 4, 1, yesterday, today_str)
         if bars:
             bar = bars[-1]
+            opn = bar.get("o") if bar.get("o") is not None else bar.get("open")
+            high = bar.get("h") if bar.get("h") is not None else bar.get("high")
+            low = bar.get("l") if bar.get("l") is not None else bar.get("low")
+            close = bar.get("c") if bar.get("c") is not None else bar.get("close")
+            volume = bar.get("v") if bar.get("v") is not None else bar.get("volume", 0)
             with get_cursor() as cur:
                 cur.execute(
                     """INSERT INTO p3_d30_daily_ohlcv
                        (asset_id, trade_date, open, high, low, close, volume, ts)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
-                    (asset_id, today_str, float(bar["open"]), float(bar["high"]),
-                     float(bar["low"]), float(bar["close"]),
-                     int(float(bar.get("volume", 0)))),
+                    (asset_id, today_str, float(opn), float(high),
+                     float(low), float(close),
+                     int(float(volume or 0))),
                 )
-            logger.info("Stored daily OHLCV for %s: close=%.2f", asset_id, float(bar["close"]))
+            logger.info("Stored daily OHLCV for %s: close=%.2f", asset_id, float(close))
     except Exception as e:
         logger.warning("Failed to store daily OHLCV for %s: %s", asset_id, e)
 

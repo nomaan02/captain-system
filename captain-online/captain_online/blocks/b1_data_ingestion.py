@@ -543,7 +543,8 @@ def _get_latest_price(asset_id: str) -> float | None:
             now.isoformat(),
         )
         if bars:
-            return float(bars[-1]["close"])
+            close = bars[-1].get("c") if bars[-1].get("c") is not None else bars[-1].get("close")
+            return float(close) if close is not None else None
     except TopstepXClientError as exc:
         logger.warning("_get_latest_price REST fallback failed: %s", exc)
     return None
@@ -562,7 +563,8 @@ def _get_prior_close(asset_id: str) -> float | None:
         end = (today - timedelta(days=1)).isoformat()
         bars = client.get_bars(contract_id, 4, 1, start, end)  # barUnit=4 (Day)
         if bars:
-            return float(bars[-1]["close"])
+            close = bars[-1].get("c") if bars[-1].get("c") is not None else bars[-1].get("close")
+            return float(close) if close is not None else None
     except TopstepXClientError as exc:
         logger.warning("_get_prior_close failed: %s", exc)
     return None
