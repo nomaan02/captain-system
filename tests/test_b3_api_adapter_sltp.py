@@ -16,6 +16,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Top-level import ensures `captain_command.blocks.b3_api_adapter` is registered
+# as an attribute on the `captain_command.blocks` package at collection time.
+# Required because the @patch("captain_command.blocks.b3_api_adapter.<symbol>", ...)
+# decorators below resolve the dotted target via getattr-walks (e.g. via
+# pkgutil.resolve_name on some pytest/plugin combos), which do NOT auto-import
+# submodules on AttributeError the way unittest.mock._importer does. Without
+# this top-level import the tests error out on tower environments with:
+#   AttributeError: module 'captain_command.blocks' has no attribute 'b3_api_adapter'
+from captain_command.blocks.b3_api_adapter import TopstepXAdapter  # noqa: F401
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,8 +33,6 @@ import pytest
 
 def _make_adapter():
     """Create a TopstepXAdapter with a mocked client, bypassing __init__."""
-    from captain_command.blocks.b3_api_adapter import TopstepXAdapter
-
     adapter = object.__new__(TopstepXAdapter)
     adapter._client = MagicMock()
     adapter._account_id = "20319811"
