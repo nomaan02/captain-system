@@ -89,13 +89,17 @@ def seed_all():
 
         with get_cursor() as cur:
             for r in rows:
+                # Phase 2 (F-04): or_range_first_m_min added in D29; QC seed
+                # CSVs don't carry OR range yet, so insert NULL — backfill via
+                # bootstrap_opening_volumes.py once historical bars available.
                 cur.execute(
                     """INSERT INTO p3_d29_opening_volumes
                        (asset_id, session_date, session_type, or_minutes,
-                        volume_first_m_min, ts)
-                       VALUES (%s, %s, %s, %s, %s, now())""",
+                        volume_first_m_min, or_range_first_m_min, ts)
+                       VALUES (%s, %s, %s, %s, %s, %s, now())""",
                     (r["asset_id"], r["session_date"], r["session_type"],
-                     r["or_minutes"], r["volume_first_m_min"]),
+                     r["or_minutes"], r["volume_first_m_min"],
+                     r.get("or_range_first_m_min")),
                 )
             total_inserted += len(rows)
 

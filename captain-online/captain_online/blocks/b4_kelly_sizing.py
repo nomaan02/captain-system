@@ -37,6 +37,7 @@ from typing import Optional
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
 from shared.constants import now_et
+from shared.sizing_helpers import resolve_sizing_sl
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +162,11 @@ def run_kelly_sizing(
         # Step 6: Per-account sizing
         asset_detail = assets_detail.get(u, {})
         strategy = locked_strategies.get(u, {})
-        strategy_sl = strategy.get("threshold", 4.0)  # SL distance in points
         point_value = asset_detail.get("point_value", 50.0)
+        # Phase 2 (F-04): unified SL distance via shared helper. Replaces the
+        # legacy `strategy.threshold` direct read so B4 and B5C agree on rho_j.
+        # Primary path = sl_multiple × historical OR range avg from P3-D29.
+        strategy_sl = resolve_sizing_sl(u, strategy, point_value)
 
         for ac_id in accounts:
             tsm = tsm_configs.get(ac_id)

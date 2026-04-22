@@ -175,10 +175,14 @@ def restore_d29(backup_dir: Path, dry_run: bool) -> tuple[int, int]:
     frontier = or_volume_frontier_per_asset()
     # Session date doubles as ts so DEDUP UPSERT KEYS(ts, asset_id,
     # session_date) collapses duplicate restores.
+    # Phase 2 (F-04): or_range_first_m_min restored when present in the backup
+    # CSV; older backups predating the column will simply lack the header.
+    has_or_range = "or_range_first_m_min" in header
     sql = (
         "INSERT INTO p3_d29_opening_volumes "
-        "(asset_id, session_date, session_type, or_minutes, volume_first_m_min, ts) "
-        "VALUES (%s, %s, %s, %s, %s, %s)"
+        "(asset_id, session_date, session_type, or_minutes, volume_first_m_min, "
+        "or_range_first_m_min, ts) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)"
     )
     to_insert = []
     for row in rows:
@@ -187,11 +191,20 @@ def restore_d29(backup_dir: Path, dry_run: bool) -> tuple[int, int]:
         fr = frontier.get(a, "")
         if d and d > fr:
             ts = datetime.strptime(d, "%Y-%m-%d")
+            or_range_val = None
+            if has_or_range:
+                raw = row[_idx(header, "or_range_first_m_min")]
+                if raw not in (None, ""):
+                    try:
+                        or_range_val = float(raw)
+                    except (TypeError, ValueError):
+                        or_range_val = None
             to_insert.append((
                 a, d,
                 row[_idx(header, "session_type")],
                 int(row[_idx(header, "or_minutes")]),
                 int(row[_idx(header, "volume_first_m_min")]),
+                or_range_val,
                 ts,
             ))
     if dry_run:

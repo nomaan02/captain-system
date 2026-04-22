@@ -1235,10 +1235,48 @@ def _get_historical_volume_first_N_min(asset_id: str, minutes: int, lookback: in
     return None
 
 
-def store_opening_volume(asset_id: str, session_type: str, or_minutes: int, volume: int):
-    """Store today's first-m-minute volume in P3-D29 for AIM-15 baseline.
+def _get_historical_or_range(asset_id: str, minutes: int, lookback: int = 20) -> Optional[float]:
+    """Historical opening N-minute price range (high-low) average from P3-D29.
 
-    Called from orchestrator after OR close to accumulate daily data.
+    Reads `or_range_first_m_min` from p3_d29_opening_volumes for the most recent
+    `lookback` rows matching `(asset_id, or_minutes=minutes)`. Returns the average
+    of non-null values, or None if fewer than 5 historical rows have non-null range.
+
+    Used by `shared.sizing_helpers.resolve_sizing_sl` (Phase 2) so that B4 sizing can
+    derive an expected SL distance before today's OR closes (Phase A) — the live
+    `or_range` from the OR tracker is only available in Phase B.
+
+    Mirror of `_get_historical_volume_first_N_min` above.
+    """
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT or_range_first_m_min FROM p3_d29_opening_volumes
+                   WHERE asset_id = %s AND or_minutes = %s
+                   ORDER BY ts DESC LIMIT %s""",
+                (asset_id, int(minutes), lookback),
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return None
+        ranges = [float(r[0]) for r in rows if r[0] is not None and r[0] > 0]
+        if len(ranges) < 5:
+            return None
+        return sum(ranges) / len(ranges)
+    except Exception:
+        return None
+
+
+def store_opening_volume(asset_id: str, session_type: str, or_minutes: int,
+                          volume: int, or_range: Optional[float] = None):
+    """Store today's first-m-minute volume (and optional price range) in P3-D29.
+
+    Called from orchestrator after OR close to accumulate daily data. The
+    `or_range` argument was added in Phase 2 (Kelly SL unification — F-04) so
+    B4 can derive an expected SL distance from a 20-day historical OR range
+    average via `_get_historical_or_range`. Pre-Phase 2 callers can omit
+    `or_range`; the column is NULL-tolerant in the schema.
     """
     from shared.questdb_client import get_cursor
     from datetime import datetime
@@ -1250,12 +1288,17 @@ def store_opening_volume(asset_id: str, session_type: str, or_minutes: int, volu
             cur.execute(
                 """INSERT INTO p3_d29_opening_volumes
                    (asset_id, session_date, session_type, or_minutes,
-                    volume_first_m_min, ts)
-                   VALUES (%s, %s, %s, %s, %s, now())""",
-                (asset_id, today_str, session_type, or_minutes, volume),
+                    volume_first_m_min, or_range_first_m_min, ts)
+                   VALUES (%s, %s, %s, %s, %s, %s, now())""",
+                (asset_id, today_str, session_type, or_minutes, volume,
+                 float(or_range) if or_range is not None else None),
             )
-        logger.info("Stored opening volume for %s: %d contracts in first %d min",
-                     asset_id, volume, or_minutes)
+        if or_range is not None:
+            logger.info("Stored opening volume+range for %s: vol=%d, range=%.4f in first %d min",
+                         asset_id, volume, or_range, or_minutes)
+        else:
+            logger.info("Stored opening volume for %s: %d contracts in first %d min",
+                         asset_id, volume, or_minutes)
     except Exception as e:
         logger.warning("Failed to store opening volume for %s: %s", asset_id, e)
 

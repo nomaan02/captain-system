@@ -37,6 +37,7 @@ from typing import Optional
 
 from shared.questdb_client import get_cursor
 from shared.json_helpers import parse_json
+from shared.sizing_helpers import resolve_sizing_sl
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +96,18 @@ def run_circuit_breaker_screen(
     blocked_count = 0
 
     for u in recommended_trades:
-        # Per-asset SL distance and point value (fall back to scalar defaults)
-        asset_sl = sl_distance
+        # Per-asset point value (fall back to scalar default).
         asset_pv = point_value
-        if locked_strategies:
-            asset_sl = locked_strategies.get(u, {}).get("threshold", sl_distance)
         if assets_detail:
             asset_pv = assets_detail.get(u, {}).get("point_value", point_value)
+
+        # Phase 2 (F-04): per-asset SL distance via shared helper so B4 and
+        # B5C agree on rho_j. Primary = sl_multiple × historical OR range avg
+        # (P3-D29); fallbacks: strategy.threshold → DEFAULT_SL_POINTS=4.0.
+        if locked_strategies and u in locked_strategies:
+            asset_sl = resolve_sizing_sl(u, locked_strategies[u], asset_pv)
+        else:
+            asset_sl = sl_distance
 
         for ac_id in accounts:
             tsm = tsm_configs.get(ac_id)

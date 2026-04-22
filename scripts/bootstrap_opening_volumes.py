@@ -131,49 +131,68 @@ def bootstrap_opening_volumes():
             print(f"  [WARN] {asset_id}: no bars returned")
             continue
 
-        # Group bars by trading date and sum first-m-minute volumes
-        daily_volumes = {}  # date_str -> total volume in first m minutes
+        # Group bars by trading date and accumulate first-m-minute volume
+        # AND OR price range (high-low). The OR range column was added in
+        # Phase 2 (F-04) to power Kelly SL distance derivation in B4/B5C.
+        daily_volumes: dict[str, int] = {}
+        daily_highs: dict[str, float] = {}
+        daily_lows: dict[str, float] = {}
 
         for bar in bars:
             bar_time = _parse_bar_time(bar)
             if bar_time is None:
                 continue
 
-            # Convert to ET
             bar_et = _convert_utc_to_et(bar_time)
             bar_date = bar_et.date()
             bar_t = bar_et.time()
 
-            # Check if this bar falls within [session_open, session_open + or_minutes)
             open_minutes = session_open.hour * 60 + session_open.minute
             bar_minutes = bar_t.hour * 60 + bar_t.minute
             diff = bar_minutes - open_minutes
 
-            # Handle overnight sessions (APAC: open at 18:00, bars after midnight)
             if session_type == "APAC" and diff < -720:
-                diff += 1440  # next day
+                diff += 1440
 
             if 0 <= diff < or_minutes:
                 date_str = bar_date.isoformat()
                 vol = bar.get("volume", 0) or bar.get("v", 0) or 0
                 daily_volumes[date_str] = daily_volumes.get(date_str, 0) + int(vol)
 
+                h = bar.get("h") or bar.get("high")
+                lo = bar.get("l") or bar.get("low")
+                try:
+                    if h is not None:
+                        h_val = float(h)
+                        daily_highs[date_str] = max(daily_highs.get(date_str, h_val), h_val)
+                    if lo is not None:
+                        lo_val = float(lo)
+                        daily_lows[date_str] = min(daily_lows.get(date_str, lo_val), lo_val)
+                except (TypeError, ValueError):
+                    pass
+
         # Insert into QuestDB
         if daily_volumes:
             with get_cursor() as cur:
                 for date_str, volume in sorted(daily_volumes.items()):
+                    or_range = None
+                    if date_str in daily_highs and date_str in daily_lows:
+                        rng = daily_highs[date_str] - daily_lows[date_str]
+                        or_range = rng if rng > 0 else None
                     cur.execute(
                         """INSERT INTO p3_d29_opening_volumes
                            (asset_id, session_date, session_type, or_minutes,
-                            volume_first_m_min, ts)
-                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                            volume_first_m_min, or_range_first_m_min, ts)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                         (asset_id, date_str, session_type, or_minutes,
-                         volume, f"{date_str}T12:00:00.000000Z"),
+                         volume, or_range, f"{date_str}T12:00:00.000000Z"),
                     )
                     total_inserted += 1
 
+            ranges_filled = sum(1 for d in daily_volumes if d in daily_highs and d in daily_lows)
             print(f"  [OK] {asset_id}: {len(daily_volumes)} days of opening volume stored "
-                  f"(avg={sum(daily_volumes.values()) / len(daily_volumes):.0f})")
+                  f"(avg={sum(daily_volumes.values()) / len(daily_volumes):.0f}, "
+                  f"or_range filled for {ranges_filled}/{len(daily_volumes)} days)")
         else:
             print(f"  [WARN] {asset_id}: no bars matched first {or_minutes} minutes")
 

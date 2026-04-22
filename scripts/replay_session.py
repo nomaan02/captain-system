@@ -327,7 +327,13 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
     Returns dict with contracts, kelly_raw, tsm_cap, risk_per_contract, etc.
     """
     point_value = spec.get("point_value", 50.0)
-    sl_dist = strategy.get("threshold", 4.0)
+    # Phase 2 (F-04): unified SL distance via shared helper. Mirrors B4/B5C so
+    # replay sizing produces the same `risk_per_contract` as production.
+    try:
+        from shared.sizing_helpers import resolve_sizing_sl
+        sl_dist = resolve_sizing_sl(asset_id, strategy, point_value)
+    except Exception:
+        sl_dist = strategy.get("threshold", 4.0)
     fallback_risk = sl_dist * point_value
 
     # Step 1: Regime-blended Kelly (REGIME_NEUTRAL → equal 0.5/0.5 probs)

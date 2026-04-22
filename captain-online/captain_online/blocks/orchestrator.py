@@ -513,9 +513,14 @@ class OnlineOrchestrator:
             if vol_now is None or vol_now <= 0:
                 return  # no data yet — keep Phase A neutral
 
-            # Store today's volume for future AIM-15 reference
+            # Store today's volume + OR range for future AIM-15 reference and
+            # for B4/B5C Kelly SL distance derivation (Phase 2 — F-04).
+            # `or_range` is the high-low across the OR window; injected into
+            # features at orchestrator.py line 418 from b8_or_tracker state.
             session_type = get_asset_session_type(asset)
-            store_opening_volume(asset, session_type, or_min, vol_now)
+            or_range_val = data.get("features", {}).get(asset, {}).get("or_range")
+            store_opening_volume(asset, session_type, or_min, vol_now,
+                                 or_range=or_range_val)
 
             # Get historical average from P3-D29
             hist_vols = _get_historical_volume_first_N_min(asset, or_min, lookback=20)

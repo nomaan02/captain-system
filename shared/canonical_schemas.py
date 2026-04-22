@@ -577,6 +577,7 @@ CREATE TABLE IF NOT EXISTS p3_d29_opening_volumes (
     session_type STRING,
     or_minutes INT,
     volume_first_m_min LONG,
+    or_range_first_m_min DOUBLE,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
 DEDUP UPSERT KEYS(ts, asset_id, session_date);

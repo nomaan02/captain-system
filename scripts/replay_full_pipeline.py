@@ -322,6 +322,46 @@ def _replay_compute_or_volume(asset_id: str, bars: list[dict],
     return total_vol if matched > 0 else None
 
 
+def _replay_compute_or_range(asset_id: str, bars: list[dict],
+                              session_type: str) -> float | None:
+    """Compute OR price range (high-low) from replay bars within the OR window.
+
+    Mirrors `_replay_compute_or_volume` for the new D29 `or_range_first_m_min`
+    column added in Phase 2 (F-04 — Kelly SL distance unification). Used so the
+    replay harness backfills the same column the live `b8_or_tracker` writes
+    via `store_opening_volume(or_range=...)`.
+    """
+    cfg = SESSION_CONFIG.get(session_type)
+    if not cfg:
+        return None
+    or_start_str = cfg.get("or_start", "09:30")
+    or_end_str = cfg.get("or_end", "09:35")
+    or_start_t = datetime.strptime(or_start_str, "%H:%M").time()
+    or_end_t = datetime.strptime(or_end_str, "%H:%M").time()
+
+    highs: list[float] = []
+    lows: list[float] = []
+    for bar in bars:
+        t = parse_bar_time(bar)
+        if t is None:
+            continue
+        t_et = t.astimezone(ET).time()
+        if or_start_t <= t_et < or_end_t:
+            h = bar.get("h") or bar.get("high")
+            lo = bar.get("l") or bar.get("low")
+            if h is None or lo is None:
+                continue
+            try:
+                highs.append(float(h))
+                lows.append(float(lo))
+            except (TypeError, ValueError):
+                continue
+    if not highs or not lows:
+        return None
+    rng = max(highs) - min(lows)
+    return rng if rng > 0 else None
+
+
 def _replay_recompute_aim15(asset_id: str, b1: dict, b3: dict,
                             bars: list[dict] | None = None,
                             session_type: str = "NY"):
@@ -353,9 +393,12 @@ def _replay_recompute_aim15(asset_id: str, b1: dict, b3: dict,
             logger.debug("AIM-15 replay: no OR volume for %s", asset_id)
             return
 
-        # Store today's volume in D29 for future reference
+        # Store today's volume + OR range in D29 for future reference.
+        # `or_range` powers Phase 2 Kelly SL distance derivation (F-04).
         sess_type = get_asset_session_type(asset_id)
-        store_opening_volume(asset_id, sess_type, or_min, vol_now)
+        or_range_now = _replay_compute_or_range(asset_id, bars, session_type)
+        store_opening_volume(asset_id, sess_type, or_min, vol_now,
+                             or_range=or_range_now)
 
         # Get 20-day historical average from P3-D29
         hist_vols = _get_historical_volume_first_N_min(asset_id, or_min, lookback=20)
@@ -425,6 +468,7 @@ def run_phase_b(asset_id: str, or_state: dict, phase_a: dict,
                 "LONG" if or_state.get("direction") == 1 else "SHORT",
                 or_state.get("entry_price", 0),
                 or_state.get("or_range", 0))
+
 
     result = run_signal_output(
         recommended_trades=b5c.get("recommended_trades", []),
