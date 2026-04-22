@@ -549,6 +549,98 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 
 ---
 
+## PHASE 4.6: Live Config Migrations
+
+> **Skip this phase if:**
+> - This is a fresh install and you ran Step 8b (`bootstrap_production.py`) AFTER 2026-04-22. Fresh bootstraps already write the current canonical values.
+>
+> **You MUST run this phase if:**
+> - This tower was bootstrapped before 2026-04-22 (it carries the brief 0.90/0.10 TP/SL era).
+> - You transferred a QuestDB bundle that predates 2026-04-22.
+
+This phase contains idempotent in-place patches for `p3_d00_asset_universe.locked_strategy` rows. Each patch is safe to re-run (it skips assets already at target) and **does NOT** require running `bootstrap_production.py` again — re-running bootstrap on an already-bootstrapped tower causes duplicate-row contamination (see warning at line 312).
+
+### Migration M1 — Revert TP/SL ratio to 0.70/0.35
+
+**Why:** The seed values `tp_multiple=0.90, sl_multiple=0.10` (9:1 reward/risk) were briefly in production. The system is being reverted to `0.70/0.35` (2:1) which matches the geometry used to generate the P1/P2 backtests that seeded P3-D05 EWMA and P3-D12 Kelly parameters. Without this patch, B4 Kelly sizing and B6 bracket construction will continue to use the incorrect ratio.
+
+#### Step M1a — Pull latest code
+
+```fish
+cd ~/captain-system
+git pull
+```
+
+#### Step M1b — Inspect current state (read-only)
+
+```fish
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-offline python /captain/scripts/patch_tp_sl_multiple.py --check
+```
+
+Expected on a tower that needs migrating: every active asset prints `[NEEDS-PATCH] {asset} tp=0.9 sl=0.1 -> tp=0.7 sl=0.35`.
+
+If the tower was freshly bootstrapped after 2026-04-22, every asset will print `[SKIP] {asset} already at target` and you can skip the rest of this migration.
+
+#### Step M1c — Dry-run the JSON diff (no writes)
+
+```fish
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-offline python /captain/scripts/patch_tp_sl_multiple.py --dry-run
+```
+
+Confirm the printed `new locked_strategy = {...}` for each asset only differs from the current row in the `tp_multiple` and `sl_multiple` keys.
+
+#### Step M1d — Apply
+
+```fish
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-offline python /captain/scripts/patch_tp_sl_multiple.py --apply
+```
+
+Expected: `Patched: 10   Skipped: 0   Failed: 0   Total: 10`. Non-zero exit code means at least one asset failed — investigate before continuing.
+
+#### Step M1e — Restart Captain services
+
+```fish
+bash captain-update.sh
+```
+
+This reloads any in-memory caches so B4/B6 pick up the new `locked_strategy` JSON on the next session evaluation.
+
+#### Step M1f — Verify
+
+DB inspection via the QuestDB web console (`http://TOWER_IP:9000`):
+
+```sql
+SELECT asset_id, locked_strategy
+  FROM p3_d00_asset_universe
+  LATEST ON last_updated PARTITION BY asset_id
+  WHERE captain_status IN ('ACTIVE','WARM_UP')
+  ORDER BY asset_id;
+```
+
+Inspect each row's JSON; expect `"tp_multiple": 0.7, "sl_multiple": 0.35`.
+
+After the next session evaluation, scan B4 logs for the line:
+
+```
+ON-B4: <asset> ac=... kelly=... risk/c=<X> cap=<Y> ...
+```
+
+`risk/c` should be approximately 3.5x the previous session's value for the same asset (because `strategy_sl = 0.35 x OR_avg` instead of `0.10 x OR_avg`, plus fees).
+
+#### Rollback
+
+If you need to revert this migration, edit `TARGET_TP` and `TARGET_SL` at the top of `scripts/patch_tp_sl_multiple.py` back to `0.90` and `0.10`, re-run with `--apply`, then restart services. EWMA does not need to be touched.
+
+**Troubleshooting:**
+
+| Error | Fix |
+|-------|-----|
+| `failed to query p3_d00_asset_universe` | Captain-Offline container can't reach QuestDB. Ensure it's running: `docker ps | grep questdb`. |
+| `Asset X not found in p3_d00_asset_universe` | The asset has `captain_status` outside `ACTIVE`/`WARM_UP`. The patch script only touches eligible rows by design — no action needed. |
+| `[FAIL] X invalid JSON` | An asset's `locked_strategy` column is corrupt. Re-run Step 8a (`seed_all_assets.py`) for that asset, then retry M1d. |
+
+---
+
 ## PHASE 5: Cron Jobs & Automation
 
 ### Step 9 — Install cron jobs (VIX update, health monitoring, backups)

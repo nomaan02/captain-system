@@ -33,7 +33,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_SL_POINTS = 4.0
-DEFAULT_SL_MULTIPLE = 0.10
+DEFAULT_SL_MULTIPLE = 0.35
 DEFAULT_OR_MINUTES = 15
 
 # Per-process WARN dedup so cold-start fallback log fires at most once per

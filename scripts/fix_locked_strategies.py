@@ -74,6 +74,13 @@ def build_locked_strategy(d06: dict, d08: dict) -> str:
         "accuracy_OOS": d08.get("accuracy_OOS", 0.0),
         "confidence_flag": d08.get("confidence_flag", "NO_CLASSIFIER"),
         "source": "P2-D06",
+        # Runtime ORB sizing fields (must match bootstrap_production.py:_build_locked_strategy).
+        # Without these, B4 Kelly sizing and B6 bracket construction fall back to module
+        # defaults and a "fix" run could silently revert prod TP/SL geometry.
+        "default_direction": 0,
+        "tp_multiple": 0.70,
+        "sl_multiple": 0.35,
+        "sl_method": "OR_RANGE",
     })
 
 
