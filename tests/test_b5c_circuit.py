@@ -497,6 +497,86 @@ class TestL4CorrelationSharpe:
 
 
 # ---------------------------------------------------------------------------
+# Phase 6 (F-12): Per-asset CB resolution via locked_strategies + assets_detail
+# ---------------------------------------------------------------------------
+
+class TestPerAssetResolutionViaLockedStrategies:
+    """Verify B5C honours per-asset point_value + sl_multiple instead of
+    the scalar sl_distance/point_value defaults.
+
+    Regression: before Phase 2, MNQ (point_value=2.0) was sized against the
+    default point_value=50.0, inflating rho_j ~25x and tripping L1 spuriously.
+    """
+
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_clean)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
+    def test_mnq_pv_2_does_not_trip_l1(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
+        """MNQ (pv=2.0) sized correctly: rho_j=$120, L_halt=$750 -> PASSES.
+
+        Without per-asset resolution, default pv=50.0 would yield
+        rho_j = 15 * (4 * 50) = $3000 >> $750 -> spurious L1 BLOCK.
+        """
+        tsm = _make_topstep_tsm(["acc_eval_1"])
+        # threshold=4.0 ensures resolve_sizing_sl returns 4.0 even when
+        # the historical OR range lookup is unavailable in test env.
+        locked_strategies = {"MNQ": {"sl_multiple": 0.10, "threshold": 4.0}}
+        assets_detail = {"MNQ": {"point_value": 2.0}}
+
+        result = run_circuit_breaker_screen(
+            recommended_trades=["MNQ"],
+            final_contracts={"MNQ": {"acc_eval_1": 15}},
+            account_recommendation={"MNQ": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"MNQ": {"acc_eval_1": None}},
+            accounts=["acc_eval_1"],
+            tsm_configs=tsm,
+            session_id=1,
+            sl_distance=4.0,    # scalar defaults — should NOT be used for MNQ
+            point_value=50.0,   # scalar defaults — should NOT be used for MNQ
+            locked_strategies=locked_strategies,
+            assets_detail=assets_detail,
+        )
+
+        # rho_j = 15 * (4.0 * 2.0 + 0) = $120 < L_halt=$750 -> PASS
+        assert "MNQ" in result["recommended_trades"]
+        assert result["account_recommendation"]["MNQ"]["acc_eval_1"] == "TRADE"
+        assert result["final_contracts"]["MNQ"]["acc_eval_1"] == 15
+
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_rolling_trade_returns", return_value=[10, 12, 8, 11, 9, 10, 12, 8, 11, 9])
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_cb_params", side_effect=_mock_load_cb_params_clean)
+    @patch("captain_online.blocks.b5c_circuit_breaker._load_intraday_state", side_effect=_mock_load_intraday_clean)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_current_vix", return_value=20.0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._get_data_hold_count", return_value=0)
+    @patch("captain_online.blocks.b5c_circuit_breaker._check_manual_halt", return_value=False)
+    def test_scalar_default_would_trip_l1_proves_resolution_matters(self, mock_halt, mock_dh, mock_vix, mock_intra, mock_cb, mock_returns):
+        """Control: same setup but WITHOUT locked_strategies/assets_detail.
+
+        Demonstrates the bug Phase 2 fixed — without per-asset resolution,
+        the default pv=50.0 inflates rho_j and L1 trips spuriously.
+        """
+        tsm = _make_topstep_tsm(["acc_eval_1"])
+        result = run_circuit_breaker_screen(
+            recommended_trades=["MNQ"],
+            final_contracts={"MNQ": {"acc_eval_1": 15}},
+            account_recommendation={"MNQ": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"MNQ": {"acc_eval_1": None}},
+            accounts=["acc_eval_1"],
+            tsm_configs=tsm,
+            session_id=1,
+            sl_distance=4.0,
+            point_value=50.0,
+            # locked_strategies / assets_detail intentionally omitted
+        )
+
+        # rho_j = 15 * (4 * 50) = $3000 >> L_halt=$750 -> BLOCKED at L1
+        assert result["account_recommendation"]["MNQ"]["acc_eval_1"] == "BLOCKED"
+        assert "L1" in result["account_skip_reason"]["MNQ"]["acc_eval_1"]
+
+
+# ---------------------------------------------------------------------------
 # Scenario 24: Non-Topstep bypass
 # ---------------------------------------------------------------------------
 

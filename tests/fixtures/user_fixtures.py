@@ -56,6 +56,25 @@ def make_tsm_config(account_id="acc_eval_1", category="PROP_EVAL",
         }),
     }
     base.update(overrides)
+    # Phase 1B/3 (F-03/F-07/F-08): mirror SOD-frozen state into D08.topstep_state.
+    # Computed from the post-override topstep_params + current_balance so that
+    # B5C's SOD-preferred path produces the same numeric outcome as its
+    # cold-start fallback (i.e. existing L1/L2 tests stay green).
+    if "topstep_state" not in overrides:
+        try:
+            tp = json.loads(base.get("topstep_params") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            tp = {}
+        c = tp.get("c", 0.5)
+        e = tp.get("e", 0.01)
+        bal = base.get("current_balance", 0.0) or 0.0
+        base["topstep_state"] = json.dumps({
+            "computed_sod": {
+                "L_halt": c * e * bal,
+                "E_daily_exposure": e * bal,
+                "computed_at": "1970-01-01T00:00:00Z",
+            },
+        })
     return base
 
 

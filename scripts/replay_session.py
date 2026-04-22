@@ -23,7 +23,10 @@ import sys
 import os
 from datetime import datetime, timedelta, date, time as dtime, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "captain-online"))
+sys.path.insert(0, os.path.join(_ROOT, "captain-command"))
 sys.path.insert(0, "/app")
 
 
@@ -411,7 +414,33 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
     final = min(math.floor(raw), mdd_cap, daily_cap, max_contracts)
     final = max(final, 0)
 
-    # Step 10: Circuit breaker L1 preemptive halt — abs(L_t) + rho_j >= c * e * A
+    # Step 10: Circuit breaker via canonical B5C (Phase 6 / F-11).
+    # Replaces the previous hand-rolled L1 loop (binary block per spec, not
+    # contract-decrement). One canonical CB across production + replay — no
+    # local fallback per amendment plan anti-pattern guard.
+    from captain_online.blocks.b5c_circuit_breaker import run_circuit_breaker_screen
+    ac_id = tsm.get("account_id", "replay_account")
+    cb_tsm = dict(tsm)
+    cb_tsm.setdefault("topstep_optimisation", True)
+    cb_result = run_circuit_breaker_screen(
+        recommended_trades=[asset_id],
+        final_contracts={asset_id: {ac_id: final}},
+        account_recommendation={asset_id: {ac_id: "TRADE"}},
+        account_skip_reason={asset_id: {ac_id: None}},
+        accounts=[ac_id],
+        tsm_configs={ac_id: cb_tsm},
+        session_id=session_id,
+        sl_distance=sl_dist,
+        point_value=point_value,
+        fee_per_trade=tsm.get("commission_per_contract", 0.0) or 0.0,
+        locked_strategies={asset_id: strategy} if strategy else None,
+        assets_detail={asset_id: {"point_value": point_value}},
+        open_positions=[],  # No live positions in replay
+    )
+    cb_blocked = asset_id not in cb_result["recommended_trades"]
+    final = cb_result["final_contracts"][asset_id][ac_id]
+
+    # Reporting fields (mirror canonical B5C cold-start math for log parity)
     topstep_params = tsm.get("topstep_params", {})
     if isinstance(topstep_params, str):
         topstep_params = json.loads(topstep_params) if topstep_params else {}
@@ -419,12 +448,6 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
     e = topstep_params.get("e", 0.01)
     l_halt = c * e * user_capital
     rho_j = final * fallback_risk
-    cb_blocked = False
-    if rho_j >= l_halt and final > 0:
-        cb_blocked = True
-        while final > 0 and (final * fallback_risk) >= l_halt:
-            final -= 1
-        final = max(final, 0)
 
     return {
         "contracts": final,
