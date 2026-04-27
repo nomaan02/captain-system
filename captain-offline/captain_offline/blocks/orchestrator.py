@@ -704,6 +704,18 @@ class OfflineOrchestrator:
                         )
                         logger.warning("P1/P2 rerun for %s requires manual execution", asset_id)
 
+                        # Record the rerun request timestamp for D3 staleness scoring
+                        try:
+                            with get_cursor() as cur:
+                                cur.execute(
+                                    """INSERT INTO p3_d22b_asset_rerun_status
+                                       (asset, last_p1p2_rerun_ts, rerun_trigger, last_updated)
+                                       VALUES (%s, now(), 'LEVEL3_STALENESS', now())""",
+                                    (asset_id,),
+                                )
+                        except Exception as exc:
+                            logger.warning("D22b rerun timestamp write failed for %s: %s", asset_id, exc)
+
                     else:
                         result_status = "UNKNOWN_TYPE"
                         result_msg = f"Unrecognised job type: {job_type}"

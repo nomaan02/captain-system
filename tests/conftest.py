@@ -42,8 +42,11 @@ from tests.fixtures.aim_fixtures import (
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def mock_shared_db(monkeypatch):
-    """Mock shared.questdb_client.get_cursor globally."""
+def mock_shared_db(request, monkeypatch):
+    """Mock shared.questdb_client.get_cursor globally (skipped for @pytest.mark.real_questdb)."""
+    if request.node.get_closest_marker("real_questdb"):
+        return None
+
     mock_cursor = MagicMock()
     mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
     mock_cursor.__exit__ = MagicMock(return_value=False)

@@ -185,6 +185,31 @@ CREATE TABLE IF NOT EXISTS p3_d07_correlation_model_states (
 DEDUP UPSERT KEYS(last_updated);
 """
 
+# --------------------------------------------------------------------- #
+# P2 research output tables (read-only at runtime; populated by P1/P2   #
+# pipeline reruns or the offline seed scripts)                           #
+# --------------------------------------------------------------------- #
+#
+# Phase 1: table created empty. Online B1 still synthesises regime model
+# params from p3_d00_asset_universe.locked_strategy (deferred to Phase 7).
+# When Phase 7 ships, _load_regime_models() switches to SELECT FROM this table.
+P2_D07_REGIME_MODELS = """
+CREATE TABLE IF NOT EXISTS p2_d07_regime_models (
+    asset                SYMBOL,
+    model_type           STRING,
+    feature_list         STRING,
+    pettersson_threshold DOUBLE,
+    regime_label         STRING,
+    training_period      STRING,
+    n_training_obs       INT,
+    best_hyperparams     STRING,
+    cv_score             DOUBLE,
+    trained_at           TIMESTAMP,
+    last_updated         TIMESTAMP
+) TIMESTAMP(last_updated) PARTITION BY MONTH WAL
+DEDUP UPSERT KEYS(last_updated, asset);
+"""
+
 D08_TSM_STATE = """
 CREATE TABLE IF NOT EXISTS p3_d08_tsm_state (
     account_id SYMBOL,
@@ -313,6 +338,12 @@ CREATE TABLE IF NOT EXISTS p3_d25_circuit_breaker_params (
 DEDUP UPSERT KEYS(last_updated, account_id);
 """
 
+# Q-27 RATIFIED 2026-04-27 — column set matches decisions log §4.3 exactly.
+# Canonical name: p3_d26_hmm_opportunity_state (decisions doc uses shorthand
+# "p3_d26_hmm_states" — per Q-02 code name is authoritative).
+# Writer split (per Q-11 interpretation, subject to Isaac re-confirm):
+#   offline PG-01C → hmm_params, training_window, n_observations, last_trained
+#   online PG-23/PG-25B → current_state_probs, opportunity_weights, last_updated
 D26_HMM_OPPORTUNITY_STATE = """
 CREATE TABLE IF NOT EXISTS p3_d26_hmm_opportunity_state (
     hmm_params STRING,
@@ -386,6 +417,7 @@ CREATE TABLE IF NOT EXISTS p3_d03_trade_outcome_log (
     aim_breakdown_at_entry STRING,
     session INT,
     tsm_used STRING,
+    model_m INT,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY DAY WAL
 DEDUP UPSERT KEYS(ts, trade_id);
@@ -521,6 +553,16 @@ CREATE TABLE IF NOT EXISTS p3_d22_system_health_diagnostic (
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
 DEDUP UPSERT KEYS(ts);
+"""
+
+D22B_ASSET_RERUN_STATUS = """
+CREATE TABLE IF NOT EXISTS p3_d22b_asset_rerun_status (
+    asset                SYMBOL,
+    last_p1p2_rerun_ts   TIMESTAMP,
+    rerun_trigger        STRING,
+    last_updated         TIMESTAMP
+) TIMESTAMP(last_updated) PARTITION BY MONTH WAL
+DEDUP UPSERT KEYS(asset);
 """
 
 D27_PSEUDOTRADER_FORECASTS = """
@@ -763,6 +805,7 @@ CANONICAL_DDLS: list[str] = [
     D19_RECONCILIATION_LOG,
     D21_INCIDENT_LOG,
     D22_SYSTEM_HEALTH_DIAGNOSTIC,
+    D22B_ASSET_RERUN_STATUS,
     D27_PSEUDOTRADER_FORECASTS,
     D28_ACCOUNT_LIFECYCLE,
     # Market-data / bootstrap
@@ -777,7 +820,23 @@ CANONICAL_DDLS: list[str] = [
     REPLAY_RESULTS,
     REPLAY_PRESETS,
     OFFLINE_JOB_QUEUE,
+    # P2 research output (empty at install; populated by pipeline reruns)
+    P2_D07_REGIME_MODELS,
     AUDIT_LOG,
+]
+
+
+# ---------------------------------------------------------------------------
+# Additive column migrations (idempotent ALTER TABLE runs).
+# Format: (migration_id, alter_sql)
+# init_questdb.py applies these after the CREATE TABLE loop.
+# ---------------------------------------------------------------------------
+CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
+    # Batch 2 — Q-06 / F-06
+    (
+        "M001_d03_add_model_m",
+        "ALTER TABLE p3_d03_trade_outcome_log ADD COLUMN model_m INT",
+    ),
 ]
 
 

@@ -39,6 +39,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _get_locked_m(asset: str) -> int | None:
+    """Return locked-strategy m from p3_d00_asset_universe, or None."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT locked_strategy FROM p3_d00_asset_universe "
+                "WHERE asset_id = %s LATEST ON last_updated PARTITION BY asset_id",
+                (asset,),
+            )
+            row = cur.fetchone()
+        if row and row[0]:
+            return json.loads(row[0]).get("m")
+    except Exception:
+        pass
+    return None
+
+
 CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.M26")
 USER_ID = "primary_user"
 ACCOUNT_ID = "20260837"
@@ -368,19 +386,21 @@ class PaperTrader:
 
     def _log_trade_open(self, pos: Position):
         """Insert OPEN trade into P3-D03."""
+        model_m = _get_locked_m("ES")
         try:
             with get_cursor() as cur:
                 cur.execute(
                     """INSERT INTO p3_d03_trade_outcome_log (
                         trade_id, user_id, account_id, asset, direction,
                         entry_price, contracts, outcome, entry_time,
-                        session, ts
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                        session, model_m, ts
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
                     (
                         pos.trade_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
                         pos.entry_price, pos.contracts, "OPEN",
                         pos.entry_time.isoformat(), 1,  # session 1 = NY
+                        model_m,
                     ),
                 )
         except Exception as exc:
@@ -389,6 +409,7 @@ class PaperTrader:
     def _log_trade_close(self, pos: Position, exit_price: float,
                          net_pnl: float, commission: float):
         """Insert closed trade into P3-D03."""
+        model_m = _get_locked_m("ES")
         try:
             with get_cursor() as cur:
                 cur.execute(
@@ -396,8 +417,8 @@ class PaperTrader:
                         trade_id, user_id, account_id, asset, direction,
                         entry_price, exit_price, contracts,
                         gross_pnl, commission, pnl, outcome,
-                        entry_time, exit_time, session, ts
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
+                        entry_time, exit_time, session, model_m, ts
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
                     (
                         pos.trade_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
@@ -406,6 +427,7 @@ class PaperTrader:
                         round(net_pnl, 2), pos.status,
                         pos.entry_time.isoformat(),
                         datetime.now(timezone.utc).isoformat(), 1,  # session 1 = NY
+                        model_m,
                     ),
                 )
         except Exception as exc:

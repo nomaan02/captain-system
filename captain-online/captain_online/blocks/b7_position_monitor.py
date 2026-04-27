@@ -43,6 +43,24 @@ from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
+
+def _get_locked_m(asset: str) -> int | None:
+    """Return the locked-strategy m for asset from p3_d00_asset_universe."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT locked_strategy FROM p3_d00_asset_universe "
+                "WHERE asset_id = %s LATEST ON last_updated PARTITION BY asset_id",
+                (asset,),
+            )
+            row = cur.fetchone()
+        if row and row[0]:
+            return json.loads(row[0]).get("m")
+    except Exception:
+        pass
+    return None
+
+
 POLL_INTERVAL_SECONDS = 10
 VIX_SPIKE_Z_THRESHOLD = 2.0  # Spec §2 B7: z-score against 60-day trailing
 
@@ -278,6 +296,7 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     """Write trade outcome to P3-D03."""
     aim_bd_str = json.dumps(aim_breakdown, default=str) if aim_breakdown else None
     entry_ts = entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time
+    model_m = _get_locked_m(asset)
 
     with get_cursor() as cur:
         cur.execute(
@@ -286,14 +305,14 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
                 entry_price, signal_entry_price, exit_price, contracts,
                 gross_pnl, commission, pnl, slippage, outcome,
                 entry_time, regime_at_entry, aim_modifier_at_entry,
-                aim_breakdown_at_entry, session, tsm_used, ts)
+                aim_breakdown_at_entry, session, tsm_used, model_m, ts)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, now())""",
+                       %s, %s, %s, %s, %s, %s, %s, now())""",
             (trade_id, user_id, account_id, asset, direction,
              entry_price, signal_entry_price, exit_price, contracts,
              gross_pnl, commission, net_pnl, slippage, outcome,
              entry_ts, regime_at_entry, aim_modifier,
-             aim_bd_str, session, tsm_used),
+             aim_bd_str, session, tsm_used, model_m),
         )
 
 

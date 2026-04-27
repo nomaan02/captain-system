@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.canonical_schemas import CANONICAL_DDLS, table_name_of
+from shared.canonical_schemas import CANONICAL_DDLS, CANONICAL_MIGRATIONS, table_name_of
 
 
 def init_questdb() -> bool:
@@ -32,6 +32,20 @@ def init_questdb() -> bool:
 
     if ok:
         print(f"  {len(CANONICAL_DDLS)} tables created/verified.")
+
+    print(f"  Applying {len(CANONICAL_MIGRATIONS)} additive migrations...")
+    for migration_id, alter_sql in CANONICAL_MIGRATIONS:
+        try:
+            with get_cursor() as cur:
+                cur.execute(alter_sql)
+            print(f"  [OK] {migration_id}")
+        except Exception as exc:
+            if "already exists" in str(exc).lower() or "duplicate" in str(exc).lower():
+                print(f"  [SKIP] {migration_id} (column already present)")
+            else:
+                print(f"  [FAIL] {migration_id}: {exc}")
+                ok = False
+
     return ok
 
 

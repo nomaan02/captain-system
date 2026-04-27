@@ -225,7 +225,7 @@ def _load_from_d03(asset: str,
     with get_cursor() as cur:
         cur.execute(
             f"""SELECT trade_id, pnl, contracts, entry_time, direction,
-                       regime_at_entry, session, account_id
+                       regime_at_entry, session, account_id, model_m
                 FROM p3_d03_trade_outcome_log
                 WHERE {where_clause}
                 ORDER BY ts ASC""",
@@ -235,7 +235,7 @@ def _load_from_d03(asset: str,
 
     trades = []
     for row in rows:
-        trade_id, pnl, contracts, entry_time, direction, regime, session, acct = row
+        trade_id, pnl, contracts, entry_time, direction, regime, session, acct, model_m = row
 
         # Extract day from entry_time
         if isinstance(entry_time, datetime):
@@ -253,7 +253,7 @@ def _load_from_d03(asset: str,
             "pnl": float(pnl) if pnl else 0.0,
             "contracts": int(contracts) if contracts else 1,
             "ts": ts,
-            "model": 4,  # default model — D03 doesn't store model index
+            "model": int(model_m) if model_m is not None else 4,
             "asset": asset.upper(),
             "direction": int(direction) if direction else 0,
             "regime": regime or "",
@@ -297,9 +297,9 @@ def seed_d03_from_synthetic(asset: str = "ES",
                     entry_price, signal_entry_price, exit_price, contracts,
                     gross_pnl, commission, pnl, slippage, outcome,
                     entry_time, regime_at_entry, aim_modifier_at_entry,
-                    aim_breakdown_at_entry, session, tsm_used, ts)
+                    aim_breakdown_at_entry, session, tsm_used, model_m, ts)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, now())""",
+                           %s, %s, %s, %s, %s, %s, %s, now())""",
                 (
                     f"SYN-{asset}-{i:06d}",
                     user_id, account_id, asset.upper(),
@@ -312,6 +312,7 @@ def seed_d03_from_synthetic(asset: str = "ES",
                     str(t.get("regime", "")),
                     1.0, None, 1,  # aim_modifier=1, session=NY
                     "SYNTHETIC",
+                    t.get("model_m"),
                 ),
             )
 

@@ -272,7 +272,8 @@ def compute_d3(action_queue: list) -> float:
         row = cur.fetchone()
     days_since_injection = _safe_days_since(row[0] if row else None)
 
-    # Regime model ages per asset (from locked_strategy timestamp in P3-D00)
+    # Regime model ages per asset (from locked_strategy timestamp in P3-D00;
+    # prefer p3_d22b per-asset rerun time when present)
     with get_cursor() as cur:
         cur.execute(
             "SELECT asset_id, locked_strategy, last_updated "
@@ -280,11 +281,24 @@ def compute_d3(action_queue: list) -> float:
         )
         asset_rows = cur.fetchall()
 
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT asset, last_p1p2_rerun_ts FROM p3_d22b_asset_rerun_status "
+            "LATEST ON last_updated PARTITION BY asset"
+        )
+        rerun_rows = cur.fetchall()
+    rerun_ts_by_asset = {row[0]: row[1] for row in (rerun_rows or [])}
+
     regime_model_ages = {}
     for ar in asset_rows:
         s = json.loads(ar[1]) if ar[1] else {}
-        # Use strategy timestamp or P2 completion date if available
-        regime_ts = s.get("p2_locked_at") or s.get("timestamp") or ar[2]
+        # Prefer actual rerun timestamp; fall back to locked_strategy proxy
+        regime_ts = (
+            rerun_ts_by_asset.get(ar[0])
+            or s.get("p2_locked_at")
+            or s.get("timestamp")
+            or ar[2]
+        )
         regime_model_ages[ar[0]] = _safe_days_since(regime_ts)
 
     max_regime_age = max(regime_model_ages.values()) if regime_model_ages else 0
