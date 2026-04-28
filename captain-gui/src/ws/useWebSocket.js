@@ -118,6 +118,10 @@ export default function useWebSocket(userId = "primary_user") {
           setCommandAck(data);
           break;
 
+        case "trade_closed":
+          useDashboardStore.getState().applyTradeClosed(data);
+          break;
+
         case "notification":
           addNotification({
             notif_id: data.notif_id,

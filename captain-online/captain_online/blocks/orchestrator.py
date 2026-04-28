@@ -309,6 +309,13 @@ class OnlineOrchestrator:
             )
             self.plog.info(f"B3: AIM aggregation \u2014 {n_assets} assets scored", source="b3_aim")
 
+            try:
+                from captain_online.blocks.hmm_inference_block import persist_online_hmm_inference
+
+                persist_online_hmm_inference(session_id, data["active_assets"])
+            except Exception as hmm_exc:
+                logger.warning("[aim16-online] inference persist skipped: %s", hmm_exc)
+
             write_checkpoint("ONLINE", f"SESSION_{session_name}", "shared_done", "per_user_loop")
 
             # ──── PER-USER SIZING LOOP (B4-B5C) ────

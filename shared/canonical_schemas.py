@@ -341,9 +341,12 @@ DEDUP UPSERT KEYS(last_updated, account_id);
 # Q-27 RATIFIED 2026-04-27 — column set matches decisions log §4.3 exactly.
 # Canonical name: p3_d26_hmm_opportunity_state (decisions doc uses shorthand
 # "p3_d26_hmm_states" — per Q-02 code name is authoritative).
-# Writer split (per Q-11 interpretation, subject to Isaac re-confirm):
-#   offline PG-01C → hmm_params, training_window, n_observations, last_trained
-#   online PG-23/PG-25B → current_state_probs, opportunity_weights, last_updated
+# Writer split (Q-11): confirmed Phase 10 plan — merge implemented in Batch 10.4+
+# (`save_hmm_state` offline merges inference columns from prior LATEST row):
+#   offline PG-01C → hmm_params, training_window, n_observations, last_trained,
+#                    cold_start (training-derived)
+#   online PG-23/PG-25B → current_state_probs, opportunity_weights,
+#                          prior_alpha ([CONFIRM] smoothing carry), last_updated (inference)
 D26_HMM_OPPORTUNITY_STATE = """
 CREATE TABLE IF NOT EXISTS p3_d26_hmm_opportunity_state (
     hmm_params STRING,

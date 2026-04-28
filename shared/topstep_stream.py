@@ -54,6 +54,24 @@ def _extract_dict(data) -> Any:
     return data
 
 
+def _normalize_hub_payload(data) -> Any:
+    """Fold PascalCase Gateway keys (Id, AccountId) to camelCase for Python handlers.
+
+    ProjectX hubs may serialize C# POCOs as PascalCase JSON; our callbacks use
+    camelCase (.get(\"id\"), .get(\"contractId\")).
+    """
+    extracted = _extract_dict(data)
+    if not isinstance(extracted, dict):
+        return extracted
+    out: dict[str, Any] = {}
+    for k, v in extracted.items():
+        nk = k
+        if len(k) >= 2 and k[0].isupper() and k[1].islower():
+            nk = k[0].lower() + k[1:]
+        out[nk] = v
+    return out
+
+
 class StreamState(str, Enum):
     IDLE = "IDLE"
     CONNECTING = "CONNECTING"
@@ -668,7 +686,7 @@ class UserStream:
     # -- Business logic handlers (UNCHANGED) --------------------------------
 
     def _handle_account(self, data) -> None:
-        data = _extract_dict(data)
+        data = _normalize_hub_payload(data)
         if isinstance(data, dict):
             with self._lock:
                 self._account_cache = data
@@ -676,12 +694,12 @@ class UserStream:
             self._on_account_update(data)
 
     def _handle_order(self, data) -> None:
-        data = _extract_dict(data)
+        data = _normalize_hub_payload(data)
         if self._on_order_update:
             self._on_order_update(data)
 
     def _handle_position(self, data) -> None:
-        data = _extract_dict(data)
+        data = _normalize_hub_payload(data)
         if isinstance(data, dict):
             pos_id = str(data.get("id", ""))
             with self._lock:
@@ -693,7 +711,7 @@ class UserStream:
             self._on_position_update(data)
 
     def _handle_trade(self, data) -> None:
-        data = _extract_dict(data)
+        data = _normalize_hub_payload(data)
         if self._on_trade_update:
             self._on_trade_update(data)
 

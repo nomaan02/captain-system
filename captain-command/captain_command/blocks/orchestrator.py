@@ -39,8 +39,10 @@ from shared.redis_client import (
     ack_message,
     STREAM_SIGNALS,
     STREAM_COMMANDS,
+    STREAM_TRADE_OUTCOMES,
     GROUP_COMMAND_SIGNALS,
     GROUP_COMMAND_COMMANDS,
+    GROUP_COMMAND_GUI_OUTCOMES,
 )
 from shared.process_logger import ProcessLogger
 from shared.journal import write_checkpoint
@@ -75,6 +77,7 @@ from captain_command.blocks.b7_notifications import (
 )
 from captain_command.blocks.b8_reconciliation import run_daily_reconciliation
 from captain_command.blocks.b9_incident_response import create_incident
+from captain_command.blocks.trade_gui_bridge import build_trade_closed_ws_payload
 from captain_command.api import (
     gui_push,
     update_process_health,
@@ -150,6 +153,12 @@ class CommandOrchestrator:
             target=self._process_log_forwarder, daemon=True, name="cmd-plog"
         )
         self._plog_thread.start()
+
+        # Background thread 5: Trade outcomes → GUI WebSocket (stream:trade_outcomes)
+        self._trade_gui_thread = threading.Thread(
+            target=self._trade_outcomes_gui_forwarder, daemon=True, name="cmd-trade-gui"
+        )
+        self._trade_gui_thread.start()
 
         # Signal API health gate — orchestrator threads are up
         from captain_command.api import set_orchestrator_ready
@@ -355,6 +364,58 @@ class CommandOrchestrator:
                 if self.running:
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 30)
+
+    def _trade_outcomes_gui_forwarder(self):
+        """Consume Redis Stream trade outcomes (separate group from Offline).
+
+        Mirrors ``offline_outcomes`` — publishes ``trade_closed`` to GUI WebSockets.
+        """
+        logger.info("Trade outcomes GUI forwarder started")
+        backoff = 1
+
+        while self.running:
+            try:
+                ensure_consumer_group(STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES)
+                backoff = 1
+
+                pending = read_pending_stream(
+                    STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES, "command_gui_1",
+                )
+                for msg_id, data in pending:
+                    self._forward_trade_closed_ws(data)
+                    ack_message(STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES, msg_id)
+                if pending:
+                    logger.info(
+                        "Recovered %d pending trade outcome(s) for GUI forwarder",
+                        len(pending),
+                    )
+
+                while self.running:
+                    for msg_id, data in read_stream(
+                        STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES,
+                        "command_gui_1", block=2000,
+                    ):
+                        self._forward_trade_closed_ws(data)
+                        ack_message(STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES, msg_id)
+
+            except Exception as exc:
+                if not self.running:
+                    return
+                logger.error(
+                    "Trade outcomes GUI forwarder error: %s — reconnecting in %ds",
+                    exc, backoff,
+                )
+                if self.running:
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+
+    def _forward_trade_closed_ws(self, data: dict):
+        """Push a normalized ``trade_closed`` message to the user's dashboard WS."""
+        pair = build_trade_closed_ws_payload(data)
+        if pair is None:
+            return
+        uid, body = pair
+        gui_push(uid, body)
 
     # ------------------------------------------------------------------
     # Message handlers

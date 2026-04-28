@@ -306,19 +306,20 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
 
     with get_cursor() as cur:
+        exit_ts = now_et().isoformat()
         cur.execute(
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, signal_id, user_id, account_id, asset, direction,
                 entry_price, signal_entry_price, exit_price, contracts,
                 gross_pnl, commission, pnl, slippage, outcome,
-                entry_time, regime_at_entry, aim_modifier_at_entry,
+                entry_time, exit_time, regime_at_entry, aim_modifier_at_entry,
                 aim_breakdown_at_entry, session, tsm_used, model_m, ts)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                       %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
             (trade_id, sig_id, user_id, account_id, asset, direction,
              entry_price, signal_entry_price, exit_price, contracts,
              gross_pnl, commission, net_pnl, slippage, outcome,
-             entry_ts, regime_at_entry, aim_modifier,
+             entry_ts, exit_ts, regime_at_entry, aim_modifier,
              aim_bd_str, session, tsm_used, model_m),
         )
 
@@ -403,8 +404,10 @@ def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commissi
     """
     import time
 
+    closed_at = now_et().isoformat()
     payload = {
         "trade_id": trade_id,
+        "signal_id": pos.get("signal_id"),
         "user_id": pos["user_id"],
         "asset": pos["asset"],
         "direction": pos.get("direction", 1),
@@ -415,12 +418,16 @@ def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commissi
         "commission": commission,
         "slippage": slippage,
         "outcome": outcome,
+        "tp_level": pos.get("tp_level"),
+        "sl_level": pos.get("sl_level"),
+        "entry_time": pos.get("entry_time"),
+        "exit_time": closed_at,
         "regime_at_entry": pos.get("regime_state"),
         "aim_modifier_at_entry": pos.get("combined_modifier"),
         "aim_breakdown_at_entry": pos.get("aim_breakdown"),
         "session": pos.get("session"),
         "account": pos.get("account"),
-        "timestamp": now_et().isoformat(),
+        "timestamp": closed_at,
     }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):

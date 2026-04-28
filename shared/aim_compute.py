@@ -112,6 +112,10 @@ def run_aim_aggregation(
 
         for aim_id in range(1, 17):
             aim_name = _AIM_NAMES.get(aim_id, f"AIM-{aim_id}")
+            if aim_id == 16:
+                # DEC-06 / doc 33 PG-23: AIM-16 drives session budget via D26 + B5 — not MoE.
+                skipped.append("16-HMM:SESSION_BUDGET_ONLY")
+                continue
             # Check AIM status
             key = (asset_id, aim_id)
             state = aim_states.get("by_asset_aim", {}).get(key)
@@ -695,15 +699,11 @@ def _aim15_volume(f: dict, state: dict) -> dict:
 
 
 def _aim16_hmm(f: dict, state: dict) -> dict:
-    """AIM-16: HMM Opportunity (from Offline B1 HMM training).
+    """AIM-16 is session-budget via D26/B5 — excluded from MoE (see run_aim_aggregation).
 
-    Modifier is read from the AIM state — Offline computes the HMM-based
-    opportunity weight and stores it as current_modifier.
-    """
-    current = state.get("current_modifier")
-    if current is not None and isinstance(current, dict):
-        modifier = current.get("modifier", 1.0)
-        tag = current.get("reason_tag", "HMM_FROM_OFFLINE")
-        return {"modifier": modifier, "confidence": 0.6, "reason_tag": tag}
-
-    return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "HMM_NO_DATA"}
+    If invoked directly, neutral modifier with explicit tag."""
+    return {
+        "modifier": 1.0,
+        "confidence": 1.0,
+        "reason_tag": "HMM_SESSION_BUDGET_ONLY",
+    }

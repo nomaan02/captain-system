@@ -15,6 +15,21 @@ const normalizePositions = (positions) =>
 const normalizeSignals = (signals) =>
   signals.map((s) => ({ ...s, direction: normalizeDirection(s.direction) }));
 
+const LS_CLOSED_KEY = "captain:closedTrades";
+
+function loadClosedFromStorage() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_CLOSED_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.map((t) => ({
+      ...t,
+      direction: normalizeDirection(t.direction),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 const useDashboardStore = create((set, get) => ({
   // Connection state
   connected: false,
@@ -36,7 +51,7 @@ const useDashboardStore = create((set, get) => ({
   capitalSilo: null,
   dailyTradeStats: null,
   openPositions: [],
-  closedTrades: [],
+  closedTrades: loadClosedFromStorage(),
   pendingSignals: [],
   signalHistory: JSON.parse(localStorage.getItem("captain:signalHistory") || "[]"),
   aimStates: [],
@@ -63,7 +78,12 @@ const useDashboardStore = create((set, get) => ({
       openPositions: snapshot.open_positions
         ? normalizePositions(snapshot.open_positions)
         : state.openPositions,
-      closedTrades: snapshot.closed_trades ?? snapshot.trade_history ?? state.closedTrades,
+      closedTrades:
+        snapshot.closed_trades !== undefined && snapshot.closed_trades !== null
+          ? normalizePositions(snapshot.closed_trades)
+          : snapshot.trade_history !== undefined && snapshot.trade_history !== null
+            ? normalizePositions(snapshot.trade_history)
+            : state.closedTrades,
       pendingSignals: snapshot.pending_signals
         ? normalizeSignals(snapshot.pending_signals)
         : state.pendingSignals,
@@ -128,6 +148,33 @@ const useDashboardStore = create((set, get) => ({
       pendingSignals: state.pendingSignals.filter((s) => s.signal_id !== signalId),
       ...(state.selectedSignalId === signalId ? { selectedSignalId: null } : {}),
     })),
+
+  /** Live WS ``trade_closed`` + dedupe by ``trade_id``; persists to localStorage. */
+  applyTradeClosed: (row) =>
+    set((state) => {
+      const tid = row.trade_id;
+      if (!tid) return {};
+      if (state.closedTrades.some((t) => t.trade_id === tid)) return {};
+      const normalized = {
+        ...row,
+        direction: normalizeDirection(row.direction),
+        asset_id: row.asset_id ?? row.asset,
+      };
+      const next = [normalized, ...state.closedTrades].slice(0, 200);
+      try {
+        localStorage.setItem(LS_CLOSED_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore quota */
+      }
+      const sid = row.signal_id;
+      const pendingSignals =
+        sid != null && sid !== ""
+          ? state.pendingSignals.filter((s) => s.signal_id !== sid)
+          : state.pendingSignals;
+      const selectedSignalId =
+        sid && state.selectedSignalId === sid ? null : state.selectedSignalId;
+      return { closedTrades: next, pendingSignals, selectedSignalId };
+    }),
 
   clearSignals: () => {
     const { pendingSignals, signalHistory } = get();

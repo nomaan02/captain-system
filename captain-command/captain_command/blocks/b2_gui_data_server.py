@@ -121,6 +121,7 @@ def build_dashboard_snapshot(user_id: str) -> dict:
         "capital_silo": _get_capital_silo(user_id, stream),
         "open_positions": _get_open_positions(user_id),
         "pending_signals": _get_pending_signals(user_id),
+        "closed_trades": _get_closed_trades(user_id),
         "aim_states": _get_aim_states(user_id),
         "tsm_status": _get_tsm_status(user_id, stream),
         "decay_alerts": _get_decay_alerts(),
@@ -368,6 +369,54 @@ def _get_open_positions(user_id: str) -> list[dict]:
             ]
     except Exception as exc:
         logger.error("Open positions query failed: %s", exc, exc_info=True)
+    return []
+
+
+def _serialize_trade_ts(val) -> str | None:
+    """ISO8601 string for dashboard JSON (QuestDB may return datetime or str)."""
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        try:
+            return val.isoformat()
+        except Exception:
+            return str(val)
+    return str(val)
+
+
+def _get_closed_trades(user_id: str, limit: int = 50) -> list[dict]:
+    """Resolved trades from P3-D03 for Trade Log panel (session persistence via REST/snapshot)."""
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT trade_id, signal_id, asset, direction, entry_price, exit_price,
+                          contracts, pnl, outcome, entry_time, exit_time, ts
+                   FROM p3_d03_trade_outcome_log
+                   WHERE user_id = %s AND outcome IS NOT NULL
+                   ORDER BY ts DESC
+                   LIMIT %s""",
+                (user_id, limit),
+            )
+            rows = []
+            for r in cur.fetchall():
+                exit_display = _serialize_trade_ts(r[10]) or _serialize_trade_ts(r[11])
+                rows.append({
+                    "trade_id": r[0],
+                    "signal_id": r[1],
+                    "asset": r[2],
+                    "asset_id": r[2],
+                    "direction": r[3],
+                    "entry_price": r[4],
+                    "exit_price": r[5],
+                    "contracts": r[6],
+                    "pnl": r[7],
+                    "outcome": r[8],
+                    "entry_time": _serialize_trade_ts(r[9]),
+                    "exit_time": exit_display,
+                })
+            return rows
+    except Exception as exc:
+        logger.error("Closed trades query failed: %s", exc, exc_info=True)
     return []
 
 

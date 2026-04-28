@@ -6,19 +6,21 @@ except ImportError:
 # endregion
 """System Health Diagnostic — P3-PG-16B (Tasks 2.9a, 2.9b / OFF lines 717-1021).
 
-8-dimension diagnostic with QUEUE_ACTION helper for human action items.
+8-dimension table in spec; **7 scored in v1** (D7 deferred per Q-21) diagnostic with QUEUE_ACTION helper for human action items.
 
 Dimensions:
   D1: Strategy Portfolio Health (diversity, freshness, OO scores)
   D2: Feature Portfolio Health (distinct features, reuse, decay flags)
-  D3: Model Staleness (P1/P2 ages, regime model, AIM retrain)
-  D4: AIM Effectiveness (active count, dormant, dominant, warmup)
+  D3: Model Staleness (per-asset P1/P2 age from p3_d22b.last_p1p2_rerun_ts — Q-19)
+  D4: AIM Effectiveness (rolling monthly modifier-vs-PnL hit rate — Q-20)
   D5: Edge Trajectory (30/60/90d edge, trend, regime breakdown) — MONTHLY only
   D6: Data Coverage Gaps (AIM missing rates, asset holds)
-  D7: Research Pipeline (injection recency, unresolved Level 3)
+  D7: deferred (Q-21 v1 — not scored)
   D8: Resolution Verification (resolved items verified, stale detection)
 
-Schedule: WEEKLY (D1-D4, D6-D8), MONTHLY (all D1-D8 including D5)
+Rolling monthly window for D4: MONTHLY_HIT_WINDOW_DAYS (default 31 calendar days).
+
+Schedule: WEEKLY (D1-D4, D6, D8 — no D5, no D7), MONTHLY (D1-D6 + D8 + D5)
 
 Reads: P2-D06, P2-D07, P3-D00..D06, D13, D17, D22
 Writes: P3-D22
@@ -40,11 +42,28 @@ MAX_ACTION_QUEUE_SIZE = 1000
 STALENESS_MEDIUM_DAYS = 90
 STALENESS_HIGH_DAYS = 180
 OO_WEAKNESS_THRESHOLD = 0.55
-AIM_DORMANCY_WEIGHT = 0.05
-AIM_DORMANCY_DAYS = 30
-AIM_DOMINANCE_WEIGHT = 0.30
 EDGE_DECLINE_THRESHOLD = 0.15
 ACTION_STALE_DAYS = 90
+MONTHLY_HIT_WINDOW_DAYS = 31
+
+# Q-34 / plan B4: equal weights 1/N over active dimensions (no D7 in v1).
+OVERALL_HEALTH_KEYS_WEEKLY = (
+    "strategy_portfolio",
+    "feature_portfolio",
+    "model_staleness",
+    "aim_effectiveness",
+    "data_coverage",
+    "resolution_health",
+)
+OVERALL_HEALTH_KEYS_MONTHLY = (
+    "strategy_portfolio",
+    "feature_portfolio",
+    "model_staleness",
+    "aim_effectiveness",
+    "edge_trajectory",
+    "data_coverage",
+    "resolution_health",
+)
 
 
 def _weighted_mean(items: list[tuple[float, float]]) -> float:
@@ -74,6 +93,42 @@ def _compute_edge(win_rate: float, avg_win: float, avg_loss: float) -> float:
     aw = avg_win or 0.01
     al = avg_loss or 0.01
     return wr * aw - (1 - wr) * al
+
+
+def _active_asset_p1p2_stale_days() -> dict[str, int]:
+    """Days since last_p1p2_rerun_ts per active asset from p3_d22b (Q-19).
+
+    Missing D22b row or NULL timestamp → 999 days (conservative; do not use
+    global injection history as a proxy).
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT asset_id FROM p3_d00_asset_universe WHERE captain_status = 'ACTIVE'"
+        )
+        asset_ids = [r[0] for r in cur.fetchall()]
+    if not asset_ids:
+        return {}
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT asset, last_p1p2_rerun_ts FROM p3_d22b_asset_rerun_status "
+            "LATEST ON last_updated PARTITION BY asset"
+        )
+        rerun_rows = cur.fetchall()
+    rerun_ts_by_asset = {row[0]: row[1] for row in (rerun_rows or [])}
+    out: dict[str, int] = {}
+    for aid in asset_ids:
+        ts = rerun_ts_by_asset.get(aid)
+        out[aid] = _safe_days_since(ts)
+    return out
+
+
+def _modifier_pnl_hit(modifier: float, pnl: float) -> bool | None:
+    """Q-20: modifier tilt vs realised PnL sign (None = neutral modifier, skip)."""
+    if abs(modifier - 1.0) < 1e-9:
+        return None
+    if modifier > 1.0:
+        return pnl > 0
+    return pnl < 0
 
 
 def _queue_action(action_queue: list, priority: str, category: str,
@@ -265,15 +320,15 @@ def compute_d2(action_queue: list) -> float:
 # ════════════════════════════════════════════════════════════════════════
 
 def compute_d3(action_queue: list) -> float:
-    """D3: Model Staleness — P1/P2 ages, regime model, AIM retrain ages."""
-    # Last injection date (proxy for last P1/P2 run)
-    with get_cursor() as cur:
-        cur.execute("SELECT max(ts) FROM p3_d06_injection_history")
-        row = cur.fetchone()
-    days_since_injection = _safe_days_since(row[0] if row else None)
+    """D3: Model Staleness — per-asset P1/P2 age (p3_d22b), regime model, AIM retrain.
 
-    # Regime model ages per asset (from locked_strategy timestamp in P3-D00;
-    # prefer p3_d22b per-asset rerun time when present)
+    Q-19: Primary P1/P2 staleness uses last_p1p2_rerun_ts per asset from
+    p3_d22b_asset_rerun_status; global injection timestamps are not used.
+    """
+    p1p2_age_by_asset = _active_asset_p1p2_stale_days()
+    max_p1p2_stale = max(p1p2_age_by_asset.values()) if p1p2_age_by_asset else 0
+
+    # Regime model ages per asset (locked_strategy timestamps; prefer D22b rerun)
     with get_cursor() as cur:
         cur.execute(
             "SELECT asset_id, locked_strategy, last_updated "
@@ -292,7 +347,6 @@ def compute_d3(action_queue: list) -> float:
     regime_model_ages = {}
     for ar in asset_rows:
         s = json.loads(ar[1]) if ar[1] else {}
-        # Prefer actual rerun timestamp; fall back to locked_strategy proxy
         regime_ts = (
             rerun_ts_by_asset.get(ar[0])
             or s.get("p2_locked_at")
@@ -320,15 +374,21 @@ def compute_d3(action_queue: list) -> float:
 
     max_aim_retrain = max(aim_retrain_ages.values()) if aim_retrain_ages else 999
 
-    # Queue actions
-    if days_since_injection > STALENESS_MEDIUM_DAYS:
-        priority = "HIGH" if days_since_injection > STALENESS_HIGH_DAYS else "MEDIUM"
+    # Queue: portfolio-wide P1/P2 backlog using worst per-asset staleness (Q-19)
+    if max_p1p2_stale > STALENESS_MEDIUM_DAYS:
+        worst_assets = sorted(
+            [a for a, d in p1p2_age_by_asset.items() if d > STALENESS_MEDIUM_DAYS],
+            key=lambda x: p1p2_age_by_asset[x],
+            reverse=True,
+        )[:10]
+        priority = "HIGH" if max_p1p2_stale > STALENESS_HIGH_DAYS else "MEDIUM"
         _queue_action(action_queue, priority, "RESEARCH", "D3",
                       "PIPELINE_STALENESS",
-                      f"No P1/P2 run in {days_since_injection} days",
-                      "Strategy pipeline has not been refreshed.",
-                      "Schedule full P1/P2 run across all assets",
-                      {"days_since": days_since_injection})
+                      f"No recent P1/P2 rerun for worst asset in {max_p1p2_stale} days "
+                      f"(sample stale: {worst_assets})",
+                      "Per-asset pipeline staleness from p3_d22b — refresh P1/P2 for stale assets.",
+                      "Schedule P1/P2 re-run for stale assets; verify last_p1p2_rerun_ts writers.",
+                      {"max_days_since_p1p2": max_p1p2_stale, "worst_assets": worst_assets})
 
     for asset_id, age in regime_model_ages.items():
         if age > STALENESS_HIGH_DAYS:
@@ -346,11 +406,11 @@ def compute_d3(action_queue: list) -> float:
                       "Stale AIMs may not reflect current market dynamics.",
                       "Verify weekly retrain schedule is running")
 
+    # Three independent components (no duplicate global injection term — F-35)
     return _weighted_mean([
-        (max(0, 1.0 - days_since_injection / 180.0), 0.3),       # P1/P2 freshness
-        (max(0, 1.0 - max_regime_age / 365.0), 0.3),              # regime model freshness
-        (max(0, 1.0 - max_aim_retrain / 90.0), 0.2),              # AIM retrain freshness
-        (max(0, 1.0 - days_since_injection / 180.0), 0.2),        # P2 freshness (same proxy)
+        (max(0, 1.0 - max_p1p2_stale / 180.0), 0.40),
+        (max(0, 1.0 - max_regime_age / 365.0), 0.35),
+        (max(0, 1.0 - max_aim_retrain / 90.0), 0.25),
     ])
 
 
@@ -359,78 +419,64 @@ def compute_d3(action_queue: list) -> float:
 # ════════════════════════════════════════════════════════════════════════
 
 def compute_d4(action_queue: list) -> float:
-    """D4: AIM Effectiveness — active, dormant, dominant, warmup."""
-    # Load AIM weights
+    """D4: AIM Effectiveness — rolling monthly modifier-vs-PnL hit rate (Q-20)."""
+    cutoff = (now_et() - timedelta(days=MONTHLY_HIT_WINDOW_DAYS)).isoformat()
     with get_cursor() as cur:
         cur.execute(
-            "SELECT aim_id, inclusion_probability, days_below_threshold "
-            "FROM p3_d02_aim_meta_weights ORDER BY aim_id"
+            "SELECT pnl, aim_breakdown_at_entry FROM p3_d03_trade_outcome_log "
+            "WHERE ts > %s",
+            (cutoff,),
         )
-        weight_rows = cur.fetchall()
+        rows = cur.fetchall()
 
-    # Load AIM statuses
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT aim_id, status FROM p3_d01_aim_model_states ORDER BY aim_id"
-        )
-        status_rows = cur.fetchall()
+    if not rows:
+        return 1.0
 
-    if not weight_rows:
-        return 0.0
+    # Per-AIM: informative hits / informative trades
+    inform_hits: dict[int, int] = {}
+    inform_total: dict[int, int] = {}
 
-    # Deduplicate by aim_id (latest per AIM)
-    by_aim = {}
-    for r in weight_rows:
-        if r[0] not in by_aim:
-            by_aim[r[0]] = {"prob": r[1], "days_below": r[2] or 0}
+    for pnl, breakdown_raw in rows:
+        try:
+            bd = json.loads(breakdown_raw) if breakdown_raw else {}
+        except (json.JSONDecodeError, TypeError):
+            bd = {}
+        if not isinstance(bd, dict):
+            continue
+        for aid_str, payload in bd.items():
+            try:
+                aid = int(aid_str)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            mod = float(payload.get("modifier", 1.0))
+            hit = _modifier_pnl_hit(mod, float(pnl or 0.0))
+            if hit is None:
+                continue
+            inform_total[aid] = inform_total.get(aid, 0) + 1
+            inform_hits[aid] = inform_hits.get(aid, 0) + (1 if hit else 0)
 
-    aim_statuses = {}
-    for r in status_rows:
-        if r[0] not in aim_statuses:
-            aim_statuses[r[0]] = r[1]
+    if not inform_total:
+        return 1.0
 
-    active_count = sum(1 for s in aim_statuses.values() if s == "ACTIVE")
-    warmup_count = sum(1 for s in aim_statuses.values() if s == "WARM_UP")
+    rates = []
+    low_hit_aims = []
+    for aid, n in inform_total.items():
+        hr = inform_hits.get(aid, 0) / max(n, 1)
+        rates.append(hr)
+        if n >= 5 and hr < 0.45:
+            low_hit_aims.append((aid, hr, n))
 
-    dormant = [(aid, d) for aid, d in by_aim.items()
-               if d["prob"] < AIM_DORMANCY_WEIGHT
-               and d["days_below"] > AIM_DORMANCY_DAYS
-               and aim_statuses.get(aid) == "ACTIVE"]
-
-    dominant = [(aid, d) for aid, d in by_aim.items()
-                if d["prob"] > AIM_DOMINANCE_WEIGHT]
-
-    # Queue actions for dormant AIMs
-    for aid, d in dormant:
-        _queue_action(action_queue, "LOW", "AIM_IMPROVEMENT", "D4",
-                      f"AIM_DORMANT_{aid}",
-                      f"AIM-{aid:02d} dormant — weight {d['prob']:.3f} for {d['days_below']} days",
-                      "DMA suppressed this AIM due to low predictive value.",
-                      f"Check data feed quality for AIM-{aid:02d}. If clean, AIM may be uninformative.")
-
-    # Queue actions for dominant AIMs
-    for aid, d in dominant:
+    for aid, hr, n in low_hit_aims:
         _queue_action(action_queue, "MEDIUM", "AIM_IMPROVEMENT", "D4",
-                      f"AIM_DOMINANT_{aid}",
-                      f"AIM-{aid:02d} contributes {d['prob']:.1%} — concentration risk",
-                      "System reliance on single AIM.",
-                      "Review why other AIMs are underperforming. Expand data sources.")
+                      f"AIM_HIT_RATE_LOW_{aid}",
+                      f"AIM-{aid:02d} monthly hit rate {hr:.1%} over {n} informative trades",
+                      "Modifier directional agreement with PnL below threshold.",
+                      "Review AIM inputs and regime alignment; confirm DMA modifiers.")
 
-    # Queue action for warmup backlog
-    if warmup_count > 5:
-        warming_aims = [a for a, s in aim_statuses.items() if s == "WARM_UP"]
-        _queue_action(action_queue, "LOW", "DATA_ACQUISITION", "D4",
-                      "AIM_WARMUP_BACKLOG",
-                      f"{warmup_count} AIMs still in warm-up: {warming_aims}",
-                      "Large warm-up backlog means system operates with limited intelligence.",
-                      "Provide bootstrapped historical data for slow-warming AIMs")
-
-    return _weighted_mean([
-        (active_count / 15.0, 0.3),                                   # active ratio
-        (1.0 - len(dormant) / max(active_count, 1), 0.3),             # dormancy
-        (1.0 - len(dominant) / max(active_count, 1), 0.2),            # dominance
-        (1.0 - warmup_count / 15.0, 0.2),                             # warmup backlog
-    ])
+    score = sum(rates) / len(rates)
+    return max(0.0, min(1.0, score))
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -627,90 +673,6 @@ def compute_d6(action_queue: list) -> float:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# D7: RESEARCH PIPELINE THROUGHPUT
-# ════════════════════════════════════════════════════════════════════════
-
-def compute_d7(action_queue: list) -> float:
-    """D7: Research Pipeline — injection recency, unresolved Level 3, expansion."""
-    # Days since last injection
-    with get_cursor() as cur:
-        cur.execute("SELECT max(ts) FROM p3_d06_injection_history")
-        row = cur.fetchone()
-    days_since_injection = _safe_days_since(row[0] if row else None)
-
-    # Level 3 decay events in last 90 days
-    cutoff_90d = (now_et() - timedelta(days=90)).isoformat()
-    level3_total = 0
-    level3_unresolved_assets = []
-
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT asset_id, decay_events FROM p3_d04_decay_detector_states "
-            "WHERE decay_events IS NOT NULL AND last_updated > %s",
-            (cutoff_90d,),
-        )
-        decay_rows = cur.fetchall()
-
-    for dr in decay_rows:
-        try:
-            event = json.loads(dr[1]) if dr[1] else {}
-            if isinstance(event, dict) and event.get("level") == 3:
-                level3_total += 1
-                level3_unresolved_assets.append(dr[0])
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Check which Level 3 assets have been resolved (have injection or ACTIVE status)
-    resolved_assets = set()
-    if level3_unresolved_assets:
-        with get_cursor() as cur:
-            cur.execute(
-                "SELECT asset_id FROM p3_d00_asset_universe WHERE captain_status = 'ACTIVE'"
-            )
-            active = {r[0] for r in cur.fetchall()}
-        resolved_assets = set(level3_unresolved_assets) & active
-
-    truly_unresolved = [a for a in level3_unresolved_assets if a not in resolved_assets]
-
-    # Auto-expansion attempts (from injection history with type = AUTO_EXPANSION)
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT count(), "
-            "sum(CASE WHEN outcome = 'ADOPTED' THEN 1 ELSE 0 END) "
-            "FROM p3_d06_injection_history "
-            "WHERE injection_type = 'AUTO_EXPANSION' AND ts > %s",
-            (cutoff_90d,),
-        )
-        exp_row = cur.fetchone()
-    expansion_attempts = exp_row[0] if exp_row and exp_row[0] else 0
-    expansion_successes = exp_row[1] if exp_row and exp_row[1] else 0
-
-    # Queue actions
-    if days_since_injection > 120:
-        priority = "HIGH" if days_since_injection > 180 else "MEDIUM"
-        _queue_action(action_queue, priority, "RESEARCH", "D7",
-                      "INJECTION_DROUGHT",
-                      f"No new strategy injection in {days_since_injection} days",
-                      "System is running on stale research.",
-                      "Schedule P1/P2 run. Consider new model hypotheses.",
-                      {"days_since": days_since_injection})
-
-    if truly_unresolved:
-        _queue_action(action_queue, "HIGH", "RESEARCH", "D7",
-                      "LEVEL3_UNRESOLVED",
-                      f"{len(truly_unresolved)} Level 3 decay events unresolved — "
-                      f"assets: {truly_unresolved}",
-                      "Level 3 decay halted signals but no replacement adopted.",
-                      f"Prioritise P1/P2 re-runs for {truly_unresolved}")
-
-    return _weighted_mean([
-        (max(0, 1.0 - days_since_injection / 120.0), 0.4),                    # injection recency
-        (1.0 - len(truly_unresolved) / max(level3_total, 1), 0.3),            # L3 resolution
-        (expansion_successes / max(expansion_attempts, 1), 0.3),               # expansion success
-    ])
-
-
-# ════════════════════════════════════════════════════════════════════════
 # D8: RESOLUTION VERIFICATION
 # ════════════════════════════════════════════════════════════════════════
 
@@ -818,11 +780,9 @@ def _check_constraint_resolution(constraint_type: str) -> str:
             return "NOT_IMPROVED"
 
         elif constraint_type == "PIPELINE_STALENESS":
-            with get_cursor() as cur:
-                cur.execute("SELECT max(ts) FROM p3_d06_injection_history")
-                row = cur.fetchone()
-            days = _safe_days_since(row[0] if row else None)
-            if days < STALENESS_MEDIUM_DAYS:
+            stale = _active_asset_p1p2_stale_days()
+            max_days = max(stale.values()) if stale else 0
+            if max_days < STALENESS_MEDIUM_DAYS:
                 return "IMPROVED"
             return "NOT_IMPROVED"
 
@@ -837,11 +797,19 @@ def _check_constraint_resolution(constraint_type: str) -> str:
 # AGGREGATE AND STORE
 # ════════════════════════════════════════════════════════════════════════
 
+def _overall_health_equal_weight(scores: dict, mode: str) -> float:
+    """Q-34: equal weights 1/N over active dimensions (no D7 in v1)."""
+    keys = OVERALL_HEALTH_KEYS_MONTHLY if mode == "MONTHLY" else OVERALL_HEALTH_KEYS_WEEKLY
+    vals = [scores[k] for k in keys]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 def run_diagnostic(mode: str = "WEEKLY") -> dict:
     """Execute P3-PG-16B: system health diagnostic.
 
     Args:
-        mode: "WEEKLY" (D1-D4, D6-D8) or "MONTHLY" (all D1-D8 incl D5)
+        mode: "WEEKLY" (D1-D4, D6, D8 — no D5, no D7 per Q-21) or
+              "MONTHLY" (adds D5 edge_trajectory; still no D7)
 
     Returns:
         Diagnostic result dict for P3-D22
@@ -862,10 +830,9 @@ def run_diagnostic(mode: str = "WEEKLY") -> dict:
         scores["edge_trajectory"] = compute_d5(action_queue)
 
     scores["data_coverage"] = compute_d6(action_queue)
-    scores["research_pipeline"] = compute_d7(action_queue)
     scores["resolution_health"] = compute_d8(action_queue)
 
-    overall = sum(scores.values()) / len(scores) if scores else 0.0
+    overall = _overall_health_equal_weight(scores, mode)
 
     result = {
         "mode": mode,

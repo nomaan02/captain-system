@@ -21,7 +21,9 @@ Observation Vector (z_w in R^7 per session window):
 Training: Baum-Welch EM on 60-day rolling window (240 session observations)
 Cold start: <20d disabled, 20-59d blended 50/50, 60+ full HMM
 
-Writes: P3-D26
+TVTP (doc 22 §2) deliberately absent in v1 — Q-10 decision (d); defer to Phase 10b.
+
+Writes: P3-D26 (offline merges Q-11 inference columns from prior row when present)
 """
 
 import json
@@ -29,6 +31,7 @@ import logging
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
 
+from shared.aim16_observation_panel import build_observation_panel
 from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -52,7 +55,10 @@ STATE_NAMES = {0: "LOW_OPP", 1: "NORMAL", 2: "HIGH_OPP"}
 
 
 def _label_from_pnl(pnl_values: np.ndarray) -> np.ndarray:
-    """Assign supervised labels based on PnL percentiles."""
+    """Supervised seeding for EM init — doc 22 §6 quartile P&L labelling.
+
+    Uses 25th/75th percentiles as lower/upper quartile boundaries (tertile proxy).
+    """
     p25 = np.percentile(pnl_values, 25)
     p75 = np.percentile(pnl_values, 75)
     labels = np.ones(len(pnl_values), dtype=int)  # default NORMAL
@@ -131,6 +137,11 @@ def train_aim16_hmm(observations: np.ndarray, session_pnl: np.ndarray,
     model.covars_ = init_covars
     model.fit(observations)
 
+    rowsum = model.transmat_.sum(axis=1)
+    logger.info(
+        "AIM-16 HMM: trained A row-sums=%s (expect ~1.0 each)", rowsum.round(6).tolist()
+    )
+
     # Current state probabilities from posterior on last observation
     state_probs = model.predict_proba(observations)
     current_state_probs = state_probs[-1].tolist()
@@ -164,7 +175,24 @@ def train_aim16_hmm(observations: np.ndarray, session_pnl: np.ndarray,
 
 
 def save_hmm_state(state: dict):
-    """Save HMM state to P3-D26."""
+    """Save offline training fields to P3-D26; Q-11 merge for inference columns."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT current_state_probs, opportunity_weights, prior_alpha
+              FROM p3_d26_hmm_opportunity_state
+             ORDER BY last_updated DESC LIMIT 1
+            """
+        )
+        prev = cur.fetchone()
+
+    if prev:
+        csp_s, ow_s, pa_s = prev[0], prev[1], prev[2]
+    else:
+        csp_s = json.dumps(state["current_state_probs"])
+        ow_s = json.dumps(state.get("opportunity_weights") or {})
+        pa_s = json.dumps(state.get("prior_alpha") or {})
+
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d26_hmm_opportunity_state
@@ -173,10 +201,12 @@ def save_hmm_state(state: dict):
                 cold_start, last_updated)
                VALUES (%s, %s, %s, %s, now(), %s, %s, %s, now())""",
             (
-                json.dumps(state.get("hmm_params"), default=str) if state.get("hmm_params") else None,
-                json.dumps(state["current_state_probs"]),
-                json.dumps(state.get("opportunity_weights", {})),
-                json.dumps(state.get("prior_alpha", {})),
+                json.dumps(state.get("hmm_params"), default=str)
+                if state.get("hmm_params")
+                else None,
+                csp_s,
+                ow_s,
+                pa_s,
                 state["training_window"],
                 state["n_observations"],
                 state["cold_start"],
@@ -185,22 +215,3 @@ def save_hmm_state(state: dict):
     logger.info("AIM-16 HMM state saved to P3-D26 (cold_start=%s, n_obs=%d)",
                 state["cold_start"], state["n_observations"])
 
-
-def build_observation_panel_stub(asset_universe, lookback_days: int = 60):
-    """Phase 3 placeholder per build plan §B1_F-01.
-
-    Phase 10 replaces this with the doc 22 §4 real 7-D panel. Returns
-    shape-correct zeros so train_aim16_hmm hits its cold-start branch
-    (n_trading_days < 20 -> equal-prob output) without raising.
-
-    Args:
-        asset_universe: Active asset list (unused in stub; Phase 10 uses it).
-        lookback_days: Sliding window length (unused in stub).
-
-    Returns:
-        (observations, session_pnl, n_trading_days) — empty 7-D panel,
-        empty PnL vector, 0 trading days (forces cold-start).
-    """
-    obs = np.zeros((0, N_FEATURES), dtype=float)
-    session_pnl = np.zeros((0,), dtype=float)
-    return obs, session_pnl, 0

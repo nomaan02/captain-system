@@ -30,7 +30,6 @@ KNOWN_MODIFIERS = {
     12: 1.00,  # Dynamic costs
     13: 0.85,  # Sensitivity
     15: 1.15,  # Opening volume
-    16: 1.05,  # HMM opportunity
 }
 
 

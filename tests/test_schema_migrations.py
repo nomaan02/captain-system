@@ -3,9 +3,20 @@ import time
 from datetime import datetime
 
 import pytest
+from psycopg2 import OperationalError
 from shared.questdb_client import get_cursor
 
 pytestmark = pytest.mark.real_questdb
+
+
+def _skip_if_no_questdb():
+    """CI / local host may not run QuestDB; skip instead of failing."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+    except OperationalError:
+        pytest.skip("QuestDB not reachable")
 
 
 def test_b1_p2_d07_table_exists():
@@ -146,6 +157,7 @@ def test_b3_compute_d3_empty_table_graceful():
 
 def test_b4_d26_column_set_ratification():
     """Ratification: p3_d26_hmm_opportunity_state has exactly the 9 ratified columns."""
+    _skip_if_no_questdb()
     expected = {
         "hmm_params", "current_state_probs", "opportunity_weights",
         "prior_alpha", "last_trained", "training_window",

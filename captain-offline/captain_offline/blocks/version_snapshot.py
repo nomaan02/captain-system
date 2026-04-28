@@ -14,9 +14,12 @@ Max 50 versions per component in hot storage.
 """
 
 import json
+import os
+import secrets
 import uuid
 import hashlib
 import logging
+import warnings
 from datetime import datetime
 
 from shared.questdb_client import get_cursor
@@ -27,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 MAX_VERSIONS_PER_COMPONENT = 50
 COLD_STORAGE_AGE_DAYS = 90
+
+# Pending rollback proposals (F-08 / Q-08): two-phase request → admin approval → commit.
+# Redis STRING value = JSON blob; survives offline restarts until TTL.
+ROLLBACK_PROPOSAL_KEY_PREFIX = "captain:rollback_proposal:"
+_PROPOSAL_TTL_SEC = int(os.environ.get("CAPTAIN_ROLLBACK_PROPOSAL_TTL_SEC", "604800"))
 
 VERSIONED_COMPONENTS = [
     "P3-D01",  # AIM model states
@@ -383,12 +391,14 @@ def _run_regression_tests(component_id: str, expected_state: dict) -> bool:
 
 
 def _publish_rollback_alert(component_id: str, version_id: str,
-                            admin_user_id: str, status: str, reason: str):
+                            admin_user_id: str, status: str, reason: str,
+                            rollback_request_id: str | None = None,
+                            message_type: str = "VERSION_ROLLBACK"):
     """Publish rollback event to captain:alerts channel (priority HIGH)."""
     try:
         client = get_redis_client()
-        client.publish(CH_ALERTS, json.dumps({
-            "type": "VERSION_ROLLBACK",
+        payload: dict = {
+            "type": message_type,
             "component": component_id,
             "version_id": version_id,
             "admin_user_id": admin_user_id,
@@ -396,86 +406,252 @@ def _publish_rollback_alert(component_id: str, version_id: str,
             "reason": reason,
             "priority": "HIGH",
             "timestamp": now_et().isoformat(),
-        }))
+        }
+        if rollback_request_id:
+            payload["rollback_request_id"] = rollback_request_id
+        client.publish(CH_ALERTS, json.dumps(payload))
     except Exception as e:
         logger.error("Failed to publish rollback alert: %s", e)
 
 
-def rollback_to_version(component_id: str, version_id: str,
-                        admin_user_id: str) -> dict:
-    """Roll back a versioned component to a previous snapshot (Doc 32 spec).
+def _proposal_redis_key(rollback_request_id: str) -> str:
+    return f"{ROLLBACK_PROPOSAL_KEY_PREFIX}{rollback_request_id}"
 
-    Steps:
-        1. Load target version from D18
-        2. Load current live state via get_current_state
-        3. Run pseudotrader comparison (current vs target)
-        4. If REJECT → abort rollback, notify admin
-        5. If ADOPT → snapshot current for undo, restore target, run
-           regression tests, revert if tests fail
-        6. Publish HIGH notification for audit trail
 
-    Args:
-        component_id: One of VERSIONED_COMPONENTS
-        version_id: UUID of the target version in D18
-        admin_user_id: ID of the admin initiating the rollback
+def _save_rollback_proposal(data: dict) -> None:
+    """Persist pending proposal JSON in Redis with TTL."""
+    rid = data["rollback_request_id"]
+    key = _proposal_redis_key(rid)
+    client = get_redis_client()
+    client.set(key, json.dumps(data, default=str), ex=_PROPOSAL_TTL_SEC)
+
+
+def _load_rollback_proposal(rollback_request_id: str) -> dict | None:
+    key = _proposal_redis_key(rollback_request_id)
+    try:
+        client = get_redis_client()
+        raw = client.get(key)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        return json.loads(raw)
+    except Exception as e:
+        logger.warning("Failed to load rollback proposal %s: %s",
+                       rollback_request_id, e)
+        return None
+
+
+def _update_rollback_proposal(rollback_request_id: str, data: dict) -> None:
+    key = _proposal_redis_key(rollback_request_id)
+    client = get_redis_client()
+    client.set(key, json.dumps(data, default=str), ex=_PROPOSAL_TTL_SEC)
+
+
+def request_rollback(
+    component_id: str,
+    version_id: str,
+    requester_admin_user_id: str,
+) -> dict:
+    """Phase 1 of two-phase rollback (doc 32: NOTIFY only — no live restore).
+
+    Runs comparison; on ADOPT persists a pending proposal in Redis and alerts.
+    Does **not** call snapshot_before_update(ROLLBACK) or _restore_state.
 
     Returns:
-        Dict with 'status' key: COMPLETED | REJECTED | REVERTED
+        On REJECT: ``{"status": "REJECTED", "comparison": ...}``
+        On ADOPT: ``{"status": "PENDING_APPROVAL", "rollback_request_id",
+            "approval_token": <secret>, "comparison": ...}``
     """
     if component_id not in VERSIONED_COMPONENTS:
         raise ValueError(f"Component {component_id} is not versioned")
 
-    # Step 1: load target version from D18
     target = _get_version(version_id)
     if target is None:
         raise ValueError(f"Version {version_id} not found in D18")
     if target["component"] != component_id:
-        raise ValueError(f"Version {version_id} belongs to "
-                         f"{target['component']}, not {component_id}")
+        raise ValueError(
+            f"Version {version_id} belongs to {target['component']}, "
+            f"not {component_id}"
+        )
 
-    # Step 2: load current live state
     current_state = get_current_state(component_id)
     target_state = target["state"]
-
-    # Step 3: pseudotrader comparison
     comparison = _run_rollback_comparison(
         component_id, current_state, target_state)
 
-    # Step 4: if REJECT → abort
     if comparison["recommendation"] == "REJECT":
-        _publish_rollback_alert(component_id, version_id, admin_user_id,
-                                status="REJECTED",
-                                reason=comparison.get("reason", ""))
-        logger.warning("Rollback REJECTED for %s -> %s: %s",
-                       component_id, version_id, comparison.get("reason"))
+        _publish_rollback_alert(
+            component_id, version_id, requester_admin_user_id,
+            status="REJECTED", reason=comparison.get("reason", ""))
+        logger.warning(
+            "Rollback REJECTED at request stage for %s -> %s: %s",
+            component_id, version_id, comparison.get("reason"),
+        )
         return {"status": "REJECTED", "comparison": comparison}
 
-    # Step 5: snapshot current state for undo, then restore target
+    rollback_request_id = str(uuid.uuid4())
+    # Opaque proof for commit_rollback; treat like a capability URL (Q-08).
+    approval_token = secrets.token_urlsafe(32)
+
+    proposal = {
+        "status": "PENDING",
+        "rollback_request_id": rollback_request_id,
+        "component_id": component_id,
+        "version_id": version_id,
+        "requester_admin_user_id": requester_admin_user_id,
+        "comparison": comparison,
+        "approval_token": approval_token,
+        "created_iso": now_et().isoformat(),
+        "proposal_version": 1,
+    }
+    _save_rollback_proposal(proposal)
+
+    _publish_rollback_alert(
+        component_id, version_id, requester_admin_user_id,
+        status="PENDING_APPROVAL",
+        reason="Rollback comparison ready — awaiting commit_rollback",
+        rollback_request_id=rollback_request_id,
+        message_type="VERSION_ROLLBACK_PROPOSAL",
+    )
+
+    return {
+        "status": "PENDING_APPROVAL",
+        "rollback_request_id": rollback_request_id,
+        "approval_token": approval_token,
+        "comparison": comparison,
+    }
+
+
+def commit_rollback(
+    rollback_request_id: str,
+    approving_admin_user_id: str,
+    approval_proof: str,
+) -> dict:
+    """Phase 2: ON admin_approval — apply undo snapshot, restore, regression.
+
+    ``approval_proof`` must match the ``approval_token`` issued by
+    ``request_rollback`` for this ``rollback_request_id``.
+
+    Successful completion sets proposal status COMPLETED in Redis; a second call
+    with the same id returns ALREADY_COMPLETED without mutating QuestDB again.
+    """
+    blob = _load_rollback_proposal(rollback_request_id)
+    if blob is None:
+        return {
+            "status": "ERROR",
+            "reason": "NOT_FOUND_OR_EXPIRED",
+        }
+
+    if blob.get("status") == "COMPLETED":
+        logger.info(
+            "commit_rollback idempotent hit for completed %s",
+            rollback_request_id,
+        )
+        return {
+            "status": "ALREADY_COMPLETED",
+            "rollback_request_id": rollback_request_id,
+            "undo_version_id": blob.get("completed_undo_version_id"),
+        }
+
+    if blob.get("status") != "PENDING":
+        return {
+            "status": "ERROR",
+            "reason": f"INVALID_PROPOSAL_STATE:{blob.get('status')}",
+        }
+
+    if not approval_proof or approval_proof != blob.get("approval_token"):
+        logger.warning(
+            "commit_rollback: invalid approval proof for %s",
+            rollback_request_id,
+        )
+        return {
+            "status": "REJECTED",
+            "reason": "INVALID_APPROVAL_PROOF",
+        }
+
+    component_id = blob["component_id"]
+    version_id = blob["version_id"]
+
+    target = _get_version(version_id)
+    if target is None:
+        return {
+            "status": "ERROR",
+            "reason": "VERSION_NO_LONGER_IN_D18",
+        }
+    target_state = target["state"]
+
+    current_state = get_current_state(component_id)
+    comparison = blob.get("comparison") or {}
+
     undo_version_id = snapshot_before_update(
         component_id, "ROLLBACK", current_state)
     _restore_state(component_id, target_state)
 
-    # Step 6: regression tests — revert if failed
     if not _run_regression_tests(component_id, target_state):
-        logger.error("Regression tests FAILED after rollback %s -> %s; "
-                     "reverting to undo snapshot", component_id, version_id)
+        logger.error(
+            "Regression tests FAILED after commit rollback %s -> %s; reverting",
+            component_id,
+            version_id,
+        )
         _restore_state(component_id, current_state)
-        _publish_rollback_alert(component_id, version_id, admin_user_id,
-                                status="REVERTED",
-                                reason="Regression tests failed")
-        return {"status": "REVERTED", "undo_version_id": undo_version_id}
+        _publish_rollback_alert(
+            component_id, version_id, approving_admin_user_id,
+            status="REVERTED", reason="Regression tests failed",
+            rollback_request_id=rollback_request_id,
+        )
+        blob["status"] = "FAILED_REGRESSION"
+        blob["completed_undo_version_id"] = undo_version_id
+        _update_rollback_proposal(rollback_request_id, blob)
+        return {
+            "status": "REVERTED",
+            "undo_version_id": undo_version_id,
+            "comparison": comparison,
+        }
 
-    # Step 7: notify for audit trail
-    _publish_rollback_alert(component_id, version_id, admin_user_id,
-                            status="COMPLETED",
-                            reason="Rollback successful")
+    _publish_rollback_alert(
+        component_id, version_id, approving_admin_user_id,
+        status="COMPLETED", reason="Rollback successful",
+        rollback_request_id=rollback_request_id,
+    )
 
-    logger.info("Rollback COMPLETED: %s -> version %s "
-                "(undo=%s, admin=%s)",
-                component_id, version_id, undo_version_id, admin_user_id)
+    logger.info(
+        "Rollback COMMITTED: %s -> version %s (undo=%s, approved_by=%s)",
+        component_id,
+        version_id,
+        undo_version_id,
+        approving_admin_user_id,
+    )
+
+    blob["status"] = "COMPLETED"
+    blob["completed_undo_version_id"] = undo_version_id
+    blob["approved_by"] = approving_admin_user_id
+    blob["completed_iso"] = now_et().isoformat()
+    _update_rollback_proposal(rollback_request_id, blob)
 
     return {
         "status": "COMPLETED",
         "undo_version_id": undo_version_id,
         "comparison": comparison,
     }
+
+
+def rollback_to_version(component_id: str, version_id: str,
+                        admin_user_id: str) -> dict:
+    """Deprecated: single-phase rollback violated doc 32 admin gate (F-08).
+
+    Use ``request_rollback`` then ``commit_rollback`` with the issued token.
+    """
+    warnings.warn(
+        "rollback_to_version is removed: use request_rollback then "
+        "commit_rollback after admin approval (F-08 / doc 32 Version Snapshot "
+        "Policy).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    raise NotImplementedError(
+        "Single-phase rollback is disabled. Call request_rollback(), then "
+        "commit_rollback(rollback_request_id, approving_admin_user_id, "
+        "approval_token)."
+    )
+

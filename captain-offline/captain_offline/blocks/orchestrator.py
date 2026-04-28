@@ -600,11 +600,10 @@ class OfflineOrchestrator:
         from captain_offline.blocks.b1_aim16_hmm import (
             train_aim16_hmm,
             save_hmm_state,
-            build_observation_panel_stub,
+            build_observation_panel,
         )
 
-        # Asset universe (active set) — fetched from QuestDB. Stub doesn't use it,
-        # but Phase 10 will. Pattern matches _handle_aim_activation / _init_cusum_calibration.
+        # Asset universe (active set) — fetched from QuestDB — panel uses it for corr features.
         try:
             from shared.questdb_client import get_cursor
             with get_cursor() as cur:
@@ -617,7 +616,9 @@ class OfflineOrchestrator:
             logger.warning("[pg01c] asset universe fetch failed (continuing with empty): %s", exc)
             asset_universe = []
 
-        obs, session_pnl, n_days = build_observation_panel_stub(asset_universe)
+        obs, session_pnl, n_days = build_observation_panel(
+            asset_universe, closed_at=closed_at, lookback_days=60
+        )
         state = train_aim16_hmm(
             observations=obs,
             session_pnl=session_pnl,

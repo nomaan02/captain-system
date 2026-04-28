@@ -795,7 +795,7 @@ Remaining dimensions (D2-D8) follow the same pattern: compute score from inputs,
 - [[G-OFF-016_pseudotrader_no_replay|G-OFF-016 — No Pipeline Replay in Pseudotrader]] (PG-09 §1-2) — CRITICAL RESOLVED
 - [[G-OFF-029_sensitivity_uniform_perturbation|G-OFF-029 — Sensitivity Uniform Perturbation]] (PG-12) — CRITICAL RESOLVED
 - [[G-OFF-046_version_rollback_unimplemented|G-OFF-046 — Version Rollback Unimplemented]] (Version Snapshot Policy) — CRITICAL RESOLVED
-- [[G-XCT-012_crash_recovery_write_only|G-XCT-012 — Crash Recovery Write-Only]] (startup/recovery) — CRITICAL RESOLVED
+- [[G-XCT-012_crash_recovery_write_only|G-XCT-012 — Crash Recovery Write-Only]] (startup/recovery) — **Checkpoint logging only for v1; automated state replay deferred (Q-25). Not CRITICAL RESOLVED for full recovery semantics.**
 
 ## Related Canvases
 

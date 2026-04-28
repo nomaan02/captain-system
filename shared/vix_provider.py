@@ -115,6 +115,20 @@ def get_latest_vix_close() -> Optional[float]:
     return _vix_data[-1][1]
 
 
+def get_vix_close_on_or_before(trade_day: date) -> Optional[float]:
+    """Historical VIX daily close on ``trade_day`` if present else last row <= trade_day."""
+    import bisect
+
+    _ensure_loaded()
+    if not _vix_data:
+        return None
+    dates = [row[0] for row in _vix_data]
+    idx = bisect.bisect_right(dates, trade_day) - 1
+    if idx < 0:
+        return None
+    return _vix_data[idx][1]
+
+
 def get_latest_vix_date() -> Optional[date]:
     """Date of the most recent VIX close."""
     _ensure_loaded()

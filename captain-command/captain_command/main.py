@@ -23,6 +23,7 @@ from shared.questdb_client import get_connection, wait_for_questdb
 from shared.redis_client import (
     get_redis_client, ensure_consumer_group,
     STREAM_SIGNALS, GROUP_COMMAND_SIGNALS,
+    STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES,
 )
 from shared.journal import write_checkpoint, get_last_checkpoint
 from shared.contract_resolver import preload_contracts
@@ -56,6 +57,7 @@ def verify_connections():
 
     # Initialize Redis Stream consumer groups
     ensure_consumer_group(STREAM_SIGNALS, GROUP_COMMAND_SIGNALS)
+    ensure_consumer_group(STREAM_TRADE_OUTCOMES, GROUP_COMMAND_GUI_OUTCOMES)
     logger.info("Redis Stream consumer groups initialized")
 
 
