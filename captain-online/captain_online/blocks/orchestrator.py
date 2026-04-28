@@ -477,6 +477,11 @@ class OnlineOrchestrator:
                         f"BREAKOUT {direction}: {asset} (OR resolved)",
                         source="or_tracker",
                     )
+                if not pending["user_results"]:
+                    logger.warning(
+                        "ON-B6-SKIP session=%s newly_resolved=%s — pending.user_results is empty, "
+                        "B6 not invoked", session_id, newly_resolved,
+                    )
                 for ur in pending["user_results"]:
                     signals = self._run_b6_for_user(
                         session_id, data, regime, aim, ur,
@@ -702,11 +707,19 @@ class OnlineOrchestrator:
         trades = user_result["trades"]
         user_silo = user_result["user_silo"]
 
-        recommended = cb_result["recommended_trades"]
+        user_id = user_silo.get("user_id", "unknown")
+        recommended_full = list(cb_result["recommended_trades"])
+        recommended = list(recommended_full)
         if assets is not None:
             recommended = [a for a in recommended if a in assets]
 
         if not recommended:
+            logger.warning(
+                "ON-B6-SKIP user=%s session=%s assets_filter=%s recommended_trades=%s "
+                "account_skip_reason=%s — B6 short-circuited (no candidates)",
+                user_id, session_id, assets, recommended_full,
+                cb_result.get("account_skip_reason"),
+            )
             return []
 
         try:

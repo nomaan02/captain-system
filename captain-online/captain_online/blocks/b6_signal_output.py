@@ -126,7 +126,11 @@ def run_signal_output(
             final_contracts.get(u, {}).get(ac, 0) for ac in accounts
         )
         if total_size <= 0:
-            logger.debug("ON-B6: Skipping %s — zero contracts after sizing", u)
+            logger.warning(
+                "ON-B6: Skipping %s — zero contracts after sizing "
+                "(final_contracts=%s, accounts=%s)",
+                u, final_contracts.get(u, {}), accounts,
+            )
             continue
 
         signal = {
@@ -181,6 +185,11 @@ def run_signal_output(
         }
         for u in available_not_recommended
     ]
+
+    logger.info(
+        "ON-B6-SUMMARY user=%s session=%s recommended=%d built=%d below_threshold=%d",
+        user_id, session_id, len(recommended_trades), len(signals), len(below_threshold),
+    )
 
     # Publish to Redis (or capturing sink in replay)
     if signals or below_threshold:
