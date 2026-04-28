@@ -159,7 +159,7 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
             asset_id, current_weights, proposed_weights, aims_data
     """
     asset_id = trade_outcome["asset"]
-    pnl = trade_outcome["pnl"]
+    pnl = float(trade_outcome["pnl"])
     contracts = trade_outcome.get("contracts", 1)
     regime = trade_outcome.get("regime_at_entry", "LOW_VOL")
     aim_breakdown = trade_outcome.get("aim_breakdown_at_entry", {})
@@ -190,6 +190,7 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
         # Use trade-time modifier from aim_breakdown (NOT current modifier)
         breakdown = aim_breakdown.get(str(aid), {})
         modifier = breakdown.get("modifier", 1.0) if isinstance(breakdown, dict) else 1.0
+        modifier = float(modifier)
 
         likelihood = _compute_likelihood(modifier, pnl_per_contract,
                                           ewma["avg_win"], ewma["avg_loss"])

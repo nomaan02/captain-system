@@ -50,7 +50,12 @@ def _load_trades_by_account_model(account_id: str, model_m: int) -> list[dict]:
         )
         rows = cur.fetchall()
     return [
-        {"trade_id": r[0], "pnl": r[1], "contracts": r[2], "ts": r[3]}
+        {
+            "trade_id": r[0],
+            "pnl": float(r[1]) if r[1] is not None else 0.0,
+            "contracts": r[2],
+            "ts": r[3],
+        }
         for r in rows
     ]
 

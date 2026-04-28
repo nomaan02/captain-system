@@ -18,9 +18,8 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
-
 from shared.questdb_client import get_cursor
+from shared.decimal_json import loads_decimal
 from shared.journal import write_checkpoint
 from shared.constants import now_et
 
@@ -244,9 +243,18 @@ def _rpt04_aim_effectiveness(user_id: str, params: dict) -> str:
         # Parse AIM breakdowns from trades to compute per-AIM accuracy
         aim_stats = {}  # (aim_id, asset) -> {correct: int, total: int, pnl_contribution: float}
         for asset, pnl, breakdown_raw, combined_mod, ts in trades:
-            breakdown = json.loads(breakdown_raw) if breakdown_raw else {}
+            pnl_f = float(pnl) if pnl is not None else 0.0
+            if breakdown_raw:
+                try:
+                    breakdown = loads_decimal(breakdown_raw)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    breakdown = {}
+            else:
+                breakdown = {}
+            if not isinstance(breakdown, dict):
+                breakdown = {}
             total_weight = sum(
-                v.get("dma_weight", 0) for v in breakdown.values()
+                float(v.get("dma_weight", 0)) for v in breakdown.values()
                 if isinstance(v, dict)
             )
             for aim_id_str, aim_data in breakdown.items():
@@ -260,13 +268,13 @@ def _rpt04_aim_effectiveness(user_id: str, params: dict) -> str:
                 if key not in aim_stats:
                     aim_stats[key] = {"correct": 0, "total": 0, "pnl_contribution": 0.0}
 
-                mod = aim_data.get("modifier", 1.0)
-                weight = aim_data.get("dma_weight", 0)
+                mod = float(aim_data.get("modifier", 1.0))
+                weight = float(aim_data.get("dma_weight", 0))
                 aim_stats[key]["total"] += 1
 
                 # Accuracy: modifier > 1.0 predicted "size up" — correct if pnl > 0
                 #           modifier < 1.0 predicted "size down" — correct if pnl < 0
-                if (mod > 1.0 and pnl > 0) or (mod < 1.0 and pnl < 0):
+                if (mod > 1.0 and pnl_f > 0) or (mod < 1.0 and pnl_f < 0):
                     aim_stats[key]["correct"] += 1
                 elif abs(mod - 1.0) < 0.01:
                     # Neutral modifier — count as correct (no prediction made)
@@ -274,7 +282,7 @@ def _rpt04_aim_effectiveness(user_id: str, params: dict) -> str:
 
                 # PnL contribution (weighted share of trade PnL)
                 if total_weight > 0 and weight > 0:
-                    aim_stats[key]["pnl_contribution"] += pnl * (weight / total_weight)
+                    aim_stats[key]["pnl_contribution"] += pnl_f * (weight / total_weight)
 
         # Build output rows
         for aim_id, asset_id, status, last_retrained, inc_prob, inc_flag, days_below, effectiveness in aim_rows:
@@ -571,8 +579,15 @@ def _rpt12_alpha_decomposition(user_id: str, params: dict) -> str:
             if pnl is None:
                 continue
 
-            combined_mod = combined_mod if combined_mod and combined_mod > 0 else 1.0
-            contracts = max(contracts or 1, 1)
+            pnl = float(pnl)
+            combined_mod = (
+                float(combined_mod)
+                if combined_mod is not None and float(combined_mod) > 0
+                else 1.0
+            )
+            contracts = max(int(contracts or 1), 1)
+            expected_edge = float(expected_edge) if expected_edge is not None else None
+
             per_contract = pnl / contracts
 
             # Base strategy: raw 1-contract P&L (signal quality)

@@ -21,19 +21,28 @@ class DecimalJSONEncoder(json.JSONEncoder):
 
 
 def dumps_decimal(obj: Any) -> str:
-    """Serialise an object to JSON, encoding Decimal as string."""
-    return json.dumps(obj, cls=DecimalJSONEncoder)
+    """Serialise an object to JSON, encoding Decimal as string.
+
+    ``default=str`` matches stream/pubsub payloads that include datetimes and
+    other non-JSON-native objects (same behaviour as prior ``json.dumps(..., default=str)``).
+    """
+    return json.dumps(obj, cls=DecimalJSONEncoder, default=str)
 
 
-def loads_decimal(s: str) -> Any:
-    """Parse JSON, returning all numeric values as Decimal (not float).
+def loads_decimal(s: str, *, coerce_json_int: bool = True) -> Any:
+    """Parse JSON, returning floats and (optionally) ints as Decimal.
 
     Decimals encoded by ``DecimalJSONEncoder`` appear as JSON strings; those
     are coerced back to ``Decimal`` after parse. Non-numeric strings are left
-    unchanged. JSON integers use ``parse_int=Decimal`` so round-trips stay
-    consistent with monetary arithmetic.
+    unchanged.
+
+    ``coerce_json_int``: when True (default), JSON integers become ``Decimal``
+    for round-trip consistency with :func:`dumps_decimal`. When False (e.g. Redis
+    stream payloads), integers stay ``int`` so ``direction`` / ``contracts`` etc.
+    remain usable without casting.
     """
-    data = json.loads(s, parse_float=Decimal, parse_int=Decimal)
+    parse_int = Decimal if coerce_json_int else int
+    data = json.loads(s, parse_float=Decimal, parse_int=parse_int)
 
     def _coerce(obj: Any) -> Any:
         if isinstance(obj, dict):

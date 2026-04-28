@@ -30,8 +30,10 @@ import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from shared.constants import now_et
+from shared.decimal_json import loads_decimal
 from shared.questdb_client import get_cursor
 
 logger = logging.getLogger(__name__)
@@ -437,12 +439,16 @@ def compute_d4(action_queue: list) -> float:
     inform_total: dict[int, int] = {}
 
     for pnl, breakdown_raw in rows:
-        try:
-            bd = json.loads(breakdown_raw) if breakdown_raw else {}
-        except (json.JSONDecodeError, TypeError):
+        if breakdown_raw:
+            try:
+                bd = loads_decimal(breakdown_raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                bd = {}
+        else:
             bd = {}
         if not isinstance(bd, dict):
             continue
+        pnl_f = float(pnl) if not isinstance(pnl, Decimal) else float(pnl)
         for aid_str, payload in bd.items():
             try:
                 aid = int(aid_str)
@@ -450,8 +456,9 @@ def compute_d4(action_queue: list) -> float:
                 continue
             if not isinstance(payload, dict):
                 continue
-            mod = float(payload.get("modifier", 1.0))
-            hit = _modifier_pnl_hit(mod, float(pnl or 0.0))
+            mod_raw = payload.get("modifier", 1.0)
+            mod = float(mod_raw)
+            hit = _modifier_pnl_hit(mod, pnl_f)
             if hit is None:
                 continue
             inform_total[aid] = inform_total.get(aid, 0) + 1

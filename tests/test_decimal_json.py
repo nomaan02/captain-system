@@ -44,3 +44,12 @@ def test_decimal_json_encoder_standalone():
     assert '"m"' in s
     parsed = loads_decimal(s)
     assert parsed["m"] == Decimal("99.99")
+
+
+def test_redis_stream_payload_keeps_json_integers_as_int():
+    raw = '{"direction": 1, "contracts": 2, "x": 1.5}'
+    data = loads_decimal(raw, coerce_json_int=False)
+    assert data["direction"] == 1
+    assert isinstance(data["direction"], int)
+    assert data["contracts"] == 2
+    assert isinstance(data["x"], Decimal)

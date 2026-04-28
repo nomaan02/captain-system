@@ -218,7 +218,7 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
         - Final position size fraction = kelly_full * shrinkage_factor
     """
     asset_id = trade_outcome["asset"]
-    pnl = trade_outcome["pnl"]
+    pnl = float(trade_outcome["pnl"])
     contracts = trade_outcome.get("contracts", 1)
     regime = trade_outcome.get("regime_at_entry", "LOW_VOL")
     session = trade_outcome.get("session", 1)

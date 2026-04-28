@@ -405,14 +405,14 @@ CREATE TABLE IF NOT EXISTS p3_d03_trade_outcome_log (
     account_id SYMBOL,
     asset SYMBOL,
     direction INT,
-    entry_price DOUBLE,
-    signal_entry_price DOUBLE,
-    exit_price DOUBLE,
+    entry_price DECIMAL(14, 4),
+    signal_entry_price DECIMAL(14, 4),
+    exit_price DECIMAL(14, 4),
     contracts INT,
-    gross_pnl DOUBLE,
-    commission DOUBLE,
-    pnl DOUBLE,
-    slippage DOUBLE,
+    gross_pnl DECIMAL(18, 4),
+    commission DECIMAL(18, 4),
+    pnl DECIMAL(18, 4),
+    slippage DECIMAL(18, 4),
     outcome STRING,
     entry_time TIMESTAMP,
     exit_time TIMESTAMP,
@@ -953,6 +953,35 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M026_d28_reserve_balance_to_decimal",
         "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN reserve_balance TYPE DECIMAL(18, 2)",
+    ),
+    # --- Phase B (monetary DECIMAL): D03 trade outcome ---
+    (
+        "M027_d03_entry_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN entry_price TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M028_d03_signal_entry_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN signal_entry_price TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M029_d03_exit_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN exit_price TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M030_d03_gross_pnl_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN gross_pnl TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M031_d03_commission_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN commission TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M032_d03_pnl_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN pnl TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M033_d03_slippage_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN slippage TYPE DECIMAL(18, 4)",
     ),
 ]
 

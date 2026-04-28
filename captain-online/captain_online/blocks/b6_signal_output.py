@@ -25,6 +25,7 @@ import random
 import time
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS, get_redis_client, CH_ALERTS
@@ -443,7 +444,12 @@ def _get_daily_pnl(user_id: str) -> float:
                 (user_id,),
             )
             row = cur.fetchone()
-        return float(row[0]) if row and row[0] else 0.0
+        if not row or row[0] is None:
+            return 0.0
+        v = row[0]
+        if isinstance(v, Decimal):
+            return float(v)
+        return float(v)
     except Exception:
         return 0.0
 

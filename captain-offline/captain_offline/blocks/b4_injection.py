@@ -28,6 +28,7 @@ import os
 from datetime import datetime
 
 from shared.constants import now_et
+from shared.decimal_json import dumps_decimal
 from shared.questdb_client import get_cursor
 
 from captain_offline.blocks.b3_pseudotrader import run_pseudotrader
@@ -133,7 +134,7 @@ def _store_injection(asset_id: str, candidate: dict, current: dict,
                 json.dumps(candidate, default=str),
                 json.dumps(current, default=str),
                 expected_new, expected_current,
-                json.dumps(pseudo_results, default=str),
+                dumps_decimal(pseudo_results),
                 recommendation,
                 "COMPARISON_COMPLETE",
                 "INJECTION",

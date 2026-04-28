@@ -601,7 +601,13 @@ def _get_rolling_trade_returns(lookback_days: int = 60) -> list[float]:
                 (lookback_days,),
             )
             rows = cur.fetchall()
-        return [r[0] for r in rows if r[0] is not None]
+        out: list[float] = []
+        for r in rows:
+            if r[0] is None:
+                continue
+            v = r[0]
+            out.append(float(v))
+        return out
     except Exception:
         # Table may not exist on fresh deployment (cold start) — return empty
         return []

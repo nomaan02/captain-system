@@ -354,6 +354,15 @@ def _get_capital_silo(user_id: str, user_stream=None) -> dict:
     return result
 
 
+def _gui_money_json(v: Any) -> Any:
+    """Stringify Decimal monetary values for dashboard JSON (no float drift in wire)."""
+    if v is None:
+        return None
+    if isinstance(v, Decimal):
+        return format(v, "f")
+    return v
+
+
 def _get_open_positions(user_id: str) -> list[dict]:
     """Fetch open positions from P3-D03 (outcome is NULL = still open)."""
     try:
@@ -369,9 +378,9 @@ def _get_open_positions(user_id: str) -> list[dict]:
             return [
                 {
                     "signal_id": r[0], "asset": r[1], "direction": r[2],
-                    "entry_price": r[3], "contracts": r[4], "tp_level": None,
+                    "entry_price": _gui_money_json(r[3]), "contracts": r[4], "tp_level": None,
                     "sl_level": None, "account_id": r[5], "entry_time": r[6],
-                    "current_pnl": r[7],
+                    "current_pnl": _gui_money_json(r[7]),
                 }
                 for r in cur.fetchall()
             ]
@@ -414,10 +423,10 @@ def _get_closed_trades(user_id: str, limit: int = 50) -> list[dict]:
                     "asset": r[2],
                     "asset_id": r[2],
                     "direction": r[3],
-                    "entry_price": r[4],
-                    "exit_price": r[5],
+                    "entry_price": _gui_money_json(r[4]),
+                    "exit_price": _gui_money_json(r[5]),
                     "contracts": r[6],
-                    "pnl": r[7],
+                    "pnl": _gui_money_json(r[7]),
                     "outcome": r[8],
                     "entry_time": _serialize_trade_ts(r[9]),
                     "exit_time": exit_display,

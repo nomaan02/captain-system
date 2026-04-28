@@ -46,6 +46,13 @@ from shared.decimal_json import dumps_decimal
 logger = logging.getLogger(__name__)
 
 
+def _money_d(x: object) -> Decimal:
+    """Coerce a numeric or str value to Decimal for P&L / price arithmetic."""
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
+
+
 def _get_locked_m(asset: str) -> int | None:
     """Return the locked-strategy m for asset from p3_d00_asset_universe."""
     try:
@@ -96,13 +103,22 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
 
         point_value = pos.get("point_value", 50.0)
 
-        # P&L tracking
+        # P&L tracking (Decimal arithmetic; float on pos for downstream % calcs)
         direction = pos.get("direction", 1)
         entry_price = pos.get("entry_price", 0)
         contracts = pos.get("contracts", 0)
-        pos["current_pnl"] = (current_price - entry_price) * direction * contracts * point_value
+        pv = _money_d(point_value)
+        cp = (
+            (_money_d(current_price) - _money_d(entry_price))
+            * Decimal(direction)
+            * Decimal(contracts)
+            * pv
+        )
+        pos["current_pnl"] = float(cp)
         risk_amount = pos.get("risk_amount", 1)
-        pos["pnl_pct"] = pos["current_pnl"] / risk_amount if risk_amount > 0 else 0
+        pos["pnl_pct"] = (
+            float(cp / _money_d(risk_amount)) if risk_amount > 0 else 0.0
+        )
 
         # TP/SL proximity
         tp = pos.get("tp_level")
@@ -167,23 +183,30 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
 
     CRITICAL: This is the feedback loop bridge to Offline learning.
     """
-    point_value = pos.get("point_value", 50.0)
+    pv = _money_d(pos.get("point_value", 50.0))
     direction = pos.get("direction", 1)
     contracts = pos.get("contracts", 0)
     entry_price = pos.get("entry_price", 0)
     account_id = pos.get("account")
+    dir_d = Decimal(direction)
+    ctr = Decimal(contracts)
 
-    gross_pnl = (exit_price - entry_price) * direction * contracts * point_value
+    gross_pnl = (
+        (_money_d(exit_price) - _money_d(entry_price)) * dir_d * ctr * pv
+    )
 
     # Commission (V3: resolve_commission with fee_schedule priority)
     commission = resolve_commission(account_id, contracts, pos["asset"], tsm_configs)
-    net_pnl = gross_pnl - commission
+    net_pnl = gross_pnl - _money_d(commission)
 
     # Actual entry price
     actual_entry = _resolve_actual_entry_price(pos)
     slippage = None
     if actual_entry is not None:
-        slippage = (actual_entry - pos.get("signal_entry_price", entry_price)) * direction * contracts * point_value
+        sig_ref = pos.get("signal_entry_price", entry_price)
+        slippage = (
+            (_money_d(actual_entry) - _money_d(sig_ref)) * dir_d * ctr * pv
+        )
 
     # Trade ID
     trade_id = f"TRD-{uuid.uuid4().hex[:12].upper()}"
@@ -214,8 +237,12 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     )
 
     # Notify user
-    _notify(pos["user_id"], "CRITICAL",
-            f"Position closed: {pos['asset']} {outcome} Net PnL=${net_pnl:.2f} (commission=${commission:.2f})")
+    _notify(
+        pos["user_id"],
+        "CRITICAL",
+        f"Position closed: {pos['asset']} {outcome} Net PnL=${float(net_pnl):.2f} "
+        f"(commission=${float(commission):.2f})",
+    )
 
     # Atomic capital + CB update (G-033: single cursor, both writes back-to-back)
     _update_capital_and_cb(
@@ -229,8 +256,14 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     # CRITICAL: Publish trade outcome to Offline via Redis
     _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage)
 
-    logger.info("ON-B7: Position resolved — %s %s %s net_pnl=%.2f trade_id=%s",
-                pos["asset"], outcome, pos["user_id"], net_pnl, trade_id)
+    logger.info(
+        "ON-B7: Position resolved — %s %s %s net_pnl=%.2f trade_id=%s",
+        pos["asset"],
+        outcome,
+        pos["user_id"],
+        float(net_pnl),
+        trade_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +340,7 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     PG-09 can pair signals with realised P&L. ``LEGACY-<uuid>`` if the
     caller can't supply one (e.g. paper-trader shim, replay).
     """
-    aim_bd_str = json.dumps(aim_breakdown, default=str) if aim_breakdown else None
+    aim_bd_str = dumps_decimal(aim_breakdown) if aim_breakdown else None
     entry_ts = entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time
     model_m = _get_locked_m(asset)
     sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
@@ -331,8 +364,13 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
         )
 
 
-def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
-                           outcome: str, model_m: str = ""):
+def _update_capital_and_cb(
+    user_id: str,
+    account_id: str,
+    net_pnl: float | Decimal,
+    outcome: str,
+    model_m: str = "",
+):
     """G-033: Atomic capital silo (D16) + intraday CB (D23) update.
 
     Both reads and both writes execute in the same cursor context to prevent
@@ -362,7 +400,7 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
 
         # ── Compute new states ──
         # D16 capital
-        net_dec = Decimal(str(net_pnl))
+        net_dec = net_pnl if isinstance(net_pnl, Decimal) else Decimal(str(net_pnl))
         if d16_row:
             new_capital = Decimal(str(d16_row[3] or 0)) + net_dec
             d16_accounts = d16_row[4]
@@ -404,7 +442,12 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
             (account_id, l_t, n_t, dumps_decimal(l_b), json.dumps(n_b)),
         )
 
-    logger.debug("Capital+CB updated: user=%s account=%s pnl=%.2f", user_id, account_id, net_pnl)
+    logger.debug(
+        "Capital+CB updated: user=%s account=%s pnl=%.2f",
+        user_id,
+        account_id,
+        float(net_pnl),
+    )
 
 
 def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage):
