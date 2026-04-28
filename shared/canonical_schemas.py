@@ -573,7 +573,7 @@ CREATE TABLE IF NOT EXISTS p3_d22b_asset_rerun_status (
     rerun_trigger        STRING,
     last_updated         TIMESTAMP
 ) TIMESTAMP(last_updated) PARTITION BY MONTH WAL
-DEDUP UPSERT KEYS(asset);
+DEDUP UPSERT KEYS(asset, last_updated);
 """
 
 D27_PSEUDOTRADER_FORECASTS = """
