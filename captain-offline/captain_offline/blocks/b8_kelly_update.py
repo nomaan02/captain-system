@@ -22,6 +22,7 @@ import math
 import logging
 
 from shared.questdb_client import get_cursor
+from shared.redis_client import REDIS_KEY_BOCPD, get_redis_client
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -40,7 +41,39 @@ SHRINKAGE_FLOOR = 0.3
 
 
 def _get_cp_prob(asset_id: str) -> float:
-    """Get current BOCPD changepoint probability from P3-D04."""
+    """Get current BOCPD changepoint probability.
+
+    Per Q-07 (decisions log §2 Group E), Redis `captain:bocpd:{asset_id}`
+    is canonical. QuestDB P3-D04 is the audit/replay store and fallback
+    when Redis is cold (process restart, key TTL expiry, fakeredis test).
+
+    NOTE: Online B4 Kelly does NOT consume cp_prob today (canvas L2/L3
+    annotation claims it should — see deferred ticket).
+    """
+    # Primary: Redis (canonical per Q-07).
+    try:
+        client = get_redis_client()
+        raw = client.get(REDIS_KEY_BOCPD.format(asset_id=asset_id))
+        if raw is not None:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            try:
+                val = float(raw)
+                if math.isnan(val) or math.isinf(val):
+                    raise ValueError("non-finite cp_prob")
+                return val
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Kelly L1 cp_prob: malformed Redis value for %s, "
+                    "falling back to QuestDB", asset_id,
+                )
+    except Exception as e:
+        logger.warning(
+            "Kelly L1 cp_prob: Redis read failed for %s, "
+            "falling back to QuestDB: %s", asset_id, e,
+        )
+
+    # Fallback: QuestDB P3-D04 (last-known committed state).
     with get_cursor() as cur:
         cur.execute(
             """SELECT current_changepoint_probability FROM p3_d04_decay_detector_states

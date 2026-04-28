@@ -510,9 +510,9 @@ def get_or_window_minutes(locked_strategy: dict) -> int:
 # ===========================================================================
 
 AIM_FEATURE_MAP = {
-    1: ["vrp", "vrp_overnight", "vrp_overnight_z"],
+    1: ["vrp", "vrp_z", "vrp_overnight", "vrp_overnight_z"],
     2: ["pcr", "put_skew", "pcr_z", "skew_z"],
-    3: ["gex"],
+    3: ["gex", "gex_z", "expiry_day", "triple_witch"],
     4: ["ivts", "overnight_return_z", "is_eia_wednesday"],
     5: [],  # AIM-05 is DEFERRED
     6: ["events_today", "event_proximity"],
@@ -557,11 +557,18 @@ def compute_all_features(
     assets: list[dict],
     aim_states: dict,
     locked_strategies: dict,
+    *,
+    market_data=None,
 ) -> dict[str, dict]:
     """Compute all features for all assets.
 
-    Returns: {asset_id: {feature_name: value, ...}, ...}
+    Phase 7: ``market_data`` (optional ``MarketDataProvider``) is threaded
+    through to bar / quote / volume helpers when supplied; default ``None``
+    preserves byte-identical live behaviour. Replay callers construct a
+    ``HistoricalMarketDataProvider`` and pass it in; live B1 leaves the
+    kwarg unset.
     """
+    market_data_provider = market_data
     today = now_et()
     features = {}
 
@@ -585,6 +592,11 @@ def compute_all_features(
         if aim01_state and aim01_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
             f["vrp"] = compute_vrp(asset_id)
             f["vrp_overnight"] = compute_overnight_vrp(asset_id)
+            trailing_120d_vrp = _get_trailing_vrp(asset_id, lookback=120)
+            if f["vrp"] is not None and trailing_120d_vrp is not None:
+                f["vrp_z"] = z_score(f["vrp"], trailing_120d_vrp)
+            else:
+                f["vrp_z"] = None
             # z-score overnight VRP over trailing 60d (spec: AIM_Extractions.md:220)
             trailing_60d_vrp = _get_trailing_overnight_vrp(asset_id, lookback=60)
             if f["vrp_overnight"] is not None and trailing_60d_vrp is not None:
@@ -655,6 +667,14 @@ def compute_all_features(
         aim03_state = aim_states.get("by_asset_aim", {}).get((asset_id, 3))
         if aim03_state and aim03_state["status"] in ("ACTIVE", "BOOTSTRAPPED"):
             f["gex"] = compute_dealer_net_gamma(asset_id)
+            trailing_60d_gex = _get_trailing_gex(asset_id, lookback=60)
+            if f["gex"] is not None and trailing_60d_gex is not None:
+                f["gex_z"] = z_score(f["gex"], trailing_60d_gex)
+            else:
+                f["gex_z"] = None
+            third_friday = _get_third_friday(today.year, today.month)
+            f["expiry_day"] = today.date() == third_friday
+            f["triple_witch"] = f["expiry_day"] and today.month in (3, 6, 9, 12)
 
         # AIM-02: Skew
         aim02_state = aim_states.get("by_asset_aim", {}).get((asset_id, 2))
@@ -893,6 +913,34 @@ def _get_overnight_range(asset_id: str) -> Optional[float]:
         return None
     return abs(open_price / prior_close - 1)
 
+def _get_trailing_vrp(asset_id: str, lookback: int = 120) -> Optional[list[float]]:
+    """Trailing primary ``vrp`` series (aligned with ``compute_vrp``: RV − IV per D31 row).
+
+    Isaac pseudocode (2026-04-27): 120-day window for ``vrp_z``. Same D31 SELECT as
+    overnight helper but each value is ``rv - iv`` to match :func:`compute_vrp`.
+    """
+    from shared.questdb_client import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT atm_iv_30d, realized_vol_20d FROM p3_d31_implied_vol
+                   WHERE asset_id = %s
+                   ORDER BY trade_date DESC
+                   LIMIT %s""",
+                (asset_id, lookback),
+            )
+            rows = cur.fetchall()
+        if rows and len(rows) >= 10:
+            vrp_primary = []
+            for iv, rv in reversed(rows):
+                if iv is not None and rv is not None:
+                    vrp_primary.append(float(rv) - float(iv))
+            if len(vrp_primary) >= 10:
+                return vrp_primary
+    except Exception:
+        pass
+    return None
+
 def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing VRP (IV - RV) values for z-score computation (spec: 60d).
 
@@ -933,6 +981,18 @@ def _get_trailing_overnight_vrp(asset_id: str, lookback: int = 60) -> Optional[l
         if len(rv_series) >= 10:
             return rv_series
     return None
+
+
+def _get_trailing_gex(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
+    """Trailing dealer net GEX for z-score normalisation (AIM-03 canvas: 60d).
+
+    Plan source: P3-D01 / historical aim feature rows when option-chain history
+    exists. Today the options chain adapter is stubbed (`_get_option_chain` →
+    None); no GEX series is persisted, so this returns None until a feed lands.
+    """
+    _ = asset_id, lookback
+    return None
+
 
 def _get_trailing_overnight_returns(asset_id: str, lookback: int = 60) -> Optional[list[float]]:
     """Trailing |overnight_return| values for AIM-04 gap z-score (spec: 60d).
@@ -1100,8 +1160,17 @@ def _get_daily_returns(asset_id: str, lookback: int = 20) -> Optional[list[float
         return [(closes[i] / closes[i - 1]) - 1 for i in range(1, len(closes))]
     return None
 
-def _get_daily_closes(asset_id: str, lookback: int = 280) -> Optional[list[float]]:
-    """Daily close prices — QuestDB P3-D30 first, TopstepX fallback."""
+def _get_daily_closes(
+    asset_id: str, lookback: int = 280, *, market_data_provider=None,
+) -> Optional[list[float]]:
+    """Daily close prices — QuestDB P3-D30 first, TopstepX fallback.
+
+    Phase 7: when ``market_data_provider`` is supplied, route through its
+    ``get_daily_closes`` instead of TopstepX (the provider may itself read
+    QuestDB; it just keeps the seam consistent).
+    """
+    if market_data_provider is not None:
+        return market_data_provider.get_daily_closes(asset_id, lookback)
     # Try QuestDB first (bootstrapped historical data — faster and more reliable)
     closes = _get_daily_closes_from_db(asset_id, lookback)
     if closes and len(closes) >= lookback:
@@ -1209,8 +1278,17 @@ def _get_best_ask(asset_id: str) -> Optional[float]:
         return float(quote["bestAsk"])
     return None
 
-def _get_intraday_bars(asset_id: str, minutes: int) -> Optional[list[dict]]:
-    """Intraday minute bars from TopstepX REST."""
+def _get_intraday_bars(
+    asset_id: str, minutes: int, *, market_data_provider=None,
+) -> Optional[list[dict]]:
+    """Intraday minute bars from TopstepX REST.
+
+    Phase 7: when ``market_data_provider`` is supplied, route through its
+    ``get_intraday_bars`` method instead of calling TopstepX. ``None``
+    default keeps live behaviour byte-identical.
+    """
+    if market_data_provider is not None:
+        return market_data_provider.get_intraday_bars(asset_id, minutes)
     contract_id = resolve_contract_id(asset_id)
     if not contract_id:
         return None
@@ -1480,12 +1558,38 @@ def _get_trailing_spreads(asset_id: str, lookback: int = 60) -> Optional[list[fl
         pass
     return None
 
-def _get_recent_5min_vol(asset_id: str) -> Optional[float]:
+def _get_recent_5min_vol(
+    asset_id: str, *, market_data_provider=None,
+) -> Optional[float]:
     """Today's 5-min opening volatility from TopstepX 1-min bars.
 
     Fetches 1-min bars for the first 5 minutes after session open,
-    computes std dev of close-to-close log returns.
+    computes std dev of close-to-close log returns. Phase 7: when a
+    provider is supplied, source bars via ``get_intraday_bars`` instead
+    of the live TopstepX REST call.
     """
+    if market_data_provider is not None:
+        bars = market_data_provider.get_intraday_bars(asset_id, 5)
+        if not bars:
+            return None
+        import math as _math
+        closes = [
+            (b.get("c") if b.get("c") is not None else b.get("close"))
+            for b in bars
+        ]
+        closes = [float(c) for c in closes if c is not None]
+        if len(closes) < 2:
+            return None
+        rets = [
+            _math.log(closes[i] / closes[i - 1])
+            for i in range(1, len(closes))
+            if closes[i - 1] > 0
+        ]
+        if not rets:
+            return None
+        m = sum(rets) / len(rets)
+        var = sum((r - m) ** 2 for r in rets) / len(rets)
+        return float(var ** 0.5)
     contract_id = resolve_contract_id(asset_id)
     if not contract_id:
         return None

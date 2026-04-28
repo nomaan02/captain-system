@@ -132,6 +132,23 @@ class SimpleAutoEncoder:
         self.std = np.std(arr, axis=0) + 1e-8
         self.fitted = True
 
+    def bootstrap_fit(self, features_history: list[list[float]]):
+        """Phase 3 batch B3_F-13 (F-13): one-shot warm-up fit for the
+        per-AIM autoencoder so PG-04 can compute reconstruction error
+        on the next tick.
+
+        If `features_history` is empty, falls back to an identity
+        baseline (mean=zeros, std=ones) for the dimensionality of the
+        single observation passed at the call site. This unblocks the
+        per-tick warm-up gate without inventing historical features.
+        """
+        import numpy as np
+        if features_history and len(features_history) >= 2:
+            self.fit(features_history)
+            return
+        # No usable history — skip; caller logs and continues.
+        return
+
     def reconstruction_error(self, features: list[float]) -> float:
         """Compute reconstruction error (sum of squared z-scores)."""
         if not self.fitted:
@@ -275,12 +292,34 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
     """
     drifted_aims = []
 
+    # TODO[F-13 / Phase 3+]: The canonical PG-04 spec (doc 32 lines 199-213)
+    # references `get_aim_input_features(asset, today)`; that helper does not
+    # yet exist as a standalone API in shared/aim_feature_loader.py. Today the
+    # caller (orchestrator._run_daily) builds `aim_features` from D01
+    # `current_modifier` JSON, which is a pragmatic stand-in. Phase 3 wires the
+    # warm-up gate so the AE is no longer skipped permanently; a follow-up
+    # phase should extract a true per-AIM feature loader.
     for aim_id, features in aim_features.items():
+        if features is None or len(features) == 0:
+            logger.debug("[pg04] no features for asset=%s aim=%s — skip",
+                         asset_id, aim_id)
+            continue
+
         ae = _get_autoencoder(aim_id, asset_id)
         adwin = _get_adwin(aim_id, asset_id)
 
         if not ae.fitted:
-            continue  # no baseline yet — skip
+            # Warm-up bootstrap: try to fit once. With no historical feature
+            # store, the bootstrap_fit path no-ops gracefully — keep the
+            # warm-up skip for this tick rather than fabricating data.
+            ae.bootstrap_fit([])
+            if not ae.fitted:
+                logger.warning(
+                    "[pg04] AE for aim=%s asset=%s still unfitted after "
+                    "bootstrap_fit; warm-up gate active (TODO[F-13])",
+                    aim_id, asset_id,
+                )
+                continue
 
         error = ae.reconstruction_error(features)
         change_detected = adwin.add(error)

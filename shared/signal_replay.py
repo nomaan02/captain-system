@@ -65,14 +65,34 @@ _REGIME_MAP = {
 _DATA_DIR = Path(__file__).parent.parent / "data"
 
 
-class SignalReplayEngine:
-    """Replays the Captain Online signal pipeline with configurable parameters.
+_PHASE7_DEPRECATION_MESSAGE = (
+    "SignalReplayEngine is deprecated; use shared.online_replay.replay_session. "
+    "Removal scheduled for Phase 12."
+)
 
-    Pure computation -- no side effects on Redis, QuestDB, or any external
-    state. All inputs are passed explicitly; all outputs are returned.
+
+def _emit_phase7_deprecation_warning(method: str = "") -> None:
+    import warnings
+    msg = _PHASE7_DEPRECATION_MESSAGE
+    if method:
+        msg = f"SignalReplayEngine.{method} is deprecated; {msg.split('; ', 1)[1]}"
+    warnings.warn(msg, DeprecationWarning, stacklevel=3)
+
+
+class SignalReplayEngine:
+    """DEPRECATED — Phase 7 migrated callers to
+    ``shared.online_replay.replay_session``.
+
+    Phase 7.13 reduced this class to deprecation-warning stubs around its
+    existing computation. The body is preserved because the last
+    in-tree caller (``captain-offline/.../b5_sensitivity.py``) is
+    scheduled for migration in Phase 12 and needs the trade-list
+    semantics until then. Each public method emits a ``DeprecationWarning``
+    so the migration owner sees a tracked signal.
     """
 
     def __init__(self, asset: str = "ES"):
+        _emit_phase7_deprecation_warning()
         self.asset = asset.upper()
         self.or_range = DEFAULT_OR_RANGES.get(self.asset, 4.0)
         self.point_value = POINT_VALUES.get(self.asset, 50.0)
@@ -97,6 +117,8 @@ class SignalReplayEngine:
         account_config: dict | None = None,
     ) -> list[dict]:
         """Level 1 replay: re-size historical trades under proposed parameters.
+
+        DEPRECATED — Phase 7. Use ``shared.online_replay.replay_session``.
 
         The actual per-contract return is preserved from the historical trade.
         Only the number of contracts changes based on the new AIM/Kelly state.
@@ -132,6 +154,7 @@ class SignalReplayEngine:
             List of canonical trade dicts:
                 {day, pnl, contracts, direction, regime}
         """
+        _emit_phase7_deprecation_warning("sizing_replay")
         # Normalise alternate calling convention
         if trades is None:
             trades = []
@@ -274,6 +297,7 @@ class SignalReplayEngine:
             List of canonical trade dicts:
                 {day, pnl, contracts, direction, regime}
         """
+        _emit_phase7_deprecation_warning("strategy_replay")
         # Normalise alternate calling convention
         if trades is None and raw_trades is not None:
             trades = raw_trades
@@ -452,7 +476,10 @@ class SignalReplayEngine:
         This is a convenience helper. Callers can also assemble these
         dicts manually from any source and pass them to sizing_replay()
         or strategy_replay() directly.
+
+        DEPRECATED — Phase 7. Use ``shared.online_replay.replay_session``.
         """
+        _emit_phase7_deprecation_warning("load_replay_context")
         from shared.trade_source import load_trades
 
         asset_upper = asset.upper()

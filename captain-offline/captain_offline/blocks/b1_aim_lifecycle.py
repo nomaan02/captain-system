@@ -11,11 +11,9 @@ State machine for each AIM (1-15 + AIM-16 HMM):
     BOOTSTRAPPED -> ACTIVE (shortcut via asset_bootstrap)
     ACTIVE <-> SUPPRESSED (auto-recovery)
 
-Dual warm-up gates (DEC-05):
-    WARM_UP → ELIGIBLE: Feature gate — N trading days of feature history
-                        (z-score baselines; per-AIM from AIM_Extractions.md)
-    ELIGIBLE → ACTIVE:  Learning gate — 50 trade outcomes (DMA learning)
-                        + user activation via GUI
+Single observation-based warm-up (doc 32 PG-01; Q-09 decisions log):
+    WARM_UP → ELIGIBLE when observations_collected / warmup_required >= 1.0;
+    ELIGIBLE → ACTIVE when user activates (GUI / cron unified path).
 
 Writes: P3-D01 (status updates), P3-D00 (aim_warmup_progress)
 Reads: P3-D01 (current states), P3-D02 (meta-weights)
@@ -27,7 +25,7 @@ import logging
 from datetime import datetime
 
 from shared.questdb_client import get_cursor
-from shared.constants import AIM_STATUS_VALUES
+from shared.redis_client import get_redis_client
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -87,6 +85,7 @@ def _load_meta_weight(aim_id: int, asset_id: str) -> float:
 
 def _update_aim_status(aim_id: int, asset_id: str, new_status: str):
     """Update an AIM's status in P3-D01."""
+    snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d01_aim_model_states
@@ -99,6 +98,7 @@ def _update_aim_status(aim_id: int, asset_id: str, new_status: str):
 def _update_warmup_progress(aim_id: int, asset_id: str, progress: float):
     """Update warmup progress for an AIM in both P3-D01 and P3-D00."""
     clamped = min(progress, 1.0)
+    snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         # P3-D01: AIM-level warmup progress
         cur.execute(
@@ -131,7 +131,8 @@ def data_pipeline_connected(aim_id: int, asset_id: str) -> bool:
 
 
 def observations_collected(aim_id: int, asset_id: str) -> int:
-    """Count trade outcomes collected for this AIM (learning gate proxy)."""
+    """Count trade outcomes collected for this AIM (observation-based warm-up)."""
+    # TODO(Q-27): re-confirm counter source post-Isaac re-ask
     with get_cursor() as cur:
         cur.execute(
             "SELECT count() FROM p3_d03_trade_outcome_log WHERE asset = %s",
@@ -141,65 +142,13 @@ def observations_collected(aim_id: int, asset_id: str) -> int:
     return row[0] if row else 0
 
 
-def feature_days_accumulated(aim_id: int, asset_id: str) -> int:
-    """Count trading days of feature data accumulated for feature gate.
-
-    Uses distinct session dates from the trade outcome log as a proxy for
-    trading days the system has been running. For AIMs with feature_warmup=0
-    (calendar-based), this is irrelevant as the gate always passes.
-    """
-    with get_cursor() as cur:
-        cur.execute(
-            """SELECT count(DISTINCT cast(exit_time AS date))
-               FROM p3_d03_trade_outcome_log WHERE asset = %s""",
-            (asset_id,),
-        )
-        row = cur.fetchone()
-    return row[0] if row else 0
-
-
-def feature_warmup_days(aim_id: int) -> int:
-    """Feature gate: trading days of feature history required per AIM_Extractions.md.
-
-    DEC-05 dual gate — this is the FEATURE gate (z-score baselines need N days).
-    Values from AIM_Extractions.md (authoritative per DEC-01).
-    """
-    days = {
-        1: 120,   # AIM-01: VRP overnight z-score (AIM_Extractions.md:230)
-        2: 60,    # AIM-02: PCR/skew z-score (AIM_Extractions.md:483)
-        3: 60,    # AIM-03: GEX z-score (AIM_Extractions.md:693)
-        4: 60,    # AIM-04: IVTS — VIX/VXV available day 1, overnight z 60d (AIM_Extractions.md:953)
-        5: 0,     # AIM-05: DEFERRED
-        6: 0,     # AIM-06: Calendar — deterministic, no history needed (AIM_Extractions.md:1345)
-        7: 260,   # AIM-07: COT — 52 weeks (AIM_Extractions.md:1564)
-        8: 252,   # AIM-08: Correlation — 252d z-score baseline (AIM_Extractions.md:1727)
-        9: 63,    # AIM-09: Momentum — 63d lookback (AIM_Extractions.md:1900)
-        10: 0,    # AIM-10: Calendar — deterministic (AIM_Extractions.md:2085)
-        11: 252,  # AIM-11: VIX z-score 252d baseline (AIM_Extractions.md:2248)
-        12: 60,   # AIM-12: Spread/vol z-score (AIM_Extractions.md:2427)
-        13: 0,    # AIM-13: Sensitivity — from Offline, no feature history
-        14: 0,    # AIM-14: Auto-expansion — always 1.0
-        15: 20,   # AIM-15: Volume ratio 20d baseline (AIM_Extractions.md:2927)
-        16: 60,   # AIM-16: HMM — 60d for warm-up (HMM_Opportunity_Regime_Spec.md)
-    }
-    return days.get(aim_id, 60)
-
-
-def learning_warmup_required(aim_id: int) -> int:
-    """Learning gate: minimum trade outcomes for DMA learning.
-
-    DEC-05 dual gate — this is the LEARNING gate (DMA needs N trade outcomes).
-    """
+def warmup_required(aim_id: int) -> int:
+    """Minimum observations before WARM_UP → ELIGIBLE (PG-01 single gate)."""
     thresholds = {
         5: 100,   # AIM-05 (DEFERRED — higher threshold)
         16: 240,  # AIM-16 HMM needs 60 days * 4 sessions
     }
     return thresholds.get(aim_id, 50)
-
-
-def warmup_required(aim_id: int) -> int:
-    """DEPRECATED — use learning_warmup_required(). Kept for backward compatibility."""
-    return learning_warmup_required(aim_id)
 
 
 def run_aim_lifecycle(asset_id: str, user_activated_aims: set[int] | None = None):
@@ -242,39 +191,27 @@ def run_aim_lifecycle(asset_id: str, user_activated_aims: set[int] | None = None
                 logger.info("AIM-%d [%s]: COLLECTING -> WARM_UP (obs=%d)", aim_id, asset_id, obs)
 
         elif current_status == "WARM_UP":
-            # DEC-05 dual gate: WARM_UP → ELIGIBLE requires FEATURE gate
-            feat_days = feature_days_accumulated(aim_id, asset_id)
-            feat_required = feature_warmup_days(aim_id)
-            feat_progress = feat_days / feat_required if feat_required > 0 else 1.0
-
-            # Also track learning gate progress for UI display
-            trades = observations_collected(aim_id, asset_id)
-            learn_required = learning_warmup_required(aim_id)
-            learn_progress = trades / learn_required if learn_required > 0 else 1.0
-
-            # Combined progress for UI (min of both gates)
-            progress = min(feat_progress, learn_progress)
+            obs = observations_collected(aim_id, asset_id)
+            required = warmup_required(aim_id)
+            progress = obs / required if required > 0 else 1.0
             _update_warmup_progress(aim_id, asset_id, min(progress, 1.0))
 
-            if feat_progress >= 1.0:
+            if progress >= 1.0:
                 _update_aim_status(aim_id, asset_id, "ELIGIBLE")
-                logger.info("AIM-%d [%s]: WARM_UP -> ELIGIBLE (feature gate passed: %dd/%dd)",
-                            aim_id, asset_id, feat_days, feat_required)
+                logger.info(
+                    "AIM-%d [%s]: WARM_UP -> ELIGIBLE (%d/%d observations)",
+                    aim_id, asset_id, obs, required,
+                )
 
         elif current_status == "ELIGIBLE":
-            # DEC-05 dual gate: ELIGIBLE → ACTIVE requires LEARNING gate + user activation
-            trades = observations_collected(aim_id, asset_id)
-            learn_required = learning_warmup_required(aim_id)
-            learning_passed = trades >= learn_required
-
-            if aim_id in user_activated_aims and learning_passed:
+            # PG-01 spec: ELIGIBLE → ACTIVE on user activation alone.
+            if aim_id in user_activated_aims:
                 snapshot_before_update("P3-D01", "AIM_RETRAIN", state)
                 _update_aim_status(aim_id, asset_id, "ACTIVE")
-                logger.info("AIM-%d [%s]: ELIGIBLE -> ACTIVE (user activated, learning gate passed: %d/%d trades)",
-                            aim_id, asset_id, trades, learn_required)
-            elif aim_id in user_activated_aims and not learning_passed:
-                logger.info("AIM-%d [%s]: ELIGIBLE — user activated but learning gate not met (%d/%d trades)",
-                            aim_id, asset_id, trades, learn_required)
+                logger.info(
+                    "AIM-%d [%s]: ELIGIBLE -> ACTIVE (user activated)",
+                    aim_id, asset_id,
+                )
 
         elif current_status == "BOOTSTRAPPED":
             # Same gate as ELIGIBLE — user must activate
@@ -287,11 +224,13 @@ def run_aim_lifecycle(asset_id: str, user_activated_aims: set[int] | None = None
             # Check for suppression: meta_weight == 0 for 20+ consecutive trades
             weight = _load_meta_weight(aim_id, asset_id)
             if weight == 0:
-                # Track consecutive zero weight (simplified — in production,
-                # maintain a counter in P3-D02.days_below_threshold)
                 meta = _load_meta_weight_history(aim_id, asset_id)
                 if meta.get("consecutive_zero", 0) >= SUPPRESSION_CONSECUTIVE_ZERO:
                     _update_aim_status(aim_id, asset_id, "SUPPRESSED")
+                    get_redis_client().hset(
+                        f"aim_counters:{aim_id}:{asset_id}", "consecutive_zero", 0,
+                    )
+                    # BLOCKED — see Q-26 (LOG suppression event to P3-D06)
                     logger.warning("AIM-%d [%s]: ACTIVE -> SUPPRESSED (zero weight %d trades)",
                                    aim_id, asset_id, SUPPRESSION_CONSECUTIVE_ZERO)
 
@@ -302,6 +241,10 @@ def run_aim_lifecycle(asset_id: str, user_activated_aims: set[int] | None = None
                 meta = _load_meta_weight_history(aim_id, asset_id)
                 if meta.get("consecutive_above", 0) >= RECOVERY_CONSECUTIVE:
                     _update_aim_status(aim_id, asset_id, "ACTIVE")
+                    get_redis_client().hset(
+                        f"aim_counters:{aim_id}:{asset_id}", "consecutive_above", 0,
+                    )
+                    # BLOCKED — see Q-26 (LOG recovery event to P3-D06)
                     logger.info("AIM-%d [%s]: SUPPRESSED -> ACTIVE (auto-recovery)", aim_id, asset_id)
 
 
@@ -373,20 +316,9 @@ def run_tier_retrain(asset_id: str, aim_ids: list[int]):
 
 
 def _load_meta_weight_history(aim_id: int, asset_id: str) -> dict:
-    """Load recent meta-weight history for suppression/recovery tracking.
-
-    Returns dict with consecutive_zero and consecutive_above counts.
-    """
-    with get_cursor() as cur:
-        cur.execute(
-            """SELECT days_below_threshold FROM p3_d02_aim_meta_weights
-               WHERE aim_id = %s AND asset_id = %s
-               LATEST ON last_updated PARTITION BY aim_id, asset_id""",
-            (aim_id, asset_id),
-        )
-        row = cur.fetchone()
-    days_below = row[0] if row else 0
+    """Return consecutive-trade counters tracked by DMA update (PG-01)."""
+    raw = get_redis_client().hgetall(f"aim_counters:{aim_id}:{asset_id}")
     return {
-        "consecutive_zero": days_below,
-        "consecutive_above": 0 if days_below > 0 else 10,  # simplified
+        "consecutive_zero": int(raw.get("consecutive_zero", 0)),
+        "consecutive_above": int(raw.get("consecutive_above", 0)),
     }

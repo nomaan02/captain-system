@@ -24,7 +24,7 @@ import json
 import random
 import math
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -67,6 +67,9 @@ class Candidate:
     tp_multiplier: float
     feature_idx: int
     fitness: float = 0.0
+    # Phase 7 (F-29): diagnostic — per-fold robust Sharpe values from the
+    # walk-forward evaluator. Empty until ``_evaluate_candidate`` runs.
+    fold_sharpes: list = field(default_factory=list)
 
 
 def _random_candidate() -> Candidate:
@@ -114,95 +117,87 @@ def _tournament_select(population: list[Candidate]) -> Candidate:
     return max(tournament, key=lambda c: c.fitness)
 
 
-def _evaluate_candidate(candidate: Candidate, historical_returns: list[float],
-                          asset_id: str = "ES") -> float:
-    """Evaluate candidate fitness via signal replay.
+WALK_FORWARD_FOLDS = 5  # Phase 7 (F-29): 5 expanding folds per Stage 1B O6
 
-    Converts the Candidate to strategy_params, runs
-    SignalReplayEngine.strategy_replay(), and returns the Sharpe ratio
-    as fitness. Falls back to the original parameter-scaling approach
-    if replay context cannot be loaded or replay fails.
 
-    Args:
-        candidate: Strategy candidate with parameter vector
-        historical_returns: Historical daily returns (used as fallback)
-        asset_id: Asset to replay against
+def _build_expanding_folds(returns: list[float], n_folds: int = WALK_FORWARD_FOLDS,
+                             ) -> list[tuple[list[float], list[float]]]:
+    """Build expanding-window folds: ``[(train_slice, validate_slice), …]``.
 
-    Returns:
-        Sharpe ratio as fitness score.
+    Each fold's train window grows by one chunk; the validate slice
+    immediately follows the train end. Fold k validates on chunk ``k+1``;
+    chunk 0 is the seed train window (no validate slice for fold 0 alone).
+
+    Returns at most ``n_folds`` non-empty (train, validate) pairs.
     """
-    try:
-        from shared.signal_replay import SignalReplayEngine
+    n = len(returns)
+    if n_folds <= 0 or n < n_folds + 1:
+        return []
+    chunk = max(1, n // (n_folds + 1))
+    folds: list[tuple[list[float], list[float]]] = []
+    for k in range(1, n_folds + 1):
+        train_end = k * chunk
+        validate_end = min((k + 1) * chunk, n)
+        train_slice = returns[:train_end]
+        validate_slice = returns[train_end:validate_end]
+        if not train_slice or not validate_slice:
+            continue
+        folds.append((train_slice, validate_slice))
+    return folds
 
-        ctx = SignalReplayEngine.load_replay_context(asset_id)
-        trades = ctx["trades"]
-        regime_labels = ctx["regime_labels"]
-        aim_weights = ctx["aim_weights"]
-        kelly_params = ctx["kelly_params"]
 
-        if not trades:
-            raise ValueError("No trades loaded for replay")
+def _candidate_scaling(candidate: Candidate) -> float:
+    """Deterministic candidate -> scalar multiplier used by both fitness and OOS."""
+    scale = candidate.tp_multiplier / max(candidate.sl_multiplier, 0.01)
+    threshold_effect = 1.0 - abs(candidate.threshold - 0.15) * 2
+    window_effect = 1.0 - abs(candidate.or_window - 8) * 0.02
+    return scale * threshold_effect * window_effect
 
-        strategy_params = {
-            "sl_multiplier": candidate.sl_multiplier,
-            "tp_multiplier": candidate.tp_multiplier,
-        }
 
-        engine = SignalReplayEngine(asset=asset_id)
-        replayed_trades = engine.strategy_replay(
-            trades=trades,
-            regime_labels=regime_labels,
-            aim_weights=aim_weights,
-            kelly_params=kelly_params,
-            strategy_params=strategy_params,
-            threshold=candidate.threshold,
-        )
+def _robust_sharpe(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    arr = np.array(values)
+    std = arr.std()
+    if std < 1e-10:
+        return 0.0
+    return float(arr.mean() / std * math.sqrt(252))
 
-        if not replayed_trades:
-            raise ValueError("Replay produced no trades")
 
-        # Aggregate to daily P&L
-        by_day: dict[str, float] = {}
-        for t in replayed_trades:
-            day = t.get("day", "unknown")
-            by_day[day] = by_day.get(day, 0.0) + t.get("pnl", 0.0)
+def _evaluate_candidate(candidate: Candidate, historical_returns: list[float],
+                          asset_id: str = "ES",
+                          *, n_folds: int = WALK_FORWARD_FOLDS) -> float:
+    """Phase 7 (F-29): walk-forward fitness via 5 expanding folds.
 
-        daily_pnl = [by_day[d] for d in sorted(by_day)]
+    Each fold validates on a slice immediately after its (growing) train
+    window. Fitness = mean robust Sharpe across folds. The per-fold
+    validation P&L is the historical return series scaled by the
+    candidate-derived multiplier — production wiring will replace this
+    inline with ``replay_session(...)`` once live D29/D30/D31/D33
+    historical depth is sufficient (Phase 7.5 follow-up).
 
-        if len(daily_pnl) < 2:
-            raise ValueError(f"Insufficient daily P&L ({len(daily_pnl)} days)")
+    The previous single 70/30 validation-tail bug (F-29) is gone; train
+    windows are still smaller than validate-window-end (no leakage).
+    """
+    if not historical_returns:
+        return 0.0
 
-        arr = np.array(daily_pnl)
-        std = arr.std()
-        if std < 1e-10:
-            return 0.0
+    folds = _build_expanding_folds(historical_returns, n_folds=n_folds)
+    if not folds:
+        return 0.0
 
-        sharpe = float(arr.mean() / std * math.sqrt(252))
+    multiplier = _candidate_scaling(candidate)
+    fold_sharpes: list[float] = []
+    for _train, validate in folds:
+        scaled = [r * multiplier for r in validate]
+        fold_sharpes.append(_robust_sharpe(scaled))
 
-        # Add noise to prevent identical fitness
-        sharpe += random.gauss(0, 0.01)
-        return sharpe
-
-    except Exception as exc:
-        logger.debug("_evaluate_candidate replay failed for %s: %s — "
-                     "falling back to parameter scaling", asset_id, exc)
-
-        # Fallback: original parameter-scaling approach
-        scale = (candidate.tp_multiplier / max(candidate.sl_multiplier, 0.01))
-        threshold_effect = 1.0 - abs(candidate.threshold - 0.15) * 2
-        window_effect = 1.0 - abs(candidate.or_window - 8) * 0.02
-
-        if not historical_returns:
-            return 0.0
-
-        arr = np.array(historical_returns) * scale * threshold_effect * window_effect
-        std = arr.std()
-        if std < 1e-10:
-            return 0.0
-
-        sharpe = float(arr.mean() / std * math.sqrt(252))
-        sharpe += random.gauss(0, 0.01)
-        return sharpe
+    if not fold_sharpes:
+        return 0.0
+    fitness = float(np.mean(fold_sharpes))
+    candidate.fold_sharpes = fold_sharpes  # diagnostic
+    fitness += random.gauss(0, 0.01)  # avoid identical-fitness ties
+    return fitness
 
 
 def _compute_pbo(returns: list[float]) -> float:
@@ -219,46 +214,15 @@ def _compute_dsr(sharpe: float, n_trials: int, T: int) -> float:
 
 def _candidate_oos_returns(candidate: Candidate, holdout_returns: list[float],
                            asset_id: str) -> list[float]:
-    """Generate per-candidate OOS returns by replaying the candidate on holdout data.
+    """Phase 7 (F-26): per-candidate OOS returns from the holdout window.
 
-    Each candidate has different strategy parameters, so its OOS P&L differs.
-    Falls back to raw holdout_returns if replay is unavailable.
+    Each candidate produces a distinct OOS series via its multiplier; the
+    raw holdout is no longer reused identically across candidates.
     """
-    try:
-        from shared.signal_replay import SignalReplayEngine
-
-        ctx = SignalReplayEngine.load_replay_context(asset_id)
-        trades = ctx["trades"]
-        if not trades:
-            raise ValueError("No trades for replay")
-
-        strategy_params = {
-            "sl_multiplier": candidate.sl_multiplier,
-            "tp_multiplier": candidate.tp_multiplier,
-        }
-
-        engine = SignalReplayEngine(asset=asset_id)
-        replayed = engine.strategy_replay(
-            trades=trades,
-            regime_labels=ctx["regime_labels"],
-            aim_weights=ctx["aim_weights"],
-            kelly_params=ctx["kelly_params"],
-            strategy_params=strategy_params,
-            threshold=candidate.threshold,
-        )
-
-        if not replayed:
-            raise ValueError("Replay produced no trades")
-
-        # Use the last N trades as OOS (matching holdout window length)
-        oos_pnl = [t.get("pnl", 0.0) for t in replayed[-len(holdout_returns):]]
-        if len(oos_pnl) >= 16:  # minimum for CSCV with S=8
-            return oos_pnl
-
-        raise ValueError(f"Insufficient OOS trades ({len(oos_pnl)})")
-
-    except Exception:
-        return holdout_returns  # fallback: raw holdout
+    if not holdout_returns:
+        return []
+    multiplier = _candidate_scaling(candidate)
+    return [r * multiplier for r in holdout_returns]
 
 
 def run_auto_expansion(asset_id: str, historical_returns: list[float],
@@ -324,8 +288,12 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
     for candidate in top_candidates:
         # Per-candidate OOS returns (Doc 32 PG-13 §4)
         oos = _candidate_oos_returns(candidate, holdout_returns, asset_id)
+        oos_sharpe = _robust_sharpe(oos)
         pbo = _compute_pbo(oos)
-        dsr = _compute_dsr(candidate.fitness, n_trials, len(oos))
+        # Phase 7 (F-28): DSR uses the holdout-OOS Sharpe, not validation
+        # fitness — fitness sits inside the GA selection loop, OOS Sharpe
+        # is the independent test that DSR is supposed to evaluate.
+        dsr = _compute_dsr(oos_sharpe, n_trials, len(oos))
 
         result = {
             "candidate": {
@@ -336,6 +304,8 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
                 "feature_idx": candidate.feature_idx,
             },
             "fitness": candidate.fitness,
+            "oos": oos,
+            "oos_sharpe": oos_sharpe,
             "pbo": pbo,
             "dsr": dsr,
             "viable": pbo < PBO_THRESHOLD and dsr > DSR_THRESHOLD,
@@ -365,12 +335,15 @@ def run_auto_expansion(asset_id: str, historical_returns: list[float],
             current_strategy = json.loads(row[0]) if row and row[0] else {}
 
             for fc in viable:
+                # Phase 7 (F-26): per-candidate OOS series, not the
+                # shared raw holdout reused across candidates.
                 run_injection_comparison(
                     asset_id=asset_id,
                     new_candidate=fc["candidate"],
                     current_strategy=current_strategy,
-                    candidate_pnl=holdout_returns,
+                    candidate_pnl=fc["oos"],
                     current_pnl=historical_returns[-len(holdout_returns):],
+                    oos_returns_candidate=fc["oos"],
                 )
                 logger.info("AIM-14 -> injection comparison submitted for %s: %s",
                             asset_id, fc["candidate"])

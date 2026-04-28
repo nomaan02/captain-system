@@ -14,5 +14,8 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@types/node": "^25.5.0"
+  },
+  "dependencies": {
+    "obsidian-mcp-server": "^1.5.8"
   }
 }

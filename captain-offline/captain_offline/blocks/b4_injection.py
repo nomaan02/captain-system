@@ -24,6 +24,7 @@ Writes: P3-D00, P3-D06
 
 import json
 import logging
+import os
 from datetime import datetime
 
 from shared.constants import now_et
@@ -44,24 +45,58 @@ DEFAULT_TRACKING_DAYS = 20
 
 
 def _compute_aim_adjusted_edge(strategy: dict, aim_weights: dict,
-                                 historical_pnl: list[float]) -> float:
+                                 historical_pnl: list[float],
+                                 *,
+                                 historical_window: tuple | None = None,
+                                 user_id: str | None = None,
+                                 asset_id: str | None = None) -> float:
     """Compute AIM-adjusted expected edge for a strategy.
 
-    Uses the DMA-weighted AIM modifiers retroactively applied to
-    historical performance.
+    Phase 7 (F-24): when ``historical_window``, ``user_id``, and
+    ``asset_id`` are supplied, replay each active AIM's modifier
+    retroactively against the candidate strategy's thresholds via
+    ``shared.aim_retroactive.aim_retroactive_replay``. The day-level
+    series is aggregated by AIM weight and multiplied with the
+    realised P&L per day to produce an expected-edge series.
 
-    Simplified: expected_edge = mean(pnl) * mean(modifier)
+    Legacy behaviour (caller passes only ``historical_pnl``) preserves
+    the prior scalar heuristic so existing call sites without spec
+    Phase 7 plumbing keep working.
     """
+    import numpy as np
+
+    if historical_window and user_id and asset_id and aim_weights:
+        from shared.aim_retroactive import (
+            aggregate_modifiers,
+            aim_retroactive_replay,
+        )
+
+        retroactive: dict[int, list] = {}
+        for aim_id, weight in aim_weights.items():
+            if not weight:
+                continue
+            series = aim_retroactive_replay(
+                aim_id, strategy, historical_window,
+                user_id=user_id, asset=asset_id,
+            )
+            retroactive[aim_id] = series
+
+        aggregated = aggregate_modifiers(retroactive, aim_weights)
+        if aggregated and historical_pnl:
+            mods = [m for _, m in aggregated]
+            n = min(len(mods), len(historical_pnl))
+            if n > 0:
+                edge_series = [
+                    historical_pnl[-n + i] * mods[-n + i] for i in range(n)
+                ]
+                return float(np.mean(edge_series))
+
     if not historical_pnl:
         return 0.0
 
-    import numpy as np
     mean_pnl = float(np.mean(historical_pnl))
-
-    # Average AIM modifier from weights
     total_weight = sum(aim_weights.values()) if aim_weights else 1.0
     mean_modifier = total_weight / max(len(aim_weights), 1) if aim_weights else 1.0
-
     return mean_pnl * max(mean_modifier, 0.5)
 
 
@@ -109,28 +144,44 @@ def _store_injection(asset_id: str, candidate: dict, current: dict,
 def run_injection_comparison(asset_id: str, new_candidate: dict,
                                current_strategy: dict,
                                candidate_pnl: list[float],
-                               current_pnl: list[float]) -> dict:
+                               current_pnl: list[float],
+                               *,
+                               historical_window: tuple | None = None,
+                               user_id: str | None = None,
+                               oos_returns_candidate: list[float] | None = None) -> dict:
     """Execute P3-PG-10: injection comparison.
 
-    Args:
-        asset_id: Asset being evaluated
-        new_candidate: New strategy from P1/P2 rerun (P2-D06 format)
-        current_strategy: Current locked strategy from P3-D00
-        candidate_pnl: Historical P&L under new candidate
-        current_pnl: Historical P&L under current strategy
-
-    Returns:
-        Dict with recommendation (ADOPT/PARALLEL_TRACK/REJECT)
+    Phase 7 (F-24, F-26): when ``historical_window`` and ``user_id`` are
+    supplied, the AIM-adjusted expected edges are computed via
+    ``aim_retroactive_replay`` (per active AIM) instead of the prior
+    scalar heuristic. ``oos_returns_candidate`` overrides
+    ``candidate_pnl`` when provided (per-candidate OOS handoff from
+    PG-13).
     """
     aim_weights = _load_aim_weights(asset_id)
 
-    # AIM-adjusted expected edges
-    expected_new = _compute_aim_adjusted_edge(new_candidate, aim_weights, candidate_pnl)
-    expected_current = _compute_aim_adjusted_edge(current_strategy, aim_weights, current_pnl)
+    if oos_returns_candidate is not None:
+        candidate_pnl = oos_returns_candidate
 
-    # Run pseudotrader comparison
+    # AIM-adjusted expected edges (Phase 7: per-AIM retroactive replay
+    # when window+user supplied; otherwise scalar heuristic preserved).
+    expected_new = _compute_aim_adjusted_edge(
+        new_candidate, aim_weights, candidate_pnl,
+        historical_window=historical_window, user_id=user_id, asset_id=asset_id,
+    )
+    expected_current = _compute_aim_adjusted_edge(
+        current_strategy, aim_weights, current_pnl,
+        historical_window=historical_window, user_id=user_id, asset_id=asset_id,
+    )
+
+    # Run pseudotrader comparison — Phase 7 (F-25): the precomputed P&L
+    # branch is no longer wired by PG-10. ``run_pseudotrader`` runs its
+    # replay path against D03 with current vs. proposed strategies.
     pseudo_results = run_pseudotrader(
-        asset_id, "STRATEGY_INJECTION", current_pnl, candidate_pnl
+        asset_id, "STRATEGY_INJECTION",
+        current_params={"locked_strategies": {asset_id: current_strategy}},
+        proposed_params={"locked_strategies": {asset_id: new_candidate}},
+        user_id=user_id or os.environ.get("BOOTSTRAP_USER_ID", "primary_user"),
     )
 
     # Decision logic

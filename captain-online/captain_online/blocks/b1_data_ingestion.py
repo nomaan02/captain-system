@@ -354,15 +354,24 @@ def _load_system_param(key: str, default=None):
 # Concurrent market-data pre-fetch (G-023)
 # ---------------------------------------------------------------------------
 
-def _prefetch_market_data(assets: list[dict]) -> dict:
+def _prefetch_market_data(assets: list[dict], *, market_data_provider=None) -> dict:
     """Fetch latest price, prior close, and 20d avg volume for all assets
-    concurrently using a thread pool.  Returns dict keyed by asset_id."""
+    concurrently using a thread pool. Returns dict keyed by asset_id.
+
+    Phase 7: when ``market_data_provider`` is supplied (replay path), the
+    helper functions route through it. The thread pool is preserved for the
+    live path; the replay path runs on a fixed historical snapshot, so the
+    pool concurrency is harmless.
+    """
 
     def _fetch_one(asset_id: str) -> tuple[str, dict]:
         return asset_id, {
-            "latest_price": _get_latest_price(asset_id),
-            "prior_close": _get_prior_close(asset_id),
-            "avg_volume_20d": _get_avg_session_volume_20d(asset_id),
+            "latest_price": _get_latest_price(
+                asset_id, market_data_provider=market_data_provider),
+            "prior_close": _get_prior_close(
+                asset_id, market_data_provider=market_data_provider),
+            "avg_volume_20d": _get_avg_session_volume_20d(
+                asset_id, market_data_provider=market_data_provider),
         }
 
     result: dict = {}
@@ -523,8 +532,20 @@ def _check_roll_calendar(assets: list[dict]) -> list[dict]:
 # Data feed stubs — replaced by real adapters in integration
 # ---------------------------------------------------------------------------
 
-def _get_latest_price(asset_id: str) -> float | None:
-    """Get latest price from TopstepX market stream or REST fallback."""
+def _get_latest_price(asset_id: str, *, market_data_provider=None) -> float | None:
+    """Get latest price from TopstepX market stream or REST fallback.
+
+    Phase 7: when ``market_data_provider`` is supplied, route quote lookup
+    through it. Default ``None`` preserves the live path byte-identical.
+    """
+    if market_data_provider is not None:
+        quote = market_data_provider.get_current_quote(asset_id)
+        if quote and quote.get("lastPrice") is not None:
+            return float(quote["lastPrice"])
+        if quote and quote.get("bid") is not None and quote.get("ask") is not None:
+            return (float(quote["bid"]) + float(quote["ask"])) / 2.0
+        return None
+
     contract_id = resolve_contract_id(asset_id)
     if contract_id is None:
         logger.warning("_get_latest_price: no contract_id for asset %s", asset_id)
@@ -550,8 +571,11 @@ def _get_latest_price(asset_id: str) -> float | None:
     return None
 
 
-def _get_prior_close(asset_id: str) -> float | None:
+def _get_prior_close(asset_id: str, *, market_data_provider=None) -> float | None:
     """Get yesterday's closing price from TopstepX daily bars."""
+    if market_data_provider is not None:
+        return market_data_provider.get_prior_close(asset_id)
+
     contract_id = resolve_contract_id(asset_id)
     if contract_id is None:
         logger.warning("_get_prior_close: no contract_id for asset %s", asset_id)
@@ -570,8 +594,12 @@ def _get_prior_close(asset_id: str) -> float | None:
     return None
 
 
-def _get_current_session_volume(asset_id: str) -> int:
+def _get_current_session_volume(asset_id: str, *, market_data_provider=None) -> int:
     """Get current session volume from stream cache."""
+    if market_data_provider is not None:
+        v = market_data_provider.get_current_session_volume(asset_id)
+        return int(v) if v is not None else 0
+
     contract_id = resolve_contract_id(asset_id)
     if contract_id is None:
         logger.warning("_get_current_session_volume: no contract_id for asset %s", asset_id)
@@ -582,8 +610,11 @@ def _get_current_session_volume(asset_id: str) -> int:
     return 0
 
 
-def _get_avg_session_volume_20d(asset_id: str) -> float | None:
+def _get_avg_session_volume_20d(asset_id: str, *, market_data_provider=None) -> float | None:
     """Get 20-day average session volume from TopstepX daily bars."""
+    if market_data_provider is not None:
+        return market_data_provider.get_avg_session_volume_20d(asset_id)
+
     contract_id = resolve_contract_id(asset_id)
     if contract_id is None:
         logger.warning("_get_avg_session_volume_20d: no contract_id for asset %s", asset_id)
@@ -775,15 +806,21 @@ def session_match(asset_id: str, session_id: int, session_hours: dict = None) ->
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_data_ingestion(session_id: int) -> dict | None:
+def run_data_ingestion(session_id: int, *, market_data=None) -> dict | None:
     """P3-PG-21: Pre-session data ingestion.
 
     Args:
         session_id: 1=NY, 2=LON, 3=APAC
+        market_data: optional ``MarketDataProvider`` for replay paths.
+            Default ``None`` preserves the live behaviour byte-identical
+            (Phase 7 live-parity invariant). When supplied, helpers route
+            external bar/quote/volume reads through the provider instead
+            of the live ``topstep_client`` + ``quote_cache``.
 
     Returns:
         dict with all loaded data for Blocks 2-6, or None if no active assets.
     """
+    market_data_provider = market_data
     session_name = SESSION_IDS.get(session_id, "NY")
     logger.info("ON-B1: Starting data ingestion for session %s (%d)", session_name, session_id)
 
@@ -802,7 +839,7 @@ def run_data_ingestion(session_id: int) -> dict | None:
     aim_states = _load_aim_states()
 
     # Pre-fetch market data for all assets concurrently (G-023: <9s for 10 assets)
-    market_data = _prefetch_market_data(assets)
+    market_data = _prefetch_market_data(assets, market_data_provider=market_data_provider)
 
     # Step 1b: Data Moderator — pre-ingestion validation
     assets = _run_data_moderator(assets, session_id, aim_states=aim_states, market_data=market_data)

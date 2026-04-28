@@ -23,12 +23,8 @@ Writes: P3-D08 (pass_probability, simulation_date)
 """
 
 import json
-import math
 import random
 import logging
-from datetime import datetime
-
-import numpy as np
 
 from shared.constants import now_et
 from shared.questdb_client import get_cursor
@@ -40,65 +36,181 @@ logger = logging.getLogger(__name__)
 N_PATHS = 10_000
 BLOCK_SIZES = [3, 5, 7]
 
+_RPT07_KEY_TEMPLATE = "captain:reports:rpt07:{account_id}"
+_RPT07_TTL = 86400  # 24 hours
 
-def _block_bootstrap_path(trade_returns: list[float], n_days: int) -> list[float]:
-    """Generate one bootstrap path using block bootstrap.
 
-    Preserves autocorrelation by sampling contiguous blocks.
+def _simulate_one_path(
+    trade_returns: list[float],
+    remaining_days: int,
+    starting_balance: float,
+    max_drawdown_limit: float | None,
+    max_daily_loss: float | None,
+    profit_target: float | None,
+) -> dict:
+    """One MC path: outer day loop with inner block of 3-7 trades per spec PG-14.
+
+    MDD is checked per-trade (inner loop).
+    MLL is checked on daily_pnl aggregate (after inner loop).
     """
-    path = []
     n = len(trade_returns)
-    while len(path) < n_days:
-        block_size = random.choice(BLOCK_SIZES)
-        start = random.randint(0, max(n - block_size, 0))
-        block = trade_returns[start:start + block_size]
-        path.extend(block)
-    return path[:n_days]
-
-
-def _simulate_path(path_returns: list[float], starting_balance: float,
-                    max_drawdown_limit: float | None,
-                    max_daily_loss: float | None,
-                    profit_target: float | None) -> dict:
-    """Simulate one MC path and check constraints.
-
-    Returns dict with passed, final_balance, max_drawdown.
-    """
-    balance = starting_balance
-    peak = balance
-    max_dd = 0.0
+    sim_balance = starting_balance
+    sim_max_balance = starting_balance
     passed = True
 
-    for daily_pnl in path_returns:
-        balance += daily_pnl
-        peak = max(peak, balance)
-        drawdown = peak - balance
-        max_dd = max(max_dd, drawdown)
+    for _ in range(remaining_days):
+        block_size = random.choice(BLOCK_SIZES)
+        start_idx = random.randint(0, max(n - block_size, 0))
+        daily_returns = trade_returns[start_idx:start_idx + block_size]
 
-        # MDD breach
-        if max_drawdown_limit is not None and drawdown > max_drawdown_limit:
-            passed = False
+        daily_pnl = 0.0
+        for ret in daily_returns:
+            sim_balance += ret
+            daily_pnl += ret
+            sim_max_balance = max(sim_max_balance, sim_balance)
+            sim_drawdown = sim_max_balance - sim_balance
+
+            if max_drawdown_limit is not None and sim_drawdown > max_drawdown_limit:
+                passed = False
+                break
+
+        if not passed:
             break
 
-        # MLL breach (simplified: treat each return as a daily P&L)
         if max_daily_loss is not None and daily_pnl < 0 and abs(daily_pnl) > max_daily_loss:
             passed = False
             break
 
-    # Target achievement
     target_reached = True
     if profit_target is not None:
-        target_reached = (balance - starting_balance) >= profit_target
+        target_reached = (sim_balance - starting_balance) >= profit_target
 
     return {
         "passed": passed and target_reached,
-        "final_balance": balance,
-        "max_drawdown": max_dd,
+        "final_balance": sim_balance,
+        "max_drawdown": sim_max_balance - sim_balance,
     }
 
 
-def run_tsm_simulation(account_id: str, trade_returns: list[float],
-                        tsm_config: dict) -> dict:
+def _write_pass_probability(
+    account_id: str,
+    existing_row: tuple | None,
+    pass_probability: float | None,
+    risk_goal: str,
+) -> None:
+    """Persist pass_probability to P3-D08; no-op if row missing (silent when pass_probability is None)."""
+    with get_cursor() as cur:
+        row = existing_row
+        if row is None:
+            cur.execute(
+                """SELECT account_id, user_id, name, classification,
+                          starting_balance, current_balance, current_drawdown,
+                          daily_loss_used, profit_target,
+                          max_drawdown_limit, max_daily_loss, max_contracts,
+                          scaling_plan, commission_per_contract,
+                          instrument_permissions, overnight_allowed,
+                          trading_hours, margin_per_contract, margin_buffer_pct,
+                          evaluation_end_date, evaluation_stages,
+                          topstep_optimisation, topstep_params, topstep_state,
+                          fee_schedule, payout_rules, scaling_plan_active,
+                          scaling_tier_micros
+                   FROM p3_d08_tsm_state
+                   WHERE account_id = %s
+                   ORDER BY last_updated DESC LIMIT 1""",
+                (account_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            if pass_probability is not None:
+                logger.warning(
+                    "No D08 row for %s — skipping simulation persist until TSM config is loaded",
+                    account_id,
+                )
+            return
+        p = list(row)
+        cur.execute(
+            """INSERT INTO p3_d08_tsm_state(
+                   account_id, user_id, name, classification,
+                   starting_balance, current_balance, current_drawdown,
+                   daily_loss_used, profit_target,
+                   max_drawdown_limit, max_daily_loss, max_contracts,
+                   scaling_plan, commission_per_contract,
+                   instrument_permissions, overnight_allowed,
+                   trading_hours, margin_per_contract, margin_buffer_pct,
+                   pass_probability, simulation_date, risk_goal,
+                   evaluation_end_date, evaluation_stages,
+                   topstep_optimisation, topstep_params, topstep_state,
+                   fee_schedule, payout_rules, scaling_plan_active,
+                   scaling_tier_micros, last_updated
+               ) VALUES(
+                   %s, %s, %s, %s,
+                   %s, %s, %s,
+                   %s, %s,
+                   %s, %s, %s,
+                   %s, %s,
+                   %s, %s,
+                   %s, %s, %s,
+                   %s, now(), %s,
+                   %s, %s,
+                   %s, %s, %s,
+                   %s, %s, %s,
+                   %s, now()
+               )""",
+            (
+                p[0], p[1], p[2], p[3],
+                p[4], p[5], p[6],
+                p[7], p[8],
+                p[9], p[10], p[11],
+                p[12], p[13],
+                p[14], p[15],
+                p[16], p[17], p[18],
+                pass_probability, risk_goal,
+                p[19], p[20],
+                p[21], p[22], p[23],
+                p[24], p[25], p[26],
+                p[27],
+            ),
+        )
+
+
+def _generate_rpt07(
+    account_id: str,
+    pass_probability: float | None,
+    ruin_probability: float | None,
+    risk_goal: str,
+    remaining_days: int,
+    n_paths: int,
+    alert: dict | None,
+):
+    """PG-14 GENERATE RPT-07: store MC summary to Redis for Command renderer.
+
+    Key: captain:reports:rpt07:{account_id}
+    TTL: 24 hours (refreshed on each simulation run)
+    """
+    try:
+        client = get_redis_client()
+        report = {
+            "account_id": account_id,
+            "pass_probability": pass_probability,
+            "ruin_probability": ruin_probability,
+            "risk_goal": risk_goal,
+            "remaining_days": remaining_days,
+            "n_paths": n_paths,
+            "alert_priority": alert["priority"] if alert else None,
+            "generated_at": now_et().isoformat(),
+        }
+        key = _RPT07_KEY_TEMPLATE.format(account_id=account_id)
+        client.setex(key, _RPT07_TTL, json.dumps(report))
+    except Exception as e:
+        logger.error("RPT-07 generation failed for %s: %s", account_id, e)
+
+
+def run_tsm_simulation(
+    account_id: str,
+    trade_returns: list[float],
+    tsm_config: dict,
+    sizing_override: float = 1.0,
+) -> dict:
     """Execute P3-PG-14: Monte Carlo TSM simulation.
 
     Args:
@@ -107,6 +219,7 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
         tsm_config: TSM configuration from P3-D08 with keys:
             starting_balance, current_balance, max_drawdown_limit,
             max_daily_loss, profit_target, evaluation_end_date, risk_goal
+        sizing_override: Q-31 decay sizing factor in [0, 1] applied to returns before MC
 
     Returns:
         Dict with pass_probability, alert info
@@ -140,13 +253,34 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
     else:
         remaining_target = None
 
+    # Spec PG-14: accounts with no constraints get NULL pass_probability
+    if mdd_limit is None and mll_limit is None:
+        _write_pass_probability(account_id, None, None, risk_goal)
+        _generate_rpt07(account_id, None, None, risk_goal, remaining_days, 0, None)
+        logger.info("TSM simulation %s: unconstrained account — pass_probability=None", account_id)
+        return {
+            "account_id": account_id,
+            "pass_probability": None,
+            "ruin_probability": None,
+            "n_paths": 0,
+            "remaining_days": remaining_days,
+            "risk_goal": risk_goal,
+            "alert": None,
+        }
+
+    # Q-31: scale historical returns to reflect current decay-adjusted sizing
+    if sizing_override != 1.0:
+        trade_returns = [r * sizing_override for r in trade_returns]
+
     # Run Monte Carlo
     pass_count = 0
     results = []
 
     for _ in range(N_PATHS):
-        path = _block_bootstrap_path(trade_returns, remaining_days)
-        sim = _simulate_path(path, current_balance, mdd_limit, mll_limit, remaining_target)
+        sim = _simulate_one_path(
+            trade_returns, remaining_days, current_balance,
+            mdd_limit, mll_limit, remaining_target,
+        )
         results.append(sim)
         if sim["passed"]:
             pass_count += 1
@@ -168,76 +302,11 @@ def run_tsm_simulation(account_id: str, trade_returns: list[float],
         if pass_probability < 0.7:
             alert = {"priority": "HIGH", "message": f"Non-trivial capital risk: {pass_probability:.1%} survival"}
 
-    # Store to P3-D08 — read-modify-write to avoid partial-row clobber under DEDUP
-    with get_cursor() as cur:
-        cur.execute(
-            """SELECT account_id, user_id, name, classification,
-                      starting_balance, current_balance, current_drawdown,
-                      daily_loss_used, profit_target,
-                      max_drawdown_limit, max_daily_loss, max_contracts,
-                      scaling_plan, commission_per_contract,
-                      instrument_permissions, overnight_allowed,
-                      trading_hours, margin_per_contract, margin_buffer_pct,
-                      evaluation_end_date, evaluation_stages,
-                      topstep_optimisation, topstep_params, topstep_state,
-                      fee_schedule, payout_rules, scaling_plan_active,
-                      scaling_tier_micros
-               FROM p3_d08_tsm_state
-               WHERE account_id = %s
-               ORDER BY last_updated DESC LIMIT 1""",
-            (account_id,),
-        )
-        existing = cur.fetchone()
-        if existing is None:
-            logger.warning(
-                "No D08 row for %s — skipping simulation persist until TSM config is loaded",
-                account_id,
-            )
-        else:
-            p = list(existing)  # 28 cols without pass_probability/simulation_date/risk_goal/last_updated
-            cur.execute(
-                """INSERT INTO p3_d08_tsm_state(
-                       account_id, user_id, name, classification,
-                       starting_balance, current_balance, current_drawdown,
-                       daily_loss_used, profit_target,
-                       max_drawdown_limit, max_daily_loss, max_contracts,
-                       scaling_plan, commission_per_contract,
-                       instrument_permissions, overnight_allowed,
-                       trading_hours, margin_per_contract, margin_buffer_pct,
-                       pass_probability, simulation_date, risk_goal,
-                       evaluation_end_date, evaluation_stages,
-                       topstep_optimisation, topstep_params, topstep_state,
-                       fee_schedule, payout_rules, scaling_plan_active,
-                       scaling_tier_micros, last_updated
-                   ) VALUES(
-                       %s, %s, %s, %s,
-                       %s, %s, %s,
-                       %s, %s,
-                       %s, %s, %s,
-                       %s, %s,
-                       %s, %s,
-                       %s, %s, %s,
-                       %s, now(), %s,
-                       %s, %s,
-                       %s, %s, %s,
-                       %s, %s, %s,
-                       %s, now()
-                   )""",
-                (
-                    p[0], p[1], p[2], p[3],
-                    p[4], p[5], p[6],
-                    p[7], p[8],
-                    p[9], p[10], p[11],
-                    p[12], p[13],
-                    p[14], p[15],
-                    p[16], p[17], p[18],
-                    pass_probability, risk_goal,
-                    p[19], p[20],
-                    p[21], p[22], p[23],
-                    p[24], p[25], p[26],
-                    p[27],
-                ),
-            )
+    _write_pass_probability(account_id, None, pass_probability, risk_goal)
+
+    # PG-14: GENERATE RPT-07(P3-D08)
+    _generate_rpt07(account_id, pass_probability, ruin_probability,
+                    risk_goal, remaining_days, N_PATHS, alert)
 
     # Publish alert if needed
     if alert:

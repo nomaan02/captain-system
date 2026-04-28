@@ -16,15 +16,14 @@ beta_b ERRATA (Build Loop Prompt):
   beta_b > 0 -> positive serial correlation (losses predict losses -> shut basket)
   beta_b < 0 -> mean reversion (losses predict recovery -> keep open)
 
-Significance gate: p_value > 0.05 OR n_obs < 100 -> beta_b = 0
-
-Cold start: beta_b = 0, rho_bar = 0 (layers 3-4 disabled, layers 1-2 active)
+Significance gate: REMOVED (Q-33 — not in spec).
+Cold start (n < 10): skip regression, use conservative defaults.
+Cold start (n < 100): run regression but cold_start=True (layers 3-4 conservative).
 
 Reads: P3-D03 (trade outcomes)
 Writes: P3-D25 (circuit_breaker_params)
 """
 
-import json
 import logging
 import numpy as np
 from collections import defaultdict
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 MIN_OBS_REGRESSION = 10   # Below this: skip regression, use conservative defaults
 MIN_OBS_WARM = 100        # Below this: cold_start=True (layers 3-4 conservative)
-SIGNIFICANCE_THRESHOLD = 0.05
 
 
 def _load_trades_by_account_model(account_id: str, model_m: int) -> list[dict]:
@@ -93,7 +91,7 @@ def _ols_regression(x: np.ndarray, y: np.ndarray) -> dict:
         p_value = 1.0
 
     return {
-        "r_bar": float(alpha),
+        "r_bar": float(y_mean),   # Q-18: r_bar = mean(r_series) per spec doc 32 line 702
         "beta_b": float(beta),
         "p_value": float(p_value),
         "n_obs": n,
@@ -132,6 +130,27 @@ def _compute_same_day_correlation(trades: list[dict]) -> float:
     return float(corr) if not np.isnan(corr) else 0.0
 
 
+def _build_regression_arrays(trades: list[dict]) -> tuple[list[float], list[float]]:
+    """Build (L_b series, per-contract returns) for PG-16C OLS.
+
+    Q-17: running_loss_at_trade_time — cross-day, loss-only accumulation.
+    L_b = sum of abs(pnl_pc) for all prior trades where pnl_pc < 0.
+    Trades must be sorted by ts (caller: _load_trades_by_account_model ORDER BY ts).
+    """
+    x_vals = []  # L_b at trade time (loss-only, unsigned, cross-day)
+    y_vals = []  # per-contract return of this trade
+
+    running_loss = 0.0
+    for t in trades:
+        pnl_pc = t["pnl"] / max(t["contracts"], 1)
+        x_vals.append(running_loss)
+        y_vals.append(pnl_pc)
+        if pnl_pc < 0:
+            running_loss += abs(pnl_pc)  # Q-17-ASSUMPTION: loss-only unsigned accumulation
+
+    return x_vals, y_vals
+
+
 def estimate_cb_params(account_id: str, model_m: int):
     """Execute P3-PG-16C: estimate circuit breaker parameters.
 
@@ -158,34 +177,14 @@ def estimate_cb_params(account_id: str, model_m: int):
         })
         return
 
-    # Build regression dataset: for each intraday sequence,
-    # track cumulative P&L and next-trade return
-    by_day = defaultdict(list)
-    for t in trades:
-        if t["ts"]:
-            day = str(t["ts"])[:10]
-            pnl_pc = t["pnl"] / max(t["contracts"], 1)
-            by_day[day].append(pnl_pc)
-
-    x_vals = []  # cumulative basket P&L before trade
-    y_vals = []  # per-contract return of trade
-
-    for day, returns in by_day.items():
-        cumulative = 0.0
-        for r in returns:
-            x_vals.append(cumulative)
-            y_vals.append(r)
-            cumulative += r
+    # Build regression dataset: L_b (loss-only cumulative) vs per-trade return
+    x_vals, y_vals = _build_regression_arrays(trades)
 
     x_arr = np.array(x_vals)
     y_arr = np.array(y_vals)
 
     # OLS regression
     reg = _ols_regression(x_arr, y_arr)
-
-    # Significance gate
-    if reg["p_value"] > SIGNIFICANCE_THRESHOLD or reg["n_obs"] < MIN_OBS_WARM:
-        reg["beta_b"] = 0.0
 
     # Per-trade volatility
     all_returns = []

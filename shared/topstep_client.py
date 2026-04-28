@@ -238,7 +238,7 @@ class TopstepXClient:
         })
         bars = resp.get("bars", [])
         if not bars:
-            logger.warning(
+            logger.debug(
                 "retrieveBars returned 0 bars: contract=%s live=%s "
                 "window=%s..%s success=%s errorCode=%s errorMessage=%s",
                 contract_id, resolved_live,

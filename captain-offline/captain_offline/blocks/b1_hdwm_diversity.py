@@ -16,6 +16,8 @@ import logging
 
 from shared.questdb_client import get_cursor
 
+from captain_offline.blocks.version_snapshot import snapshot_before_update
+
 logger = logging.getLogger(__name__)
 
 # Seed type taxonomy — maps type name to list of AIM IDs
@@ -57,21 +59,25 @@ def _get_recent_effectiveness(aim_id: int, asset_id: str) -> float:
 
 
 def _count_active_aims(asset_id: str) -> int:
-    """Count AIMs with ACTIVE status for this asset."""
+    """Count distinct AIMs whose latest D01 status is ACTIVE.
+
+    PG-03 line 193 — num_active_aims used for equal-weight init.
+    """
     with get_cursor() as cur:
         cur.execute(
-            """SELECT count() FROM p3_d01_aim_model_states
-               WHERE asset_id = %s AND status = 'ACTIVE'""",
+            """SELECT aim_id, status FROM p3_d01_aim_model_states
+               WHERE asset_id = %s
+               LATEST ON last_updated PARTITION BY aim_id, asset_id""",
             (asset_id,),
         )
-        row = cur.fetchone()
-    return row[0] if row else 0
+        return sum(1 for _, s in cur.fetchall() if s == "ACTIVE")
 
 
 def _reactivate_aim(aim_id: int, asset_id: str, num_active: int):
     """Reactivate a suppressed AIM with equal weight."""
     equal_weight = 1.0 / max(num_active + 1, 1)
 
+    snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         # Update status to ACTIVE
         cur.execute(
@@ -80,6 +86,8 @@ def _reactivate_aim(aim_id: int, asset_id: str, num_active: int):
                VALUES (%s, %s, 'ACTIVE', 1.0, now())""",
             (aim_id, asset_id),
         )
+    snapshot_before_update("P3-D02", "AIM_LIFECYCLE")
+    with get_cursor() as cur:
         # Set equal weight
         cur.execute(
             """INSERT INTO p3_d02_aim_meta_weights
@@ -100,29 +108,25 @@ def run_hdwm_diversity_check(asset_id: str):
     reactivated = 0
 
     for type_name, aim_ids in SEED_TYPES.items():
-        active_in_type = []
-        suppressed_in_type = []
+        active_in_type = [
+            aid for aid in aim_ids
+            if _get_aim_status(aid, asset_id) == "ACTIVE"
+        ]
+        if len(active_in_type) > 0:
+            continue  # diversity intact for this type
 
-        for aid in aim_ids:
-            status = _get_aim_status(aid, asset_id)
-            if status == "ACTIVE":
-                active_in_type.append(aid)
-            elif status == "SUPPRESSED":
-                suppressed_in_type.append(aid)
-
-        if len(active_in_type) == 0 and len(suppressed_in_type) > 0:
-            # All AIMs of this type are suppressed — force reactivate best one
-            best_aid = max(
-                suppressed_in_type,
-                key=lambda aid: _get_recent_effectiveness(aid, asset_id),
-            )
-            _reactivate_aim(best_aid, asset_id, num_active)
-            num_active += 1
-            reactivated += 1
-            logger.warning(
-                "HDWM diversity recovery: reactivated AIM-%d as seed for '%s' [%s]",
-                best_aid, type_name, asset_id,
-            )
+        # Spec PG-03 line 191: argmax over ALL AIMs in seed_types[type]
+        best_aid = max(
+            aim_ids,
+            key=lambda aid: _get_recent_effectiveness(aid, asset_id),
+        )
+        _reactivate_aim(best_aid, asset_id, num_active)
+        num_active += 1
+        reactivated += 1
+        logger.warning(
+            "HDWM diversity recovery: reactivated AIM-%d as seed for '%s' [%s]",
+            best_aid, type_name, asset_id,
+        )
 
     if reactivated > 0:
         logger.info("HDWM check for %s: %d AIMs reactivated", asset_id, reactivated)

@@ -45,6 +45,7 @@ TRIGGERS = {
     "PARAM_CHANGE",
     "INJECTION_ADOPT",
     "ROLLBACK",
+    "AIM_LIFECYCLE",  # lifecycle state transitions (WARM_UP, ELIGIBLE, ACTIVE, etc.)
 }
 
 # Component → live table mapping for get_current_state / restore_state

@@ -39,6 +39,28 @@ from shared.questdb_client import get_cursor
 from shared.json_helpers import parse_json
 from shared.sizing_helpers import resolve_sizing_sl
 
+
+# Phase 7 — replay reset hook surface.
+#
+# B5C currently holds no per-session module-level state across calls
+# (the local ``seen`` set in ``_load_cb_params`` is a per-invocation
+# de-dup), but ``default_reset_hooks`` registers ``_reset_seen`` so the
+# replay driver has an API to extend later (Stage 1B §2.2 D4).
+_replay_seen: set = set()
+
+
+def _get_seen() -> set:
+    """Phase 7: module accessor for the replay-reset hook surface.
+
+    See ``shared.online_replay.default_reset_hooks``.
+    """
+    return _replay_seen
+
+
+def _reset_seen() -> None:
+    """Phase 7: replay reset hook for B5C state."""
+    _replay_seen.clear()
+
 logger = logging.getLogger(__name__)
 
 # Default thresholds (overridable via topstep_params in TSM)

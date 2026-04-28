@@ -97,21 +97,48 @@ class CUSUMDetector:
         return det
 
 
+def compute_cusum_conditional_on_sprint(resample: list[float],
+                                          j: int,
+                                          allowance: float) -> list[float]:
+    """Walk a CUSUM trajectory over `resample`; collect every
+    `max(c_up, c_down)` observed at the exact step where `sprint_length == j`.
+
+    Implements C_n | T_n = j per doc 32 PG-07. A single resample may produce
+    zero, one, or many observations at a given sprint length j (the sprint
+    counter resets to zero whenever both c_up and c_down hit zero, so a long
+    resample can re-traverse sprint length j multiple times).
+
+    Q-29 mandate: literal nested loop, no NumPy vectorisation, no bundled
+    statistical shortcuts — even if mathematically equivalent.
+    """
+    observed: list[float] = []
+    c_up = 0.0
+    c_down = 0.0
+    sprint = 0
+    for x in resample:
+        c_up = max(0.0, c_up + x - allowance)
+        c_down = max(0.0, c_down - x - allowance)
+        if c_up == 0.0 and c_down == 0.0:
+            sprint = 0
+        else:
+            sprint += 1
+        if sprint == j:
+            observed.append(max(c_up, c_down))
+    return observed
+
+
 def calibrate_cusum_limits(in_control_pnl: list[float],
                             B: int = BOOTSTRAP_B,
                             arl_0: int = ARL_0) -> dict[int, float]:
     """P3-PG-07: Bootstrap calibration of sequential control limits.
 
-    For each sprint length j, determine control limit h(j) such that
-    the average run length under the null is ARL_0.
+    For each sprint length j, build the bootstrap distribution of
+    C_n | T_n = j across B resamples and take the (1 - 1/ARL_0)-quantile
+    as the sequential control limit h(j).
 
-    Args:
-        in_control_pnl: P&L values from the in-control period
-        B: Number of bootstrap resamples
-        arl_0: Target average run length under null
-
-    Returns:
-        Dict mapping sprint_length -> control_limit
+    Q-29: literal nested-loop form per doc 32 PG-07. Outer loop over
+    bootstrap resamples (B); inner loop over sprint lengths j; innermost
+    walk via `compute_cusum_conditional_on_sprint`.
     """
     n = len(in_control_pnl)
     if n < 20:
@@ -121,36 +148,28 @@ def calibrate_cusum_limits(in_control_pnl: list[float],
     allowance = float(np.std(in_control_pnl)) / 2.0
     percentile = 100.0 * (1.0 - 1.0 / arl_0)
 
-    # Collect CUSUM values at each sprint length across bootstrap resamples
-    cusum_by_sprint: dict[int, list[float]] = {}
+    # Build conditional bootstrap distribution per sprint length.
+    cusum_by_sprint: dict[int, list[float]] = {j: [] for j in range(1, MAX_SPRINT + 1)}
 
-    for _ in range(B):
+    for _ in range(B):                              # outer 1: bootstrap
         resample = random.choices(in_control_pnl, k=n)
-        c_up = 0.0
-        c_down = 0.0
-        sprint = 0
+        for j in range(1, MAX_SPRINT + 1):          # outer 2: sprint length
+            cusum_by_sprint[j].extend(
+                compute_cusum_conditional_on_sprint(resample, j, allowance)
+            )
 
-        for x in resample:
-            c_up = max(0.0, c_up + x - allowance)
-            c_down = max(0.0, c_down - x - allowance)
-
-            if c_up == 0.0 and c_down == 0.0:
-                sprint = 0
-            else:
-                sprint += 1
-
-            if sprint > 0 and sprint <= MAX_SPRINT:
-                cusum_by_sprint.setdefault(sprint, []).append(max(c_up, c_down))
-
-    # For each sprint length, compute control limit at target percentile
-    sequential_limits = {}
+    # Per-j quantile → sequential control limit h(j).
+    sequential_limits: dict[int, float] = {}
     for j in range(1, MAX_SPRINT + 1):
-        values = cusum_by_sprint.get(j, [])
+        values = cusum_by_sprint[j]
         if len(values) >= 10:
             sequential_limits[j] = float(np.percentile(values, percentile))
 
-    logger.info("CUSUM calibration: %d sprint lengths calibrated (B=%d, ARL_0=%d)",
-                len(sequential_limits), B, arl_0)
+    logger.info(
+        "CUSUM calibration: %d sprint lengths calibrated "
+        "(B=%d, ARL_0=%d, MAX_SPRINT=%d)",
+        len(sequential_limits), B, arl_0, MAX_SPRINT,
+    )
     return sequential_limits
 
 
@@ -163,10 +182,16 @@ def calibrate_and_persist(asset_id: str, in_control_pnl: list[float],
         in_control_pnl: In-control P&L values
         B: Bootstrap resamples
         arl_0: Target ARL under null
+
+    Returns:
+        Dict[int, float] | None: the persisted sequential_limits, so the
+        caller (orchestrator._run_quarterly) can refresh in-memory detector
+        state without re-reading from QuestDB. Returns None when calibration
+        produced no usable limits. Phase 3 batch B4_F-20 (F-20).
     """
     limits = calibrate_cusum_limits(in_control_pnl, B, arl_0)
     if not limits:
-        return
+        return None
 
     with get_cursor() as cur:
         cur.execute(
@@ -177,6 +202,7 @@ def calibrate_and_persist(asset_id: str, in_control_pnl: list[float],
              float(np.std(in_control_pnl)) / 2.0),
         )
     logger.info("CUSUM limits persisted to P3-D04 for %s (%d limits)", asset_id, len(limits))
+    return dict(limits)
 
 
 def run_cusum_update(asset_id: str, pnl_per_contract: float,
@@ -196,18 +222,7 @@ def run_cusum_update(asset_id: str, pnl_per_contract: float,
 
     signal = detector.update(pnl_per_contract)
 
-    # Store to P3-D04
-    with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d04_decay_detector_states
-               (asset_id, cusum_c_up_prev, cusum_c_down_prev,
-                cusum_sprint_length, cusum_allowance,
-                cusum_sequential_limits, last_updated)
-               VALUES (%s, %s, %s, %s, %s, %s, now())""",
-            (asset_id, detector.c_up, detector.c_down,
-             detector.sprint_length, detector.allowance,
-             json.dumps(detector.to_dict()["sequential_limits"])),
-        )
+    # D04 persist moved to persist_combined_detector_state — called by orchestrator
 
     if signal == "BREACH":
         logger.warning("CUSUM BREACH for %s", asset_id)

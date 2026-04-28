@@ -1482,6 +1482,63 @@ def _emit(on_event, event_type: str, data: dict) -> None:
             logger.warning("on_event callback error (%s): %s", event_type, exc)
 
 
+def _delegate_to_replay_session(config: dict, target_date: date | None = None) -> dict:
+    """Phase 7 — opt-in bridge from ``run_replay``/``run_whatif`` to
+    ``shared.online_replay.replay_session``.
+
+    Activated when ``config.get("delegate_to_replay_session")`` is
+    truthy. Off by default to preserve byte-identical GUI replay output
+    until the live B3-B5C wiring inside ``replay_session`` is finished
+    (Phase 7.12 follow-up; deletion of the parallel B-block logic is
+    deferred to Phase 12 per design D10).
+    """
+    from datetime import date as _date_cls
+    from shared.online_replay import (
+        OnlineReplayContext, ReplayParameters, replay_session,
+        default_reset_hooks,
+    )
+    from shared.online_replay_providers import (
+        CapturingSignalSink, FixedTimeProvider, HistoricalMarketDataProvider,
+    )
+
+    if target_date is None:
+        target_date = _date_cls.today()
+    elif not isinstance(target_date, _date_cls):
+        target_date = _date_cls.fromisoformat(str(target_date)[:10])
+
+    session_id = int(config.get("session_id", 1))
+    session_open = datetime.combine(target_date, dtime(9, 30))
+    ctx = OnlineReplayContext(
+        market_data=HistoricalMarketDataProvider(as_of=session_open),
+        signal_sink=CapturingSignalSink(),
+        time_provider=FixedTimeProvider(session_open),
+        reset_hooks=default_reset_hooks(),
+    )
+    params = ReplayParameters(
+        locked_strategies=config.get("locked_strategies"),
+        aim_weights=config.get("aim_weights"),
+        kelly_params=config.get("kelly_params"),
+        ewma_states=config.get("ewma_states"),
+    )
+    result = replay_session(target_date, session_id, ctx, params)
+    return {
+        "results": result.signals,
+        "errors": [],
+        "trades_taken": len(result.signals),
+        "excluded": [],
+        "no_breakout": [],
+        "zero_sized": [],
+        "total_pnl": 0.0,
+        "summary": {
+            "session_date": str(result.session_date),
+            "phase_a_outputs": list(result.phase_a_outputs.keys()),
+            "phase_b_outputs": list(result.phase_b_outputs.keys()),
+            "diagnostics": result.diagnostics,
+        },
+        "cached_bars": None,
+    }
+
+
 def run_replay(
     config: dict,
     target_date: date | None = None,
@@ -1494,10 +1551,17 @@ def run_replay(
     dicts.  When called without ``on_event``, runs silently and returns
     results.
 
+    Phase 7: when ``config["delegate_to_replay_session"]`` is truthy, the
+    body delegates to ``shared.online_replay.replay_session`` and the
+    parallel B-block path below is bypassed. Off by default to preserve
+    GUI replay byte-identity until the new driver fully wires B3-B5C.
+
     Returns a dict with keys: ``results``, ``errors``, ``trades_taken``,
     ``excluded``, ``no_breakout``, ``zero_sized``, ``total_pnl``,
     ``summary``, ``cached_bars``.
     """
+    if config.get("delegate_to_replay_session"):
+        return _delegate_to_replay_session(config, target_date)
     from shared.topstep_client import get_topstep_client
 
     if target_date is None:
@@ -1895,8 +1959,21 @@ def run_whatif(
     No API calls needed.  Re-simulates ORB from cached bars and recomputes
     Kelly sizing with the (potentially overridden) config.
 
+    Phase 7: when ``config["delegate_to_replay_session"]`` is truthy, the
+    body delegates to ``shared.online_replay.replay_session``. Off by
+    default — preserves byte-identical GUI behaviour pending the full
+    B3-B5C wiring in the new driver (Phase 12 deletes this branch).
+
     Returns comparison dict with ``original`` and ``whatif`` sub-dicts.
     """
+    if config.get("delegate_to_replay_session"):
+        whatif = _delegate_to_replay_session(config, target_date)
+        return {
+            "original": original_results,
+            "whatif": whatif,
+            "whatif_results": whatif.get("results", []),
+            "cached_bars": cached_bars,
+        }
     if target_date is None:
         from zoneinfo import ZoneInfo
 

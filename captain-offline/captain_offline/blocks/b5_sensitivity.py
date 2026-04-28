@@ -211,9 +211,12 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
     std_sharpe = arr.std()
     sharpe_stability = float(std_sharpe / max(abs(mean_sharpe), 1e-10))
 
-    # PBO on best-performing grid config instead of base_returns (G-OFF-030)
-    best_key = max(grid_returns, key=lambda k: _compute_sharpe(grid_returns[k]))
-    pbo = _compute_pbo(grid_returns[best_key])
+    # Phase 7 (F-27 / Q-16): PBO over the full grid via multi-config CSCV
+    # at S=8 (doc 32 PG-12 line 470). The pre-Phase-7 implementation
+    # selected only the best-Sharpe cell, which masks overfitting.
+    from shared.statistics import compute_cscv_pbo
+    all_returns_series = list(grid_returns.values())
+    pbo = compute_cscv_pbo(all_returns_series, S=CSCV_SPLITS)
 
     # DSR
     skew = float(np.mean((arr - arr.mean()) ** 3) / max(arr.std() ** 3, 1e-10)) if arr.std() > 0 else 0.0
@@ -266,12 +269,32 @@ def run_sensitivity_scan(asset_id: str, base_returns: list[float],
                 """INSERT INTO p3_d01_aim_model_states
                    (aim_id, asset_id, status, current_modifier, last_updated)
                    VALUES (%s, %s, 'ACTIVE', %s, now())""",
-                (13, asset_id, FRAGILE_MODIFIER),
+                (
+                    13,
+                    asset_id,
+                    json.dumps(
+                        {"modifier": FRAGILE_MODIFIER, "reason_tag": "AIM13_FRAGILE"}
+                    ),
+                ),
             )
         logger.warning("Sensitivity scan %s: FRAGILE (%s) — AIM-13 modifier -> %.2f",
                        asset_id, flags, FRAGILE_MODIFIER)
     else:
         logger.info("Sensitivity scan %s: ROBUST (stability=%.3f, pbo=%.3f, dsr=%.3f)",
                      asset_id, sharpe_stability, pbo, dsr)
+        # After ROBUST log, write neutral modifier to clear any prior FRAGILE state
+        with get_cursor() as cur:
+            cur.execute(
+                """INSERT INTO p3_d01_aim_model_states
+                   (aim_id, asset_id, status, current_modifier, last_updated)
+                   VALUES (%s, %s, 'ACTIVE', %s, now())""",
+                (
+                    13,
+                    asset_id,
+                    json.dumps(
+                        {"modifier": 1.0, "reason_tag": "SENSITIVITY_NORMAL"}
+                    ),
+                ),
+            )
 
     return result

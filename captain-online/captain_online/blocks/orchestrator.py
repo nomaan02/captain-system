@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from shared.redis_client import (
     get_redis_client,
-    ensure_consumer_group, read_stream, ack_message,
+    ensure_consumer_group, read_stream, ack_message, publish_to_stream,
     STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
     CH_STATUS, REDIS_KEY_QUOTES,
 )
@@ -71,6 +71,7 @@ class OnlineOrchestrator:
         # {session_id: {"data", "regime", "aim", "user_results", "resolved_assets"}}
         self._pending_sessions = {}
         self._last_heartbeat_time = 0
+        self._last_monitor_time = 0  # Throttle B7 to 10s intervals per spec
 
     def start(self):
         """Start the orchestrator."""
@@ -168,12 +169,15 @@ class OnlineOrchestrator:
                 except Exception as e:
                     logger.error("OR breakout check error: %s", e, exc_info=True)
 
-            # Continuous: B7 position monitoring
+            # Continuous: B7 position monitoring (10s poll per spec)
             if self.open_positions:
-                try:
-                    self._run_position_monitor()
-                except Exception as e:
-                    logger.error("Position monitor error: %s", e, exc_info=True)
+                _now_mono = time.monotonic()
+                if _now_mono - self._last_monitor_time >= 10:
+                    self._last_monitor_time = _now_mono
+                    try:
+                        self._run_position_monitor()
+                    except Exception as e:
+                        logger.error("Position monitor error: %s", e, exc_info=True)
 
             # Continuous: Shadow position monitoring (theoretical outcomes)
             if self.shadow_positions:
@@ -372,6 +376,24 @@ class OnlineOrchestrator:
             logger.info("Session %s evaluation complete for %d user(s)",
                         session_name, len(active_users))
 
+            # PG-01C dispatch (B1_F-01 / Q-03 2026-04-27): publish SESSION_CLOSE on
+            # STREAM_COMMANDS so Offline can run AIM-16 HMM training globally at
+            # each session close. Timezone is America/New_York per CLAUDE.md.
+            try:
+                publish_to_stream(STREAM_COMMANDS, {
+                    "type": "SESSION_CLOSE",
+                    "session_id": int(session_id),
+                    "closed_at": datetime.now(_ET).isoformat(),
+                    "source": "captain-online.orchestrator._run_session",
+                })
+                self.plog.info(
+                    f"[session_close] published SESSION_CLOSE session_id={session_id}",
+                    source="orchestrator",
+                )
+            except Exception as exc:
+                logger.error("SESSION_CLOSE publish failed for session_id=%s: %s",
+                             session_id, exc)
+
         except Exception as e:
             logger.error("Session %s evaluation FAILED: %s", session_name, e, exc_info=True)
             write_checkpoint("ONLINE", f"SESSION_{session_name}", "error", "retry_next",
@@ -480,6 +502,19 @@ class OnlineOrchestrator:
                 logger.info("Session %s Phase B complete — all assets resolved", session_name)
                 write_checkpoint("ONLINE", f"SESSION_{session_name}", "phase_b_done", "monitoring")
                 completed_sessions.append(session_id)
+
+                # PG-01C dispatch (B1_F-01 / Q-03 2026-04-27): publish SESSION_CLOSE
+                # at OR-resolved completion path (parity with legacy path).
+                try:
+                    publish_to_stream(STREAM_COMMANDS, {
+                        "type": "SESSION_CLOSE",
+                        "session_id": int(session_id),
+                        "closed_at": datetime.now(_ET).isoformat(),
+                        "source": "captain-online.orchestrator._check_or_breakouts",
+                    })
+                except Exception as exc:
+                    logger.error("SESSION_CLOSE publish (OR path) failed for session_id=%s: %s",
+                                 session_id, exc)
 
         for sid in completed_sessions:
             self._pending_sessions.pop(sid, None)

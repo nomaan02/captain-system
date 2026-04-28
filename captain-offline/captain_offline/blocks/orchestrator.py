@@ -76,15 +76,22 @@ class OfflineOrchestrator:
             True if the update should be committed, False if rejected.
         """
         try:
-            from captain_offline.blocks.b3_pseudotrader import run_signal_replay_comparison
+            # Phase 7: route directly through ``run_pseudotrader`` (D03-pair
+            # path). The legacy ``run_signal_replay_comparison`` shim still
+            # exists for any external caller; the gate uses the typed
+            # entry point.
+            from captain_offline.blocks.b3_pseudotrader import run_pseudotrader
 
-            proposed_update = {"update_type": update_type}
+            proposed_params: dict = {}
             if proposed_aim_weights is not None:
-                proposed_update["proposed_aim_weights"] = proposed_aim_weights
+                proposed_params["aim_weights"] = proposed_aim_weights
             if proposed_kelly_params is not None:
-                proposed_update["proposed_kelly_params"] = proposed_kelly_params
+                proposed_params["kelly_params"] = proposed_kelly_params
 
-            result = run_signal_replay_comparison(asset_id, proposed_update)
+            result = run_pseudotrader(
+                asset_id, update_type,
+                proposed_params=proposed_params or None,
+            )
             recommendation = result.get("recommendation", "REJECT")
 
             if recommendation == "ADOPT":
@@ -259,7 +266,10 @@ class OfflineOrchestrator:
                     self.plog.warn(f"B1: DMA update REJECTED by pseudotrader \u2014 {asset_id}", source="b1_dma")
 
             # 2. BOCPD decay detection
-            from captain_offline.blocks.b2_bocpd import run_bocpd_update
+            from captain_offline.blocks.b2_bocpd import (
+                run_bocpd_update,
+                persist_combined_detector_state,
+            )
             pnl_pc = outcome.get("pnl", 0) / max(outcome.get("contracts", 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
@@ -273,12 +283,25 @@ class OfflineOrchestrator:
             cusum_det = self._detectors.get(asset_id, (None, None))[1]
             cusum_signal, cusum_det = run_cusum_update(asset_id, pnl_pc, cusum_det)
 
+            persist_combined_detector_state(asset_id, bocpd_det, cusum_det)
             self._detectors[asset_id] = (bocpd_det, cusum_det)
 
             # 4. Level escalation check
             from captain_offline.blocks.b2_level_escalation import check_level_escalation
             cp_history = bocpd_det.cp_history if bocpd_det else []
-            check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
+            escalation = check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
+            # F-42 (Phase 3 B6): Level 3 -> immediate-dispatch AIM14_EXPANSION
+            # for this asset (instead of waiting up to ~24h for the daily tick).
+            if escalation and escalation.get("level") == 3:
+                logger.info("[l3] immediate-dispatch for asset=%s", asset_id)
+                try:
+                    self._dispatch_pending_jobs(
+                        filter_job_type="AIM14_EXPANSION",
+                        filter_asset=asset_id,
+                    )
+                except Exception as exc:
+                    logger.error("[l3] immediate dispatch failed for %s: %s",
+                                 asset_id, exc, exc_info=True)
 
             # 5. Kelly parameter update (gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
@@ -355,7 +378,10 @@ class OfflineOrchestrator:
                                    asset_id)
 
             # 2. BOCPD decay detection (Category A)
-            from captain_offline.blocks.b2_bocpd import run_bocpd_update
+            from captain_offline.blocks.b2_bocpd import (
+                run_bocpd_update,
+                persist_combined_detector_state,
+            )
             pnl_pc = pnl / max(outcome.get("contracts", 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
@@ -365,12 +391,26 @@ class OfflineOrchestrator:
             cusum_det = self._detectors.get(asset_id, (None, None))[1]
             cusum_signal, cusum_det = run_cusum_update(asset_id, pnl_pc, cusum_det)
 
+            persist_combined_detector_state(asset_id, bocpd_det, cusum_det)
             self._detectors[asset_id] = (bocpd_det, cusum_det)
 
             # 4. Level escalation check (Category A)
             from captain_offline.blocks.b2_level_escalation import check_level_escalation
             cp_history = bocpd_det.cp_history if bocpd_det else []
-            check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
+            escalation = check_level_escalation(asset_id, cp_prob, cp_history, cusum_signal)
+            # F-42 (Phase 3 B6): Level 3 -> immediate-dispatch AIM14_EXPANSION
+            # (Category A path mirrors the real-trade path).
+            if escalation and escalation.get("level") == 3:
+                logger.info("[l3] immediate-dispatch for asset=%s (signal-outcome path)",
+                            asset_id)
+                try:
+                    self._dispatch_pending_jobs(
+                        filter_job_type="AIM14_EXPANSION",
+                        filter_asset=asset_id,
+                    )
+                except Exception as exc:
+                    logger.error("[l3] immediate dispatch failed for %s: %s",
+                                 asset_id, exc, exc_info=True)
 
             # 5. Kelly/EWMA parameter update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b8_kelly_update import run_kelly_update
@@ -428,6 +468,9 @@ class OfflineOrchestrator:
             from captain_offline.blocks.b9_diagnostic import run_diagnostic
             run_diagnostic(mode="WEEKLY")  # D8 verification
 
+        elif cmd_type == "SESSION_CLOSE":
+            self._handle_session_close(command)
+
     def _handle_asset_added(self, asset_id: str, data: dict):
         """Bootstrap a new asset."""
         from captain_offline.blocks.bootstrap import asset_bootstrap
@@ -467,7 +510,10 @@ class OfflineOrchestrator:
 
     def _handle_aim_activation(self, command: dict):
         """Activate or deactivate an AIM via user command from GUI."""
-        from captain_offline.blocks.b1_aim_lifecycle import _update_aim_status
+        from captain_offline.blocks.b1_aim_lifecycle import (
+            _update_aim_status,
+            run_aim_lifecycle,
+        )
 
         aim_id = command.get("aim_id")
         cmd_type = command.get("type", "")
@@ -496,13 +542,95 @@ class OfflineOrchestrator:
                     )
                     assets = [r[0] for r in cur.fetchall()]
 
-            for asset_id in assets:
-                _update_aim_status(aim_id, asset_id, new_status)
+            if cmd_type == "ACTIVATE_AIM":
+                for asset_id in assets:
+                    run_aim_lifecycle(asset_id, {aim_id})
+            else:
+                for asset_id in assets:
+                    _update_aim_status(aim_id, asset_id, new_status)
 
             logger.info("AIM %s %s for %d assets",
                         aim_id, new_status, len(assets))
         except Exception as exc:
             logger.error("AIM activation failed: %s", exc, exc_info=True)
+
+    def _handle_session_close(self, payload: dict) -> None:
+        """PG-01C dispatch entry per Q-03 (decisions log 2026-04-27).
+
+        Post-session global cadence: one shared HMM, retrained at each
+        session close (NY, LON, APAC). This is skeleton wiring per Phase 3
+        plan §B1_F-01 — Phase 10 fills in the real observation panel and
+        Baum-Welch fit.
+        """
+        try:
+            session_id = int(payload.get("session_id", -1))
+        except (TypeError, ValueError):
+            session_id = -1
+        closed_at = payload.get("closed_at", "") or ""
+        logger.info(
+            "[pg01c] session_close received session_id=%s closed_at=%s; "
+            "dispatching AIM-16 HMM training (skeleton)",
+            session_id, closed_at,
+        )
+        # Idempotency token (Phase 10 may tighten this — for now, log + dedupe key)
+        token = f"{session_id}|{closed_at}"
+        last_token = getattr(self, "_last_session_close_token", None)
+        if last_token == token:
+            logger.info("[pg01c] duplicate SESSION_CLOSE token=%s ignored", token)
+            return
+        self._last_session_close_token = token
+
+        try:
+            self._run_aim16_hmm_training(session_id, closed_at)
+        except Exception as exc:
+            logger.exception("[pg01c] training dispatch failed: %s", exc)
+
+    def _run_aim16_hmm_training(self, session_id: int, closed_at: str) -> None:
+        """SKELETON wiring per Phase 3 plan §B1_F-01.
+
+        Phase 10 replaces the stub observation panel with the real 7-D panel
+        (doc 22 §4) and rewires the cold-start logic. Today this exists only
+        so the dispatch path is reachable and end-to-end tests can assert the
+        write to P3-D26 occurs at session close.
+
+        TODO[F-01 / Phase 10]: replace build_observation_panel_stub with the
+        real 7-D panel + Baum-Welch fit per docs2/audits/2026-03-27_Build_Plans_1-12/
+        (phase 10 plan to be authored).
+        """
+        from captain_offline.blocks.b1_aim16_hmm import (
+            train_aim16_hmm,
+            save_hmm_state,
+            build_observation_panel_stub,
+        )
+
+        # Asset universe (active set) — fetched from QuestDB. Stub doesn't use it,
+        # but Phase 10 will. Pattern matches _handle_aim_activation / _init_cusum_calibration.
+        try:
+            from shared.questdb_client import get_cursor
+            with get_cursor() as cur:
+                cur.execute(
+                    "SELECT asset_id FROM p3_d00_asset_universe "
+                    "WHERE captain_status IN ('ACTIVE', 'WARM_UP')"
+                )
+                asset_universe = [r[0] for r in cur.fetchall()]
+        except Exception as exc:
+            logger.warning("[pg01c] asset universe fetch failed (continuing with empty): %s", exc)
+            asset_universe = []
+
+        obs, session_pnl, n_days = build_observation_panel_stub(asset_universe)
+        state = train_aim16_hmm(
+            observations=obs,
+            session_pnl=session_pnl,
+            n_trading_days=n_days,
+        )
+        # save_hmm_state takes only `state` (no conn / no session_id) — verified
+        # against b1_aim16_hmm.py L166 signature.
+        save_hmm_state(state)
+        logger.info(
+            "[pg01c] HMM state persisted session_id=%s n_trading_days=%s "
+            "cold_start=%s",
+            session_id, n_days, state.get("cold_start"),
+        )
 
     def _resume_transitions(self):
         """Resume active transitions from QuestDB on startup."""
@@ -654,22 +782,40 @@ class OfflineOrchestrator:
         for asset_id in completed:
             del self._active_transitions[asset_id]
 
-    def _dispatch_pending_jobs(self):
+    def _dispatch_pending_jobs(self, filter_job_type: str | None = None,
+                               filter_asset: str | None = None):
         """Check job queue and dispatch pending jobs.
 
         Handles: AIM14_EXPANSION, P1P2_RERUN (logged as pending — requires
         manual or external pipeline trigger).
+
+        Args:
+            filter_job_type: When set, only dispatch jobs of this type.
+                Used by the L3 immediate-dispatch path (Phase 3 batch
+                B6_F-42 / F-42) to fire AIM14_EXPANSION right after the
+                trigger fires, instead of waiting for the next daily tick.
+            filter_asset: When set, only dispatch jobs for this asset.
+
+        Default behaviour (no filters) is unchanged — preserves the
+        daily/event sweep semantics.
         """
         try:
             from shared.questdb_client import get_cursor
 
-            with get_cursor() as cur:
-                cur.execute(
-                    """SELECT job_id, job_type, asset_id, params
+            sql = ("""SELECT job_id, job_type, asset_id, params
                        FROM p3_offline_job_queue
-                       WHERE status = 'PENDING'
-                       ORDER BY created_at"""
-                )
+                       WHERE status = 'PENDING'""")
+            params: list = []
+            if filter_job_type:
+                sql += " AND job_type = %s"
+                params.append(filter_job_type)
+            if filter_asset:
+                sql += " AND asset_id = %s"
+                params.append(filter_asset)
+            sql += " ORDER BY created_at"
+
+            with get_cursor() as cur:
+                cur.execute(sql, tuple(params) if params else None)
                 jobs = cur.fetchall()
 
             if not jobs:
@@ -814,7 +960,32 @@ class OfflineOrchestrator:
             if len(trade_returns) < 10:
                 return  # insufficient trade history for simulation
 
-            run_tsm_simulation(account_id, trade_returns, tsm_config)
+            # Q-31: read current sizing_override for active assets on this account
+            # Use min across assets with non-null override (conservative: apply worst decay reduction)
+            with get_cursor() as cur:
+                cur.execute(
+                    """SELECT sizing_override
+                       FROM p3_d12_kelly_parameters
+                       WHERE sizing_override IS NOT NULL
+                       LATEST ON last_updated PARTITION BY asset_id""",
+                )
+                so_rows = cur.fetchall()
+            parsed_overrides: list[float] = []
+            for r in so_rows:
+                raw = r[0]
+                if raw is None:
+                    continue
+                try:
+                    if isinstance(raw, (int, float)):
+                        parsed_overrides.append(float(raw))
+                    else:
+                        parsed_overrides.append(float(json.loads(raw)))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+            sizing_override = min(parsed_overrides, default=1.0)
+            sizing_override = max(0.0, min(1.0, sizing_override))  # clamp [0, 1]
+
+            run_tsm_simulation(account_id, trade_returns, tsm_config, sizing_override)
 
         except Exception as e:
             logger.error("TSM simulation error for %s: %s", account_id, e, exc_info=True)
@@ -1005,7 +1176,12 @@ class OfflineOrchestrator:
             logger.error("Monthly tasks error: %s", e, exc_info=True)
 
     def _run_quarterly(self):
-        """Quarterly tasks: CUSUM recalibration."""
+        """Quarterly tasks: CUSUM recalibration.
+
+        Phase 3 batch B4_F-20 (F-20): after persist, refresh the in-memory
+        detector's sequential_limits so the next trade outcome uses fresh
+        calibration without waiting for a process restart.
+        """
         logger.info("Running quarterly offline tasks...")
 
         try:
@@ -1026,7 +1202,25 @@ class OfflineOrchestrator:
                     rows = cur.fetchall()
                 returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
                 if len(returns) >= 20:
-                    calibrate_and_persist(asset_id, returns)
+                    new_limits = calibrate_and_persist(asset_id, returns)
+                    # Refresh in-memory detector. self._detectors[asset_id] is
+                    # (bocpd_detector, cusum_detector) — index [1] is CUSUM.
+                    if new_limits and asset_id in self._detectors:
+                        bocpd_det, cusum_det = self._detectors[asset_id]
+                        if cusum_det is not None:
+                            cusum_det.sequential_limits = dict(new_limits)
+                            self._detectors[asset_id] = (bocpd_det, cusum_det)
+                            logger.info(
+                                "[pg07] refreshed in-memory CUSUM limits for %s "
+                                "(%d sprint buckets)",
+                                asset_id, len(new_limits),
+                            )
+                    elif new_limits:
+                        logger.warning(
+                            "[pg07] recalibration ran but no in-memory "
+                            "detector to update for %s",
+                            asset_id,
+                        )
 
         except Exception as e:
             logger.error("Quarterly tasks error: %s", e, exc_info=True)

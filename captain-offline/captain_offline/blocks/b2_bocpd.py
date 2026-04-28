@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # region imports
 try:
     from AlgorithmImports import *
@@ -27,7 +29,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import stats as sp_stats
 
+from captain_offline.blocks.b2_cusum import CUSUMDetector
 from shared.questdb_client import get_cursor
+from shared.redis_client import REDIS_KEY_BOCPD, get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -216,17 +220,64 @@ def run_bocpd_update(asset_id: str, pnl_per_contract: float,
 
     cp_prob = detector.update(pnl_per_contract)
 
-    # Store full state to P3-D04 (G-OFF-009: includes posterior + NIG priors)
-    state = detector.to_dict()
+    # D04 persist moved to persist_combined_detector_state — called by orchestrator
+    # after both BOCPD and CUSUM have run for this trade.
+
+    logger.debug("BOCPD %s: cp_prob=%.4f", asset_id, cp_prob)
+    return cp_prob, detector
+
+
+def persist_combined_detector_state(
+    asset_id: str,
+    bocpd_det: BOCPDDetector,
+    cusum_det: CUSUMDetector,
+) -> None:
+    """Single combined INSERT for D04 — both BOCPD and CUSUM state in one row.
+
+    Replaces the separate per-trade INSERTs that were previously inside
+    run_bocpd_update and run_cusum_update. Called from orchestrator
+    _handle_trade_outcome (and signal outcome) after both detectors have run.
+
+    ``bocpd_run_length_posterior`` stores the full ``BOCPDDetector.to_dict()``
+    JSON (``_restore_detectors`` / G-OFF-009), not only the posterior vector.
+
+    Does NOT write adwin_states or decay_events — those have independent writers.
+    Does NOT replace calibrate_and_persist (quarterly calibration).
+    """
+    state = bocpd_det.to_dict()
+    cusum_state = cusum_det.to_dict()
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d04_decay_detector_states
                (asset_id, bocpd_run_length_posterior, bocpd_cp_probability,
-                bocpd_cp_history, current_changepoint_probability, last_updated)
-               VALUES (%s, %s, %s, %s, %s, now())""",
-            (asset_id, json.dumps(state), cp_prob,
-             json.dumps(detector.cp_history[-100:]), cp_prob),
+                bocpd_cp_history, cusum_c_up_prev, cusum_c_down_prev,
+                cusum_sprint_length, cusum_allowance, cusum_sequential_limits,
+                current_changepoint_probability, last_updated)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+            (
+                asset_id,
+                json.dumps(state),
+                float(bocpd_det.cp_probability),
+                json.dumps(bocpd_det.cp_history[-100:]),
+                float(cusum_det.c_up),
+                float(cusum_det.c_down),
+                int(cusum_det.sprint_length),
+                float(cusum_det.allowance),
+                json.dumps(cusum_state["sequential_limits"]),
+                float(bocpd_det.cp_probability),
+            ),
         )
 
-    logger.debug("BOCPD %s: cp_prob=%.4f", asset_id, cp_prob)
-    return cp_prob, detector
+    cp_prob = float(bocpd_det.cp_probability)
+    # F-07 (Q-07): canonical cp_prob mirror to Redis for Kelly L1.
+    # QuestDB remains audit/replay; Redis is the live read path.
+    try:
+        client = get_redis_client()
+        client.set(
+            REDIS_KEY_BOCPD.format(asset_id=asset_id),
+            f"{cp_prob:.6f}",
+            ex=7 * 86400,  # 7-day TTL; readers fall back to D04
+        )
+    except Exception as e:
+        # Non-fatal: QuestDB write already committed; readers will fall back.
+        logger.error("BOCPD %s: Redis mirror failed (non-fatal): %s", asset_id, e)

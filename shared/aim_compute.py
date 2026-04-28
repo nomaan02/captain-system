@@ -249,44 +249,52 @@ def compute_aim_modifier(aim_id: int, features: dict, asset_id: str, state: dict
 # ---------------------------------------------------------------------------
 
 def _aim01_vrp(f: dict, state: dict) -> dict:
-    """AIM-01: VRP modifier — z-scored overnight VRP per AIM_Extractions.md:217-228.
+    """AIM-01: VRP modifier — per Isaac authoritative pseudocode 2026-04-27.
 
-    Thresholds (DEC-01 spec authoritative):
-      z > +1.5 → 0.70  (high uncertainty, reduce sizing)
-      z > +0.5 → 0.85
-      z < -1.0 → 1.10  (low uncertainty, slight increase)
-      else     → 1.00  (neutral)
+    Authority: decisions log §3.2 Q-22 resolution (supersedes DEC-01 thresholds).
+    Spec: compute_aim_modifier_01 — primary z-score over 120d of vrp,
+          overnight refinement over 60d of vrp_overnight.
 
-    Monday adjustment (F1.2): modifier *= 0.95 on Monday mornings.
+    Ladder (canvas direction — IV cheap → larger size, IV expensive → smaller size):
+      vrp_z >  1.5 → 1.15  (VRP_HIGH_POSITIVE)
+      vrp_z >  0.5 → 1.05  (VRP_MODERATE_POSITIVE)
+      vrp_z < -1.0 → 0.85  (VRP_NEGATIVE)
+      else         → 1.00  (VRP_NEUTRAL)
+
+    Overnight refinement (gate, only applied when base is non-reductive):
+      IF overnight_z > 1.0 AND base >= 1.0:
+          base = min(base + 0.05, 1.5)
+          reason += "+OVERNIGHT_ELEVATED"
+
+    Confidence: min(|vrp_z| / 2.0, 1.0)
+    Missing-data tag: "VRP_DATA_MISSING" (note: differs from prior "VRP_MISSING").
+    Monday × 0.95 term: REMOVED per Q-22.b (not in Isaac pseudocode).
     """
-    vrp_z = f.get("vrp_overnight_z")
+    vrp_z = f.get("vrp_z")
     if vrp_z is None:
-        return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "VRP_MISSING"}
+        return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "VRP_DATA_MISSING"}
 
     if vrp_z > 1.5:
-        modifier = 0.70
-        confidence = 0.8
-        tag = "VRP_HIGH_UNCERTAINTY"
+        base = 1.15
+        reason = "VRP_HIGH_POSITIVE"
     elif vrp_z > 0.5:
-        modifier = 0.85
-        confidence = 0.7
-        tag = "VRP_ELEVATED"
+        base = 1.05
+        reason = "VRP_MODERATE_POSITIVE"
     elif vrp_z < -1.0:
-        modifier = 1.10
-        confidence = 0.6
-        tag = "VRP_LOW_UNCERTAINTY"
+        base = 0.85
+        reason = "VRP_NEGATIVE"
     else:
-        modifier = 1.0
-        confidence = 0.5
-        tag = "VRP_NEUTRAL"
+        base = 1.0
+        reason = "VRP_NEUTRAL"
 
-    # Monday adjustment: weekend uncertainty accumulation (AIM_Extractions.md:227)
-    dow = f.get("day_of_week")
-    if dow == 0:  # Monday
-        modifier *= 0.95
-        tag += "_MONDAY"
+    overnight_z = f.get("vrp_overnight_z")
+    if overnight_z is not None and overnight_z > 1.0 and base >= 1.0:
+        base = min(base + 0.05, 1.5)
+        reason += "+OVERNIGHT_ELEVATED"
 
-    return {"modifier": modifier, "confidence": confidence, "reason_tag": tag}
+    confidence = min(abs(vrp_z) / 2.0, 1.0)
+    modifier = max(0.5, min(base, 1.5))
+    return {"modifier": modifier, "confidence": confidence, "reason_tag": reason}
 
 
 def _aim02_skew(f: dict, state: dict) -> dict:
@@ -328,16 +336,42 @@ def _aim02_skew(f: dict, state: dict) -> dict:
 
 
 def _aim03_gex(f: dict, state: dict) -> dict:
-    """AIM-03: GEX. Positive gamma → dampening (reduce); negative → amplification."""
-    gex = f.get("gex")
-    if gex is None:
+    """AIM-03: GEX — z-scored 60d window per AIM System.canvas node 13a473af588e976e.
+
+    Thresholds (canvas authoritative; no DEC override exists for AIM-03):
+      gex_z < -1 → 0.85  (negative dealer gamma — amplification regime)
+      gex_z >  1 → 1.10  (positive dealer gamma — dampening regime)
+      else        → 1.00 (neutral middle band)
+
+    Event overlays (multiplicative):
+      expiry_day   → × 0.95
+      triple_witch → × 0.90
+    """
+    gex_z = f.get("gex_z")
+    if gex_z is None:
         return {"modifier": 1.0, "confidence": 0.0, "reason_tag": "GEX_MISSING"}
 
-    # Normalise: positive gamma reduces vol, negative amplifies
-    if gex > 0:
-        return {"modifier": 0.90, "confidence": 0.7, "reason_tag": "GEX_POSITIVE_DAMPEN"}
+    if gex_z < -1.0:
+        modifier = 0.85
+        confidence = 0.7
+        tag = "GEX_NEG_AMPLIFY"
+    elif gex_z > 1.0:
+        modifier = 1.10
+        confidence = 0.7
+        tag = "GEX_POS_DAMPEN"
     else:
-        return {"modifier": 1.10, "confidence": 0.7, "reason_tag": "GEX_NEGATIVE_AMPLIFY"}
+        modifier = 1.0
+        confidence = 0.4
+        tag = "GEX_NEUTRAL"
+
+    if f.get("triple_witch"):
+        modifier *= 0.90
+        tag += "_TRIPLE_WITCH"
+    elif f.get("expiry_day"):
+        modifier *= 0.95
+        tag += "_EXPIRY"
+
+    return {"modifier": modifier, "confidence": confidence, "reason_tag": tag}
 
 
 def _aim04_ivts(f: dict, state: dict) -> dict:
@@ -435,13 +469,15 @@ def _aim06_calendar(f: dict, state: dict) -> dict:
 
 
 def _aim07_cot(f: dict, state: dict) -> dict:
-    """AIM-07: COT positioning — per AIM_Extractions.md:1541-1559.
+    """AIM-07: COT positioning — **NOT REGISTERED IN DISPATCH (DEC-08)**.
 
-    SMI polarity: POSITIVE→1.05, NEGATIVE→0.90.
-    Extreme overlay (DEC-01 spec authoritative):
-      spec_z > 1.5  → ×0.95 (crowded long, elevated risk)
-      spec_z < -1.5 → ×1.10 (extreme bearishness, contrarian opportunity)
-    modifier = smi_mod × extreme_mod
+    Preserved for reactivation if CFTC COT weekly feed is wired. Until then,
+    compute_aim_modifier(7, ...) returns NO_HANDLER (modifier=1.0, conf=0.0)
+    via the dispatch table omission at line ~224.
+
+    Per AIM_Extractions.md:1541-1559 the active spec was:
+      SMI polarity: POSITIVE→1.05, NEGATIVE→0.90.
+      Extreme overlay: spec_z>1.5→×0.95, spec_z<-1.5→×1.10.
     """
     smi = f.get("cot_smi")
     spec_z = f.get("cot_speculator_z")

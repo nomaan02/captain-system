@@ -37,28 +37,53 @@ logger = logging.getLogger(__name__)
 
 
 def run_signal_output(
-    recommended_trades: list[str],
-    available_not_recommended: list[str],
-    quality_results: dict,
-    final_contracts: dict,
-    account_recommendation: dict,
-    account_skip_reason: dict,
-    features: dict,
-    ewma_states: dict,
-    aim_breakdown: dict,
-    combined_modifier: dict,
-    regime_probs: dict,
-    expected_edge: dict,
-    locked_strategies: dict,
-    tsm_configs: dict,
-    user_silo: dict,
-    assets_detail: dict,
-    session_id: int,
+    recommended_trades: list[str] = None,
+    available_not_recommended: list[str] = None,
+    quality_results: dict = None,
+    final_contracts: dict = None,
+    account_recommendation: dict = None,
+    account_skip_reason: dict = None,
+    features: dict = None,
+    ewma_states: dict = None,
+    aim_breakdown: dict = None,
+    combined_modifier: dict = None,
+    regime_probs: dict = None,
+    expected_edge: dict = None,
+    locked_strategies: dict = None,
+    tsm_configs: dict = None,
+    user_silo: dict = None,
+    assets_detail: dict = None,
+    session_id: int = 1,
+    *,
+    signal_sink=None,
 ) -> dict:
     """P3-PG-26: Signal output for one user.
 
     Publishes signals to Redis and returns signal list.
+
+    Phase 7: ``signal_sink`` (optional ``SignalSink``) routes the publish
+    side-effects through a substitution seam. Default ``None`` preserves
+    the live Redis publish path byte-identical. Replay callers pass a
+    ``CapturingSignalSink`` to collect signals without hitting Redis.
     """
+    # Defaults populate empty containers when called from replay drivers
+    # that haven't fully threaded their state yet.
+    recommended_trades = recommended_trades or []
+    available_not_recommended = available_not_recommended or []
+    quality_results = quality_results or {}
+    final_contracts = final_contracts or {}
+    account_recommendation = account_recommendation or {}
+    account_skip_reason = account_skip_reason or {}
+    features = features or {}
+    ewma_states = ewma_states or {}
+    aim_breakdown = aim_breakdown or {}
+    combined_modifier = combined_modifier or {}
+    regime_probs = regime_probs or {}
+    expected_edge = expected_edge or {}
+    locked_strategies = locked_strategies or {}
+    tsm_configs = tsm_configs or {}
+    user_silo = user_silo or {}
+    assets_detail = assets_detail or {}
     user_id = user_silo.get("user_id", "unknown")
     accounts = parse_json(user_silo.get("accounts", "[]"), [])
     total_capital = user_silo.get("total_capital", 0)
@@ -157,28 +182,35 @@ def run_signal_output(
         for u in available_not_recommended
     ]
 
-    # Publish to Redis
+    # Publish to Redis (or capturing sink in replay)
     if signals or below_threshold:
         try:
-            _publish_signals(user_id, signals, below_threshold, session_id)
+            _publish_signals(
+                user_id, signals, below_threshold, session_id,
+                signal_sink=signal_sink,
+            )
         except Exception as pub_exc:
             logger.critical("ON-B6: Signal publication LOST for user %s session %d — "
                             "%d signals dropped: %s",
                             user_id, session_id, len(signals), pub_exc)
+            alert = {
+                "notif_id": f"SIG-PUB-FAIL-{uuid.uuid4().hex[:12].upper()}",
+                "priority": "CRITICAL",
+                "event_type": "SIGNAL_PUBLISH_FAILED",
+                "message": (
+                    f"Signal publication FAILED for user {user_id} "
+                    f"session {session_id} — {len(signals)} signals lost "
+                    f"after 3 retries. Error: {pub_exc}"
+                ),
+                "source": "ON_B6_SIGNAL_OUTPUT",
+                "asset": ",".join(s["asset"] for s in signals),
+                "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            }
             try:
-                get_redis_client().publish(CH_ALERTS, json.dumps({
-                    "notif_id": f"SIG-PUB-FAIL-{uuid.uuid4().hex[:12].upper()}",
-                    "priority": "CRITICAL",
-                    "event_type": "SIGNAL_PUBLISH_FAILED",
-                    "message": (
-                        f"Signal publication FAILED for user {user_id} "
-                        f"session {session_id} — {len(signals)} signals lost "
-                        f"after 3 retries. Error: {pub_exc}"
-                    ),
-                    "source": "ON_B6_SIGNAL_OUTPUT",
-                    "asset": ",".join(s["asset"] for s in signals),
-                    "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
-                }))
+                if signal_sink is not None:
+                    signal_sink.publish(CH_ALERTS, alert)
+                else:
+                    get_redis_client().publish(CH_ALERTS, json.dumps(alert))
             except Exception as alert_exc:
                 logger.error("ON-B6: Failed to publish signal-loss alert: %s", alert_exc)
 
@@ -329,24 +361,36 @@ def _apply_jitter(signal: dict) -> dict:
     return jittered
 
 
-def _publish_signals(user_id: str, signals: list, below_threshold: list, session_id: int):
+def _publish_signals(user_id: str, signals: list, below_threshold: list, session_id: int,
+                     *, signal_sink=None):
     """Publish signals to Redis stream:signals (durable delivery).
 
     Anti-copy jitter applied to published copies; internal signals unchanged.
     Retries up to 3 times with 100ms delay between attempts.
     Raises on exhaustion so the caller can alert.
+
+    Phase 7: when ``signal_sink`` is supplied, route the publish through
+    it instead of Redis. Replay paths use ``CapturingSignalSink``.
     """
     jittered = [_apply_jitter(s) for s in signals]
+    payload = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "signals": jittered,
+        "below_threshold": below_threshold,
+    }
+    if signal_sink is not None:
+        ok = signal_sink.publish(STREAM_SIGNALS, payload)
+        if not ok:
+            raise RuntimeError("signal_sink.publish returned falsy")
+        logger.debug("ON-B6: Captured %d signals via sink %s", len(signals),
+                     type(signal_sink).__name__)
+        return
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
-            publish_to_stream(STREAM_SIGNALS, {
-                "user_id": user_id,
-                "session_id": session_id,
-                "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
-                "signals": jittered,
-                "below_threshold": below_threshold,
-            })
+            publish_to_stream(STREAM_SIGNALS, payload)
             logger.debug("ON-B6: Published %d signals to %s", len(signals), STREAM_SIGNALS)
             return
         except Exception as e:

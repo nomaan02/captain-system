@@ -25,7 +25,9 @@ REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", None) or None
 
 # Channel constants
 REDIS_KEY_QUOTES = "captain:quotes"
+REDIS_KEY_BOCPD = "captain:bocpd:{asset_id}"  # F-07: canonical cp_prob (Q-07)
 CH_SIGNALS = "captain:signals:{user_id}"
+# DEPRECATED: pub/sub channel — no active subscribers. Use STREAM_TRADE_OUTCOMES instead.
 CH_TRADE_OUTCOMES = "captain:trade_outcomes"
 CH_COMMANDS = "captain:commands"
 CH_ALERTS = "captain:alerts"

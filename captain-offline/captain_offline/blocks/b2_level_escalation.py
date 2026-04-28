@@ -22,6 +22,7 @@ Writes: P3-D00 (captain_status), P3-D04 (decay_events), P3-D12 (sizing_override)
 
 import json
 import logging
+import uuid
 from datetime import datetime
 
 from shared.constants import now_et
@@ -39,10 +40,12 @@ LEVEL3_SUSTAINED_WINDOW = 5
 REDUCTION_SLOPE = 2.5
 REDUCTION_FLOOR = 0.5
 
-# Debounce state: Level 2 fires ONCE per changepoint event, not every trade.
-# Tracks {asset_id: True} when a changepoint event is active (cp_prob > threshold).
-# Cleared when cp_prob drops below threshold, allowing next event to fire.
-_level2_active = {}  # {asset_id: bool}
+LEVEL2_REFIRE_DELTA = 0.05  # F-19: re-fire when severity rises by >= delta
+
+# F-19: stores last-fired severity per asset (NOT a bool).
+# Absent key → no L2 active. Present key → last severity that fired
+# trigger_level2; subsequent triggers gated on (new_severity - last) >= delta.
+_level2_active: dict[str, float] = {}
 
 
 def _compute_reduction_factor(severity: float) -> float:
@@ -98,8 +101,21 @@ def _publish_alert(asset_id: str, level: int, severity: float, source: str):
     """Publish decay alert to Redis captain:alerts channel."""
     try:
         client = get_redis_client()
+        if level == 2:
+            reduction_factor = _compute_reduction_factor(severity)
+            message = (
+                f"Level 2: Sizing reduced to {reduction_factor * 100:.0f}% "
+                f"for {asset_id}"
+            )
+            event_type = "DECAY_LEVEL_2"
+        else:
+            message = f"Level 3: STRATEGY REVIEW — no signals for {asset_id}"
+            event_type = "DECAY_LEVEL_3"
         alert = json.dumps({
             "type": "DECAY_ALERT",
+            "event_type": event_type,
+            "message": message,
+            "notif_id": str(uuid.uuid4()),
             "asset": asset_id,
             "level": level,
             "severity": severity,
@@ -152,12 +168,17 @@ def _enqueue_job(job_type: str, asset_id: str, priority: str = "CRITICAL",
     return job_id
 
 
-def trigger_level3(asset_id: str, source: str):
+def trigger_level3(asset_id: str, source: str) -> dict:
     """Level 3: Halt signals + schedule P1/P2 rerun + AIM-14.
 
     Args:
         asset_id: Affected asset
         source: "BOCPD_sustained" or "CUSUM_sustained"
+
+    Returns:
+        Dict with `level=3`, `asset_id`, and the list of enqueued job
+        types so the caller (orchestrator._handle_trade_outcome) can
+        decide whether to immediate-dispatch. Phase 3 batch B6_F-42 (F-42).
     """
     _set_captain_status_decayed(asset_id)
     _log_decay_event(asset_id, 3, 1.0, source)
@@ -174,6 +195,13 @@ def trigger_level3(asset_id: str, source: str):
     logger.critical("LEVEL 3 [%s]: STRATEGY REVIEW — signals halted, "
                     "P1/P2 rerun + AIM-14 search enqueued (source=%s)",
                     asset_id, source)
+    return {
+        "level": 3,
+        "l3_triggered": True,
+        "asset_id": asset_id,
+        "enqueued": ["P1P2_RERUN", "AIM14_EXPANSION"],
+        "source": source,
+    }
 
 
 def check_level_escalation(asset_id: str, cp_probability: float,
@@ -187,22 +215,34 @@ def check_level_escalation(asset_id: str, cp_probability: float,
         cp_probability: Latest BOCPD changepoint probability
         cp_history: Recent cp_probability values
         cusum_signal: "BREACH" or "OK" from CUSUM update
+
+    Returns:
+        Dict with `level` set to 3 (and trigger_level3's enqueued list)
+        when Level 3 fires; otherwise None. Phase 3 batch B6_F-42 (F-42)
+        — orchestrator uses this to immediate-dispatch AIM14_EXPANSION.
     """
     # Level 3 check first — takes precedence over Level 2 (mutually exclusive)
     if len(cp_history) >= LEVEL3_SUSTAINED_WINDOW:
         recent = cp_history[-LEVEL3_SUSTAINED_WINDOW:]
         if all(p > LEVEL3_THRESHOLD for p in recent):
-            trigger_level3(asset_id, "BOCPD_sustained")
+            result = trigger_level3(asset_id, "BOCPD_sustained")
             _level2_active.pop(asset_id, None)  # clear debounce state
-            return
+            return result
 
-    # Level 2: BOCPD cp_prob > 0.8 — debounced (once per changepoint event)
+    # Level 2: BOCPD cp_prob > 0.8 — material-delta re-fire (F-19, Δ=0.05).
+    # First crossing fires unconditionally; subsequent fires only when
+    # cp_probability has risen by >= LEVEL2_REFIRE_DELTA since the last fire.
+    # PG-08 sizing reduction therefore tracks worsening cp instead of
+    # locking in at first-crossing severity.
     if cp_probability > LEVEL2_THRESHOLD:
-        if not _level2_active.get(asset_id):
-            _level2_active[asset_id] = True
+        last_fired = _level2_active.get(asset_id)
+        if last_fired is None or (
+            (cp_probability - last_fired) + 1e-12 >= LEVEL2_REFIRE_DELTA
+        ):
+            _level2_active[asset_id] = cp_probability
             trigger_level2(asset_id, cp_probability, "BOCPD")
     else:
-        # cp_prob dropped below threshold — reset debounce for next event
+        # cp_prob dropped below threshold — reset for next event.
         _level2_active.pop(asset_id, None)
 
     # Level 2: CUSUM breach — fires once per breach (CUSUM resets itself)

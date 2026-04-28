@@ -43,7 +43,7 @@ def load_replay_features(target_date: date, assets: list[str]):
             # Replay stubs: features without a historical data source in replay.
             # Each AIM handler checks f.get(key) → None → neutral modifier.
             #   pcr_z            — no put-call ratio data source (AIM-02)
-            #   gex              — no gamma exposure data source (AIM-03)
+            #   gex / gex_z      — no gamma exposure data source (AIM-03); gex_z derived when history exists
             #   cot_smi          — no CFTC COT data pipeline (AIM-07, disabled DEC-08)
             #   cot_speculator_z — no CFTC COT data pipeline (AIM-07, disabled DEC-08)
             #   event_proximity  — no economic calendar feed (AIM-06)
@@ -51,6 +51,7 @@ def load_replay_features(target_date: date, assets: list[str]):
             #   cl_basis         — no crude oil basis data (AIM-12)
             f["pcr_z"] = None
             f["gex"] = None
+            f["gex_z"] = None
             f["cot_smi"] = None
             f["cot_speculator_z"] = None
             f["event_proximity"] = None
@@ -239,21 +240,30 @@ def _load_iv_rv_features(target_date: date, asset_id: str, cur) -> dict:
     """Compute VRP z-score. Tries D31 IV/RV pairs, falls back to D30 realised vol series."""
     f = {}
 
-    # Primary: D31 IV/RV pairs
+    # Primary: D31 IV/RV pairs — extended window for AIM-01 vrp_z (120d Isaac 2026-04-27)
     cur.execute(
         "SELECT trade_date, atm_iv_30d, realized_vol_20d FROM p3_d31_implied_vol "
-        "WHERE asset_id = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT 30",
+        "WHERE asset_id = %s AND trade_date <= %s ORDER BY trade_date DESC LIMIT 130",
         (asset_id, target_date.isoformat()),
     )
     rows = cur.fetchall()
     if rows and len(rows) >= 10:
-        vrps = []
+        vrps_ivr = []  # legacy overnight_z path uses IV−RV series
+        vrps_rvi = []  # Isaac primary ladder uses RV−IV (aligned with compute_vrp)
         for _, iv, rv in reversed(rows):
             if iv is not None and rv is not None:
-                vrps.append(iv - rv)
-        if vrps:
-            f["vrp_overnight_z"] = z_score(vrps[-1], vrps)
-            return f
+                vrps_ivr.append(float(iv) - float(rv))
+                vrps_rvi.append(float(rv) - float(iv))
+        if vrps_ivr:
+            f["vrp_overnight_z"] = z_score(vrps_ivr[-1], vrps_ivr)
+        if len(vrps_rvi) >= 30:
+            hist = vrps_rvi[-120:] if len(vrps_rvi) >= 120 else vrps_rvi
+            f["vrp_z"] = z_score(vrps_rvi[-1], hist)
+            f["vrp"] = vrps_rvi[-1]
+        elif vrps_rvi:
+            f["vrp"] = vrps_rvi[-1]
+            f["vrp_z"] = None
+        return f
 
     # Fallback: rolling realised vol from D30 daily closes (all assets)
     cur.execute(
@@ -355,6 +365,10 @@ def _load_calendar_features(target_date: date, asset_id: str) -> dict:
     third_friday = _third_friday(target_date.year, target_date.month)
     delta = abs((target_date - third_friday).days)
     f["is_opex_window"] = delta <= 3  # ±3 calendar days ≈ ±2 trading days
+
+    # AIM-03 calendar overlays (F-39; same derivation as live b1_features)
+    f["expiry_day"] = target_date == third_friday
+    f["triple_witch"] = f["expiry_day"] and target_date.month in (3, 6, 9, 12)
 
     # is_eia_wednesday: only matters for CL (crude oil) — not in our universe
     f["is_eia_wednesday"] = target_date.weekday() == 2 and asset_id == "CL"

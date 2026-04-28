@@ -189,6 +189,7 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     # Write to P3-D03
     _write_trade_outcome(
         trade_id=trade_id,
+        signal_id=pos.get("signal_id") or f"LEGACY-{uuid.uuid4()}",
         user_id=pos["user_id"],
         account_id=account_id,
         asset=pos["asset"],
@@ -292,23 +293,29 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
                          entry_price, signal_entry_price, exit_price, contracts,
                          gross_pnl, commission, net_pnl, slippage, outcome,
                          entry_time, regime_at_entry, aim_modifier, aim_breakdown,
-                         session, tsm_used):
-    """Write trade outcome to P3-D03."""
+                         session, tsm_used, signal_id=None):
+    """Write trade outcome to P3-D03.
+
+    Phase 7: ``signal_id`` ties the row to the originating B6 signal so
+    PG-09 can pair signals with realised P&L. ``LEGACY-<uuid>`` if the
+    caller can't supply one (e.g. paper-trader shim, replay).
+    """
     aim_bd_str = json.dumps(aim_breakdown, default=str) if aim_breakdown else None
     entry_ts = entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time
     model_m = _get_locked_m(asset)
+    sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
 
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d03_trade_outcome_log
-               (trade_id, user_id, account_id, asset, direction,
+               (trade_id, signal_id, user_id, account_id, asset, direction,
                 entry_price, signal_entry_price, exit_price, contracts,
                 gross_pnl, commission, pnl, slippage, outcome,
                 entry_time, regime_at_entry, aim_modifier_at_entry,
                 aim_breakdown_at_entry, session, tsm_used, model_m, ts)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, %s, now())""",
-            (trade_id, user_id, account_id, asset, direction,
+                       %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+            (trade_id, sig_id, user_id, account_id, asset, direction,
              entry_price, signal_entry_price, exit_price, contracts,
              gross_pnl, commission, net_pnl, slippage, outcome,
              entry_ts, regime_at_entry, aim_modifier,

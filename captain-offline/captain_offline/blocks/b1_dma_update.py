@@ -22,6 +22,7 @@ import logging
 from datetime import datetime
 
 from shared.questdb_client import get_cursor
+from shared.redis_client import get_redis_client
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -38,16 +39,30 @@ Z_CLAMP = 3.0
 
 
 def _load_active_aims(asset_id: str) -> list[dict]:
-    """Load all ACTIVE AIM weights from P3-D02."""
+    """Load D02 rows ONLY for AIMs whose latest D01 status is ACTIVE.
+
+    PG-02 line 101: FOR EACH active aim a.
+    """
     with get_cursor() as cur:
         cur.execute(
-            """SELECT aim_id, inclusion_probability, inclusion_flag,
-                      recent_effectiveness, days_below_threshold
-               FROM p3_d02_aim_meta_weights
-               WHERE asset_id = %s
-               LATEST ON last_updated PARTITION BY aim_id, asset_id
-               ORDER BY aim_id""",
+            """SELECT aim_id FROM p3_d01_aim_model_states
+               WHERE asset_id = %s AND status = 'ACTIVE'
+               LATEST ON last_updated PARTITION BY aim_id, asset_id""",
             (asset_id,),
+        )
+        active_ids = [r[0] for r in cur.fetchall()]
+    if not active_ids:
+        return []
+    placeholders = ",".join(["%s"] * len(active_ids))
+    with get_cursor() as cur:
+        cur.execute(
+            f"""SELECT aim_id, inclusion_probability, inclusion_flag,
+                       recent_effectiveness, days_below_threshold
+                FROM p3_d02_aim_meta_weights
+                WHERE asset_id = %s AND aim_id IN ({placeholders})
+                LATEST ON last_updated PARTITION BY aim_id, asset_id
+                ORDER BY aim_id""",
+            (asset_id, *active_ids),
         )
         rows = cur.fetchall()
     return [
@@ -206,11 +221,23 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
         return result
 
     # Step 3: Write updated weights to P3-D02
+    r = get_redis_client()
     with get_cursor() as cur:
         for aim in aims:
             aid = aim["aim_id"]
             new_prob = proposed_weights[aid]
             new_flag = new_prob > inclusion_threshold
+
+            # Spec PG-01 lines 67-80: consecutive-trade counters for suppression/recovery
+            key = f"aim_counters:{aid}:{asset_id}"
+            if new_prob == 0:
+                r.hincrby(key, "consecutive_zero", 1)
+                r.hset(key, "consecutive_above", 0)
+            elif new_prob > 0.1:
+                r.hincrby(key, "consecutive_above", 1)
+                r.hset(key, "consecutive_zero", 0)
+            else:
+                r.hset(key, mapping={"consecutive_above": 0, "consecutive_zero": 0})
 
             # Track days_below_threshold for suppression
             if new_prob < inclusion_threshold:

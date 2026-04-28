@@ -25,7 +25,6 @@ from shared.questdb_client import get_cursor
 from shared.redis_client import (
     CH_ALERTS,
     CH_STATUS,
-    CH_TRADE_OUTCOMES,
     signals_channel,
     publish_to_stream,
     STREAM_COMMANDS,

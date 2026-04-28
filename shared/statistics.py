@@ -162,3 +162,85 @@ def compute_dsr(sharpe: float, n_trials: int, skew: float,
     # DSR = P(observed sharpe > E[max sharpe under null])
     z = (sharpe - e_max_sharpe) / se
     return float(sp_stats.norm.cdf(z))
+
+
+def compute_cscv_pbo(grid_returns: list[list[float]], S: int = 8) -> float:
+    """Phase 7 — Multi-config CSCV PBO (Paper 152, doc 32 PG-12 line 470).
+
+    Operates on a *grid* of return series (one series per parameter
+    configuration). For each IS/OOS split:
+      1. Select the config with the highest IS Sharpe.
+      2. Check whether that config's OOS Sharpe is positive.
+      3. PBO is the fraction of splits where the IS-winner has
+         non-positive OOS Sharpe (i.e. winning IS was an artefact).
+
+    Args:
+        grid_returns: list of returns series, one per grid cell.
+        S: Number of CSCV sub-groups (must be even). Default 8 per spec.
+
+    Returns:
+        PBO in [0, 1]. < 0.5 → genuine edge across the grid.
+    """
+    import numpy as _np
+
+    if not grid_returns:
+        return 0.5
+    if S % 2 != 0:
+        S = S - 1
+    if S < 2:
+        return 0.5
+
+    # Align to the shortest series so every cell contributes to every split.
+    min_len = min(len(s) for s in grid_returns)
+    if min_len < S * 2:
+        return 0.5
+
+    matrix = _np.array([s[:min_len] for s in grid_returns])
+
+    group_size = min_len // S
+    groups = [matrix[:, i * group_size:(i + 1) * group_size] for i in range(S)]
+
+    half = S // 2
+    indices = list(range(S))
+    combos = list(combinations(indices, half))
+    if len(combos) > 50000:
+        rng = _np.random.default_rng(42)
+        sel = rng.choice(len(combos), size=50000, replace=False)
+        combos = [combos[i] for i in sel]
+
+    n_overfit = 0
+    n_evaluated = 0
+    for is_indices in combos:
+        oos_indices = tuple(i for i in indices if i not in is_indices)
+        is_block = _np.concatenate([groups[i] for i in is_indices], axis=1)
+        oos_block = _np.concatenate([groups[i] for i in oos_indices], axis=1)
+
+        is_sharpe = _block_sharpe(is_block)
+        if is_sharpe is None:
+            continue
+        winner = int(_np.argmax(is_sharpe))
+        oos_sharpe = _block_sharpe(oos_block)
+        if oos_sharpe is None:
+            continue
+        n_evaluated += 1
+        if oos_sharpe[winner] <= 0:
+            n_overfit += 1
+
+    if n_evaluated == 0:
+        return 0.5
+    return float(n_overfit / n_evaluated)
+
+
+def _block_sharpe(block: "object") -> "object | None":
+    """Per-row annualised Sharpe of a (configs x days) matrix; ``None`` if
+    every row is degenerate (zero variance)."""
+    import numpy as _np
+
+    arr = _np.asarray(block)
+    if arr.size == 0:
+        return None
+    means = arr.mean(axis=1)
+    stds = arr.std(axis=1)
+    sharpe = _np.where(stds > 1e-10, means / _np.where(stds > 0, stds, 1.0)
+                        * math.sqrt(252), 0.0)
+    return sharpe

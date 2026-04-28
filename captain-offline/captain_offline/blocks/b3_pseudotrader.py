@@ -718,63 +718,110 @@ def fetch_d03_trade_outcomes(user_id: str, asset_id: str,
 def captain_online_replay(target_date, asset_id: str,
                            params: dict | None = None,
                            cached_bars: dict | None = None,
-                           baseline_result: dict | None = None) -> dict:
-    """Replay B1-B6 online pipeline for a single day with optional param overrides.
+                           baseline_result: dict | None = None,
+                           *,
+                           user_id: str | None = None,
+                           session_id: int | None = None) -> dict:
+    """Replay B1-B6 online pipeline for a single day under given parameters.
 
-    Spec: Doc 32 PG-09 §1-2 — captain_online_replay(d, using=params).
-    Uses shared/replay_engine for full pipeline replay. When cached_bars
-    and baseline_result are provided, uses run_whatif() for zero API calls.
+    Spec: Doc 32 PG-09 §1-2 — ``captain_online_replay(d, using=params)``.
 
-    Args:
-        target_date: date object for the day to replay
-        asset_id: Asset to extract results for
-        params: Optional config overrides for load_replay_config()
-        cached_bars: Pre-fetched bars from a prior run_replay() call
-        baseline_result: Full result dict from a prior run_replay() call
+    Phase 7 rewire: delegates to ``shared.online_replay.captain_online_replay``,
+    which drives the live B1-B6 modules under a ``HistoricalMarketData
+    Provider`` + ``CapturingSignalSink``. Returns a per-asset summary dict
+    so the existing PG-09 caller shape is preserved.
 
-    Returns:
-        Dict with signal details and theoretical P&L for the target asset,
-        plus cached_bars and _full_result for efficient whatif chaining.
+    The legacy ``cached_bars`` / ``baseline_result`` kwargs are accepted
+    for backwards compatibility but are unused — the new driver loads
+    bars per-day on demand via the provider.
     """
-    from shared.replay_engine import load_replay_config, run_replay, run_whatif
+    from shared.online_replay import (
+        ReplayParameters,
+        captain_online_replay as _replay,
+    )
+    from datetime import date as _date
 
-    config = load_replay_config(overrides=params)
-
-    if cached_bars is not None and baseline_result is not None:
-        full = run_whatif(config, cached_bars, baseline_result,
-                          target_date=target_date)
-        results_list = full.get("whatif_results", [])
+    if isinstance(target_date, str):
+        d = _date.fromisoformat(target_date[:10])
+    elif hasattr(target_date, "date"):
+        d = target_date.date() if not isinstance(target_date, _date) else target_date
     else:
-        full = run_replay(config, target_date=target_date)
-        results_list = full.get("results", [])
+        d = target_date
 
-    for r in results_list:
-        if r.get("asset") == asset_id:
-            return {
-                "asset": asset_id,
-                "date": str(target_date),
-                "direction": r.get("direction", 0),
-                "contracts": r.get("contracts", 0),
-                "pnl": r.get("total_pnl", 0.0),
-                "pnl_per_contract": r.get("pnl_per_contract", 0.0),
-                "exit_reason": r.get("exit_reason", ""),
-                "aim_modifier": r.get("aim_modifier"),
-                "quality_score": r.get("quality_score"),
-                "sizing": r.get("sizing"),
-                "cached_bars": full.get("cached_bars"),
-                "_full_result": full,
-            }
+    if isinstance(params, ReplayParameters):
+        rp = params
+    elif isinstance(params, dict) and params:
+        rp = ReplayParameters(
+            locked_strategies=params.get("locked_strategies"),
+            aim_states=params.get("aim_states"),
+            aim_weights=params.get("aim_weights"),
+            kelly_params=params.get("kelly_params"),
+            ewma_states=params.get("ewma_states"),
+            sizing_overrides=params.get("sizing_overrides"),
+        )
+    else:
+        rp = ReplayParameters()
 
+    uid = user_id or os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
+    signals = _replay(d, using=rp, user_id=uid, asset=asset_id,
+                       session_id=session_id)
+
+    target = next((s for s in signals if s.get("asset") == asset_id), None)
+    if target is None:
+        return {
+            "asset": asset_id,
+            "date": str(d),
+            "direction": 0,
+            "contracts": 0,
+            "pnl": 0.0,
+            "signal": None,
+            "exit_reason": "NO_SIGNAL",
+        }
     return {
         "asset": asset_id,
-        "date": str(target_date),
-        "direction": 0,
-        "contracts": 0,
+        "date": str(d),
+        "direction": target.get("direction", 0),
+        "contracts": target.get("size", target.get("contracts", 0)),
+        "signal_id": target.get("signal_id"),
+        "signal": target,
+        "tp_level": target.get("tp_level"),
+        "sl_level": target.get("sl_level"),
+        # P&L is sourced from D03 in PG-09 — replay only produces signals,
+        # not realised outcomes. Callers pair via ``actual_trade_outcome``.
         "pnl": 0.0,
-        "exit_reason": "NO_BREAKOUT",
-        "cached_bars": full.get("cached_bars"),
-        "_full_result": full,
+        "exit_reason": "PENDING_REALISED_PNL",
     }
+
+
+def _serialise_pair_series(pairs: list[dict]) -> list[dict]:
+    """Reduce {signal, outcome} pair list to JSON-compatible primitives."""
+    out = []
+    for p in pairs:
+        sig = p.get("signal") or {}
+        outc = p.get("outcome")
+        out.append({
+            "signal_id": sig.get("signal_id"),
+            "asset": sig.get("asset"),
+            "direction": sig.get("direction"),
+            "size": sig.get("size"),
+            "outcome_pnl": float(outc.pnl) if outc is not None else None,
+            "outcome_contracts": int(outc.contracts) if outc is not None else None,
+            "outcome_signal_id": outc.signal_id if outc is not None else None,
+        })
+    return out
+
+
+def _safe_json(obj) -> str:
+    import json as _json
+
+    def _default(o):
+        if hasattr(o, "isoformat"):
+            return o.isoformat()
+        return str(o)
+    try:
+        return _json.dumps(obj, default=_default)
+    except Exception:
+        return "{}"
 
 
 def run_pseudotrader(asset_id: str, update_type: str,
@@ -813,9 +860,12 @@ def run_pseudotrader(asset_id: str, update_type: str,
     Returns:
         Comparison dict with recommendation
     """
-    # ── PRIMARY PATH: Full B1-B6 pipeline replay (G-OFF-016) ─────────
+    # ── PRIMARY PATH: F-22 / F-23 pair-based metrics from D03 ─────────
+    pair_series_baseline: list[dict] = []
+    pair_series_proposed: list[dict] = []
     if baseline_pnl is None and proposed_pnl is None:
         from datetime import date as _date_cls
+        from shared.trade_source import actual_trade_outcome
 
         d03_outcomes = fetch_d03_trade_outcomes(user_id, asset_id, lookback_days)
 
@@ -824,6 +874,8 @@ def run_pseudotrader(asset_id: str, update_type: str,
                           asset_id, user_id)
             return {
                 "update_type": update_type,
+                "sharpe_baseline": 0.0,
+                "sharpe_updated": 0.0,
                 "sharpe_improvement": 0.0,
                 "drawdown_change": 0.0,
                 "winrate_delta": 0.0,
@@ -843,28 +895,53 @@ def run_pseudotrader(asset_id: str, update_type: str,
         logger.info("Pseudotrader replay %s [%s]: %d trading days from D03",
                     asset_id, update_type, len(trading_days))
 
-        # Phase 1: Baseline replay (CURRENT parameters) — fetches bars
         baseline_pnl = []
-        cached_bars_by_day = {}
-        baseline_results_by_day = {}
-
-        for day in trading_days:
-            result = captain_online_replay(day, asset_id, params=current_params)
-            baseline_pnl.append(result["pnl"])
-            cached_bars_by_day[str(day)] = result.get("cached_bars")
-            baseline_results_by_day[str(day)] = result.get("_full_result")
-
-        # Phase 2: Proposed replay (reuses cached bars — zero API calls)
         proposed_pnl = []
         for day in trading_days:
-            day_key = str(day)
-            result = captain_online_replay(
-                day, asset_id,
-                params=proposed_params,
-                cached_bars=cached_bars_by_day.get(day_key),
-                baseline_result=baseline_results_by_day.get(day_key),
+            base_result = captain_online_replay(
+                day, asset_id, params=current_params, user_id=user_id,
             )
-            proposed_pnl.append(result["pnl"])
+            base_sig = base_result.get("signal") or {}
+            base_sig_id = base_sig.get("signal_id") or base_result.get("signal_id")
+            base_outcome = (
+                actual_trade_outcome(
+                    day, user_id=user_id, asset=asset_id, signal_id=base_sig_id,
+                )
+                if base_sig_id else
+                actual_trade_outcome(day, user_id=user_id, asset=asset_id)
+            )
+            pair_series_baseline.append(
+                {"signal": base_sig, "outcome": base_outcome}
+            )
+            if base_outcome is not None:
+                contracts = max(int(base_outcome.contracts or 1), 1)
+                baseline_pnl.append(float(base_outcome.pnl) / contracts)
+
+            prop_result = captain_online_replay(
+                day, asset_id, params=proposed_params, user_id=user_id,
+            )
+            prop_sig = prop_result.get("signal") or {}
+            prop_sig_id = prop_sig.get("signal_id") or prop_result.get("signal_id")
+            prop_outcome = (
+                actual_trade_outcome(
+                    day, user_id=user_id, asset=asset_id, signal_id=prop_sig_id,
+                )
+                if prop_sig_id else
+                actual_trade_outcome(day, user_id=user_id, asset=asset_id)
+            )
+            pair_series_proposed.append(
+                {"signal": prop_sig, "outcome": prop_outcome}
+            )
+            if prop_outcome is not None:
+                contracts = max(int(prop_outcome.contracts or 1), 1)
+                proposed_pnl.append(float(prop_outcome.pnl) / contracts)
+
+        if not baseline_pnl or not proposed_pnl:
+            logger.warning(
+                "Pseudotrader %s [%s]: no pairs matched between replayed signals "
+                "and D03 outcomes — baseline=%d, proposed=%d",
+                asset_id, update_type, len(baseline_pnl), len(proposed_pnl),
+            )
 
         logger.info("Replay complete %s: baseline_total=%.2f, proposed_total=%.2f",
                     asset_id, sum(baseline_pnl), sum(proposed_pnl))
@@ -887,9 +964,9 @@ def run_pseudotrader(asset_id: str, update_type: str,
     wr_prop = _compute_win_rate(proposed_pnl)
     winrate_delta = wr_prop - wr_base
 
-    # Anti-overfitting
-    pbo = _compute_pbo(proposed_pnl)
-    arr = np.array(proposed_pnl)
+    # Anti-overfitting (PBO via CSCV at S=8 per spec PG-12 line 470)
+    pbo = _compute_pbo(proposed_pnl, S=CSCV_SPLITS)
+    arr = np.array(proposed_pnl) if proposed_pnl else np.array([0.0])
     skew = float(np.mean((arr - arr.mean()) ** 3) / max(arr.std() ** 3, 1e-10)) if len(arr) > 2 else 0.0
     kurt = float(np.mean((arr - arr.mean()) ** 4) / max(arr.std() ** 4, 1e-10)) if len(arr) > 2 else 3.0
     dsr = _compute_dsr(sharpe_prop, max(n_trials, 1), skew, kurt, len(proposed_pnl))
@@ -904,25 +981,35 @@ def run_pseudotrader(asset_id: str, update_type: str,
         "update_type": update_type,
         "mode": mode,
         "production": mode == REPLAY_MODE_IDEAL,
+        "sharpe_baseline": sharpe_base,
+        "sharpe_updated": sharpe_prop,
         "sharpe_improvement": sharpe_improvement,
         "drawdown_change": drawdown_change,
         "winrate_delta": winrate_delta,
         "pbo": pbo,
         "dsr": dsr,
         "recommendation": recommendation,
+        "pair_series": {
+            "baseline": _serialise_pair_series(pair_series_baseline),
+            "updated": _serialise_pair_series(pair_series_proposed),
+        },
     }
 
-    # Store in P3-D11
+    # Store in P3-D11 — Phase 7 schema includes sharpe_baseline,
+    # sharpe_updated, pair_series.
+    pair_series_json = _safe_json(result["pair_series"])
     with get_cursor() as cur:
         cur.execute(
             """INSERT INTO p3_d11_pseudotrader_results
-               (result_id, update_type, sharpe_improvement, drawdown_change,
-                winrate_delta, pbo, dsr, recommendation, ts)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())""",
+               (result_id, update_type, sharpe_baseline, sharpe_updated,
+                sharpe_improvement, drawdown_change, winrate_delta,
+                pbo, dsr, recommendation, pair_series, ts)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
             (
                 f"PT-{asset_id}-{update_type[:3]}",
-                update_type, sharpe_improvement, drawdown_change,
-                winrate_delta, pbo, dsr, recommendation,
+                update_type, sharpe_base, sharpe_prop,
+                sharpe_improvement, drawdown_change, winrate_delta,
+                pbo, dsr, recommendation, pair_series_json,
             ),
         )
 
@@ -935,107 +1022,34 @@ def run_pseudotrader(asset_id: str, update_type: str,
 
 
 def run_signal_replay_comparison(asset_id: str, proposed_update: dict) -> dict:
-    """P3-PG-09 with full signal replay instead of pre-computed P&L.
+    """DEPRECATED — Phase 7 migrated to ``run_pseudotrader`` D03-pair path.
 
-    Loads replay context, runs baseline and proposed replays via
-    SignalReplayEngine, extracts daily P&L, then delegates to
-    run_pseudotrader() for the counterfactual comparison.
-
-    Args:
-        asset_id: Asset to evaluate
-        proposed_update: Dict with keys:
-            update_type: "AIM_WEIGHT_CHANGE" | "KELLY_UPDATE" | "STRATEGY_PARAM_CHANGE"
-            For AIM/Kelly changes (sizing replay):
-                proposed_aim_weights: {aim_id: inclusion_probability}
-                proposed_kelly_params: {"LOW_VOL": {"kelly_full": f}, "HIGH_VOL": {...}}
-            For strategy changes (strategy replay):
-                proposed_strategy_params: {"sl_multiplier": x, "tp_multiplier": y, ...}
-
-    Returns:
-        Comparison dict from run_pseudotrader() with recommendation.
+    Pre-Phase-7 this routed through ``SignalReplayEngine``; F-22 (audit)
+    showed that path bypassed the live B1-B6 pipeline. This shim now
+    constructs ``current_params`` / ``proposed_params`` from the proposed
+    update dict and delegates to ``run_pseudotrader`` so the gate stays
+    callable without further migration.
     """
-    from shared.signal_replay import SignalReplayEngine
-
     update_type = proposed_update.get("update_type", "AIM_WEIGHT_CHANGE")
 
-    # Load replay context (trades, regime labels, locked strategy, defaults)
-    ctx = SignalReplayEngine.load_replay_context(asset_id)
-    trades = ctx["trades"]
-    regime_labels = ctx["regime_labels"]
-    locked_strategy = ctx["locked_strategy"]
-    kelly_params = ctx["kelly_params"]
-    aim_weights = ctx["aim_weights"]
-
-    engine = SignalReplayEngine(asset=asset_id)
-
+    proposed_params = None
     if update_type in ("AIM_WEIGHT_CHANGE", "KELLY_UPDATE"):
-        # ------- Sizing replay: same trades, different AIM/Kelly -------
-        # Baseline: current parameters
-        baseline_trades = engine.sizing_replay(
-            trades=trades,
-            regime_labels=regime_labels,
-            aim_weights=aim_weights,
-            kelly_params=kelly_params,
-        )
-
-        # Proposed: new AIM weights and/or Kelly params
-        proposed_aim = proposed_update.get("proposed_aim_weights", aim_weights)
-        proposed_kelly = proposed_update.get("proposed_kelly_params", kelly_params)
-        proposed_trades = engine.sizing_replay(
-            trades=trades,
-            regime_labels=regime_labels,
-            aim_weights=proposed_aim,
-            kelly_params=proposed_kelly,
-        )
-
+        kwargs = {}
+        if "proposed_aim_weights" in proposed_update:
+            kwargs["aim_weights"] = proposed_update["proposed_aim_weights"]
+        if "proposed_kelly_params" in proposed_update:
+            kwargs["kelly_params"] = proposed_update["proposed_kelly_params"]
+        proposed_params = kwargs or None
     else:
-        # ------- Strategy replay: different SL/TP/threshold -------
-        proposed_params = proposed_update.get("proposed_strategy_params", {})
+        sp = proposed_update.get("proposed_strategy_params")
+        if sp:
+            proposed_params = {"locked_strategies": {asset_id: sp}}
 
-        # Baseline: current locked strategy params
-        baseline_strategy = {
-            "sl_multiplier": locked_strategy.get("sl_multiplier",
-                             locked_strategy.get("sl_multiple", 1.0)),
-            "tp_multiplier": locked_strategy.get("tp_multiplier",
-                             locked_strategy.get("tp_multiple", 2.0)),
-        }
-        baseline_trades = engine.strategy_replay(
-            trades=trades,
-            regime_labels=regime_labels,
-            aim_weights=aim_weights,
-            kelly_params=kelly_params,
-            strategy_params=baseline_strategy,
-        )
-
-        # Proposed: caller-supplied strategy params
-        proposed_trades = engine.strategy_replay(
-            trades=trades,
-            regime_labels=regime_labels,
-            aim_weights=aim_weights,
-            kelly_params=kelly_params,
-            strategy_params=proposed_params,
-        )
-
-    # Extract daily P&L from trade lists
-    def _daily_pnl(trade_list: list[dict]) -> list[float]:
-        by_day: dict[str, float] = {}
-        for t in trade_list:
-            day = t.get("day", "unknown")
-            by_day[day] = by_day.get(day, 0.0) + t.get("pnl", 0.0)
-        return [by_day[d] for d in sorted(by_day)]
-
-    baseline_pnl = _daily_pnl(baseline_trades)
-    proposed_pnl = _daily_pnl(proposed_trades)
-
-    # Delegate to existing pseudotrader comparison
-    result = run_pseudotrader(asset_id, update_type, baseline_pnl, proposed_pnl)
-
-    logger.info("Signal replay comparison %s [%s]: %d baseline trades, "
-                "%d proposed trades -> %s",
-                asset_id, update_type, len(baseline_trades),
-                len(proposed_trades), result.get("recommendation"))
-
-    return result
+    return run_pseudotrader(
+        asset_id, update_type,
+        current_params=None,
+        proposed_params=proposed_params,
+    )
 
 
 def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],

@@ -31,7 +31,6 @@ from shared.redis_client import (
     CH_COMMANDS,
     CH_ALERTS,
     CH_STATUS,
-    CH_TRADE_OUTCOMES,
     CH_PROCESS_LOGS,
     signals_channel,
     ensure_consumer_group,

@@ -30,7 +30,13 @@ import websocket as ws_lib
 
 from shared.topstep_client import get_topstep_client
 from shared.topstep_stream import quote_cache
-from shared.redis_client import get_redis_client, signals_channel, CH_ALERTS
+from shared.redis_client import (
+    get_redis_client,
+    signals_channel,
+    CH_ALERTS,
+    publish_to_stream,
+    STREAM_TRADE_OUTCOMES,
+)
 from shared.questdb_client import get_cursor
 
 logging.basicConfig(
@@ -365,7 +371,7 @@ class PaperTrader:
             "exit_price": exit_price,
             "contracts": pos.contracts,
         }
-        self.redis.publish("captain:trade_outcomes", json.dumps(outcome))
+        publish_to_stream(STREAM_TRADE_OUTCOMES, outcome)
 
         dir_str = "LONG" if pos.direction == 1 else "SHORT"
         pnl_str = f"+${net_pnl:.2f}" if net_pnl >= 0 else f"-${abs(net_pnl):.2f}"
@@ -391,12 +397,12 @@ class PaperTrader:
             with get_cursor() as cur:
                 cur.execute(
                     """INSERT INTO p3_d03_trade_outcome_log (
-                        trade_id, user_id, account_id, asset, direction,
+                        trade_id, signal_id, user_id, account_id, asset, direction,
                         entry_price, contracts, outcome, entry_time,
                         session, model_m, ts
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
                     (
-                        pos.trade_id, USER_ID, ACCOUNT_ID, "ES",
+                        pos.trade_id, pos.signal_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
                         pos.entry_price, pos.contracts, "OPEN",
                         pos.entry_time.isoformat(), 1,  # session 1 = NY
@@ -414,13 +420,13 @@ class PaperTrader:
             with get_cursor() as cur:
                 cur.execute(
                     """INSERT INTO p3_d03_trade_outcome_log (
-                        trade_id, user_id, account_id, asset, direction,
+                        trade_id, signal_id, user_id, account_id, asset, direction,
                         entry_price, exit_price, contracts,
                         gross_pnl, commission, pnl, outcome,
                         entry_time, exit_time, session, model_m, ts
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
                     (
-                        pos.trade_id, USER_ID, ACCOUNT_ID, "ES",
+                        pos.trade_id, pos.signal_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
                         pos.entry_price, exit_price, pos.contracts,
                         round(net_pnl + commission, 2), commission,

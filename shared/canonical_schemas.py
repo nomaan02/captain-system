@@ -397,6 +397,7 @@ DEDUP UPSERT KEYS(last_updated, account_id);
 D03_TRADE_OUTCOME_LOG = """
 CREATE TABLE IF NOT EXISTS p3_d03_trade_outcome_log (
     trade_id STRING,
+    signal_id STRING,
     user_id SYMBOL,
     account_id SYMBOL,
     asset SYMBOL,
@@ -436,6 +437,10 @@ CREATE TABLE IF NOT EXISTS p3_d06_injection_history (
     status STRING,
     injection_type STRING,
     outcome STRING,
+    pbo DOUBLE,
+    dsr DOUBLE,
+    transition_days INT,
+    tracking_days INT,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
 DEDUP UPSERT KEYS(ts, injection_id);
@@ -479,12 +484,15 @@ D11_PSEUDOTRADER_RESULTS = """
 CREATE TABLE IF NOT EXISTS p3_d11_pseudotrader_results (
     result_id STRING,
     update_type STRING,
+    sharpe_baseline DOUBLE,
+    sharpe_updated DOUBLE,
     sharpe_improvement DOUBLE,
     drawdown_change DOUBLE,
     winrate_delta DOUBLE,
     pbo DOUBLE,
     dsr DOUBLE,
     recommendation STRING,
+    pair_series STRING,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
 DEDUP UPSERT KEYS(ts, result_id);
@@ -836,6 +844,41 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M001_d03_add_model_m",
         "ALTER TABLE p3_d03_trade_outcome_log ADD COLUMN model_m INT",
+    ),
+    # Phase 7 — F-23 / Q-15: link D03 rows to originating signal (PG-09 pair)
+    (
+        "M002_d03_add_signal_id",
+        "ALTER TABLE p3_d03_trade_outcome_log ADD COLUMN signal_id STRING",
+    ),
+    # Phase 7 — PG-09 metric persistence (Stage 1B Appendix B)
+    (
+        "M003_d11_add_sharpe_baseline",
+        "ALTER TABLE p3_d11_pseudotrader_results ADD COLUMN sharpe_baseline DOUBLE",
+    ),
+    (
+        "M004_d11_add_sharpe_updated",
+        "ALTER TABLE p3_d11_pseudotrader_results ADD COLUMN sharpe_updated DOUBLE",
+    ),
+    (
+        "M005_d11_add_pair_series",
+        "ALTER TABLE p3_d11_pseudotrader_results ADD COLUMN pair_series STRING",
+    ),
+    # Phase 7 — PG-10 injection persistence (Stage 1B Appendix B)
+    (
+        "M006_d06_add_pbo",
+        "ALTER TABLE p3_d06_injection_history ADD COLUMN pbo DOUBLE",
+    ),
+    (
+        "M007_d06_add_dsr",
+        "ALTER TABLE p3_d06_injection_history ADD COLUMN dsr DOUBLE",
+    ),
+    (
+        "M008_d06_add_transition_days",
+        "ALTER TABLE p3_d06_injection_history ADD COLUMN transition_days INT",
+    ),
+    (
+        "M009_d06_add_tracking_days",
+        "ALTER TABLE p3_d06_injection_history ADD COLUMN tracking_days INT",
     ),
 ]
 

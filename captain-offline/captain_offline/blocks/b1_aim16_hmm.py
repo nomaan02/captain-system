@@ -184,3 +184,23 @@ def save_hmm_state(state: dict):
         )
     logger.info("AIM-16 HMM state saved to P3-D26 (cold_start=%s, n_obs=%d)",
                 state["cold_start"], state["n_observations"])
+
+
+def build_observation_panel_stub(asset_universe, lookback_days: int = 60):
+    """Phase 3 placeholder per build plan §B1_F-01.
+
+    Phase 10 replaces this with the doc 22 §4 real 7-D panel. Returns
+    shape-correct zeros so train_aim16_hmm hits its cold-start branch
+    (n_trading_days < 20 -> equal-prob output) without raising.
+
+    Args:
+        asset_universe: Active asset list (unused in stub; Phase 10 uses it).
+        lookback_days: Sliding window length (unused in stub).
+
+    Returns:
+        (observations, session_pnl, n_trading_days) — empty 7-D panel,
+        empty PnL vector, 0 trading days (forces cold-start).
+    """
+    obs = np.zeros((0, N_FEATURES), dtype=float)
+    session_pnl = np.zeros((0,), dtype=float)
+    return obs, session_pnl, 0
