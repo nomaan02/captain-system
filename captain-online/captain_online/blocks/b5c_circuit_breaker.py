@@ -79,7 +79,7 @@ def run_circuit_breaker_screen(
     session_id: int,
     proposed_contracts: dict | None = None,
     sl_distance: float = 4.0,
-    point_value: float = 50.0,
+    point_value: float | Decimal = 50.0,
     fee_per_trade: float = 0.0,
     model_m: str | None = None,
     locked_strategies: dict | None = None,
@@ -209,7 +209,7 @@ def _check_all_layers(
     session_id: int,
     contracts: int = 0,
     sl_distance: float = 4.0,
-    point_value: float = 50.0,
+    point_value: float | Decimal = 50.0,
     fee_per_trade: float = 0.0,
     model_m: str | None = None,
     open_positions: list | None = None,
@@ -229,9 +229,10 @@ def _check_all_layers(
         return reason
 
     # Compute worst-case risk for this trade: rho_j = contracts * (SL * pv + fee)
+    # D00 point_value is DECIMAL — use directly when already Decimal (Phase C).
+    _pv = point_value if isinstance(point_value, Decimal) else Decimal(str(point_value))
     rho_j = Decimal(contracts) * (
-        Decimal(str(sl_distance)) * Decimal(str(point_value))
-        + Decimal(str(fee_per_trade))
+        Decimal(str(sl_distance)) * _pv + Decimal(str(fee_per_trade))
     )
 
     # Layer 1: Preemptive hard halt — abs(L_t) + rho_j >= c * e * A

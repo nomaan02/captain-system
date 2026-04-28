@@ -23,6 +23,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from decimal import Decimal
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -212,8 +213,9 @@ def register_asset(
             (
                 asset_id, p1_status, p2_status, captain_status,
                 0.0, json.dumps({}), locked_strategy,
-                json.dumps({}), spec["tz"], spec["point_value"], spec["tick_size"],
-                spec["margin"], session_hours, json.dumps(spec["sessions"]),
+                json.dumps({}), spec["tz"],
+                Decimal(str(spec["point_value"])), Decimal(str(spec["tick_size"])),
+                Decimal(str(spec["margin"])), session_hours, json.dumps(spec["sessions"]),
                 f"/captain/data/p1_outputs/{asset_id}/",
                 f"/captain/data/p2_outputs/{asset_id}/" if p2_status != "N/A" else "",
                 json.dumps({}), "CLEAN",

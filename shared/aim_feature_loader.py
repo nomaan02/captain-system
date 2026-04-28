@@ -18,12 +18,22 @@ Data sources:
 import json
 import logging
 from datetime import date, timedelta
+from decimal import Decimal
 
 from shared.aim_compute import z_score
 from shared.questdb_client import get_cursor
 from shared import vix_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _d_price(x: object) -> Decimal | None:
+    """Coerce QuestDB DECIMAL / numeric OHLC cells to Decimal for arithmetic."""
+    if x is None:
+        return None
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
 
 
 def load_replay_features(target_date: date, assets: list[str]):
@@ -145,34 +155,36 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
     rows = list(reversed(rows))
     # Each row: (trade_date, open, high, low, close)
 
-    closes = [r[4] for r in rows]
-    opens = [r[1] for r in rows]
+    closes = [_d_price(r[4]) for r in rows]
 
     # overnight_return_z: (today_open - yesterday_close) / yesterday_close, z-scored
     overnight_returns = []
     for i in range(1, len(rows)):
-        prev_close = rows[i - 1][4]
-        curr_open = rows[i][1]
-        if prev_close and prev_close != 0:
-            overnight_returns.append((curr_open - prev_close) / prev_close)
+        prev_close = _d_price(rows[i - 1][4])
+        curr_open = _d_price(rows[i][1])
+        if prev_close is not None and prev_close != 0 and curr_open is not None:
+            overnight_returns.append(float((curr_open - prev_close) / prev_close))
 
     if overnight_returns:
         f["overnight_return_z"] = z_score(overnight_returns[-1], overnight_returns)
 
     # cross_momentum: sign alignment of 5-day vs 20-day returns
     if len(closes) >= 20:
-        ret_5 = (closes[-1] - closes[-5]) / closes[-5] if closes[-5] != 0 else 0
-        ret_20 = (closes[-1] - closes[-20]) / closes[-20] if closes[-20] != 0 else 0
-        # +1 if aligned, -1 if opposed, 0 if one is flat
-        if ret_5 > 0 and ret_20 > 0:
-            f["cross_momentum"] = 1.0
-        elif ret_5 < 0 and ret_20 < 0:
-            f["cross_momentum"] = 1.0
-        elif (ret_5 > 0 and ret_20 < 0) or (ret_5 < 0 and ret_20 > 0):
-            f["cross_momentum"] = -1.0
+        c1, c5, c20 = closes[-1], closes[-5], closes[-20]
+        if c1 is None or c5 is None or c20 is None:
+            pass
         else:
-            f["cross_momentum"] = 0.0
-
+            ret_5 = (c1 - c5) / c5 if c5 != 0 else Decimal("0")
+            ret_20 = (c1 - c20) / c20 if c20 != 0 else Decimal("0")
+            # +1 if aligned, -1 if opposed, 0 if one is flat
+            if ret_5 > 0 and ret_20 > 0:
+                f["cross_momentum"] = 1.0
+            elif ret_5 < 0 and ret_20 < 0:
+                f["cross_momentum"] = 1.0
+            elif (ret_5 > 0 and ret_20 < 0) or (ret_5 < 0 and ret_20 > 0):
+                f["cross_momentum"] = -1.0
+            else:
+                f["cross_momentum"] = 0.0
     # correlation_z: z-score of 20-day rolling correlation with ES
     if asset_id != "ES":
         cur.execute(
@@ -196,9 +208,9 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
             else:
                 ext_asset_rows = rows  # fall back to original 30 rows
 
-            # Align by trade_date
-            es_by_date = {r[0]: r[1] for r in es_rows}
-            asset_by_date = {r[0]: r[4] for r in ext_asset_rows}
+            # Align by trade_date (DECIMAL closes — divide in Decimal, float at Pearson boundary)
+            es_by_date = {r[0]: _d_price(r[1]) for r in es_rows}
+            asset_by_date = {r[0]: _d_price(r[4]) for r in ext_asset_rows}
             common_dates = sorted(set(es_by_date.keys()) & set(asset_by_date.keys()))
 
             if len(common_dates) >= 20:
@@ -208,9 +220,16 @@ def _load_ohlcv_features(target_date: date, asset_id: str, cur) -> dict:
                     d, d_prev = common_dates[i], common_dates[i - 1]
                     es_prev, es_cur = es_by_date[d_prev], es_by_date[d]
                     a_prev, a_cur = asset_by_date[d_prev], asset_by_date[d]
-                    if es_prev and a_prev and es_prev != 0 and a_prev != 0:
-                        es_rets.append((es_cur - es_prev) / es_prev)
-                        asset_rets.append((a_cur - a_prev) / a_prev)
+                    if (
+                        es_prev is not None
+                        and a_prev is not None
+                        and es_prev != 0
+                        and a_prev != 0
+                        and es_cur is not None
+                        and a_cur is not None
+                    ):
+                        es_rets.append(float((es_cur - es_prev) / es_prev))
+                        asset_rets.append(float((a_cur - a_prev) / a_prev))
 
                 if len(es_rets) >= 20:
                     # Build rolling 20-day correlation series for z-score baseline
@@ -273,7 +292,7 @@ def _load_iv_rv_features(target_date: date, asset_id: str, cur) -> dict:
     )
     close_rows = cur.fetchall()
     if close_rows and len(close_rows) >= 30:
-        closes = [float(r[0]) for r in reversed(close_rows) if r[0] is not None]
+        closes = [float(_d_price(r[0])) for r in reversed(close_rows) if r[0] is not None]
         if len(closes) >= 30:
             import math
             rv_series = []

@@ -40,6 +40,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from decimal import Decimal
 
 # ---------------------------------------------------------------------------
 # Path resolution — works both from project root and from within Docker
@@ -328,8 +329,9 @@ def _ensure_asset_registered(
                 0.0, json.dumps({}), locked_strategy,
                 json.dumps({"current_contract": "ESM6", "next_contract": "ESU6",
                             "next_roll_date": "2026-09-18", "roll_confirmed": False}),
-                "America/New_York", 50.0, 0.25,
-                12650.0, session_hours, json.dumps(["NY"]),
+                "America/New_York",
+                Decimal("50"), Decimal("0.25"),
+                Decimal("12650"), session_hours, json.dumps(["NY"]),
                 "/captain/data/p1_outputs/ES/", "/captain/data/p2_outputs/ES/",
                 json.dumps({}), "CLEAN",
             ),

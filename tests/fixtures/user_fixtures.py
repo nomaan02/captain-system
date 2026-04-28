@@ -6,9 +6,18 @@ from AlgorithmImports import *
 import json
 
 
-def make_user_silo(user_id="primary_user", starting_capital=100_000.0,
-                   total_capital=95_000.0, accounts=None, **overrides):
+from decimal import Decimal
+
+
+def make_user_silo(user_id="primary_user",
+                   starting_capital: Decimal | None = None,
+                   total_capital: Decimal | None = None,
+                   accounts=None, **overrides):
     """Capital silo for a user."""
+    if starting_capital is None:
+        starting_capital = Decimal("100000.00")
+    if total_capital is None:
+        total_capital = Decimal("95000.00")
     if accounts is None:
         accounts = ["acc_eval_1"]
     base = {
@@ -89,8 +98,8 @@ def make_silo_drawdown_blocked(user_id="primary_user"):
     """Silo with >30% drawdown -> should be BLOCKED."""
     return make_user_silo(
         user_id=user_id,
-        starting_capital=100_000.0,
-        total_capital=65_000.0,  # 35% drawdown
+        starting_capital=Decimal("100000.00"),
+        total_capital=Decimal("65000.00"),  # 35% drawdown
     )
 
 

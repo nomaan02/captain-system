@@ -15,6 +15,7 @@ Usage: python scripts/seed_ohlcv_from_qc.py
 import csv
 import os
 import sys
+from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.questdb_client import get_cursor
@@ -44,10 +45,10 @@ def seed_from_combined(csv_path: str) -> int:
             rows_by_asset[asset].append({
                 "asset_id": asset,
                 "trade_date": row["date"].strip().strip("\r"),
-                "open": float(row["open"].strip().strip("\r")),
-                "high": float(row["high"].strip().strip("\r")),
-                "low": float(row["low"].strip().strip("\r")),
-                "close": float(row["close"].strip().strip("\r")),
+                "open": Decimal(str(row["open"].strip().strip("\r"))),
+                "high": Decimal(str(row["high"].strip().strip("\r"))),
+                "low": Decimal(str(row["low"].strip().strip("\r"))),
+                "close": Decimal(str(row["close"].strip().strip("\r"))),
                 "volume": int(float(row["volume"].strip().strip("\r"))),
             })
 
@@ -84,10 +85,10 @@ def seed_from_per_asset(data_dir: str) -> int:
                 rows.append({
                     "asset_id": asset,
                     "trade_date": row["date"].strip().strip("\r"),
-                    "open": float(row["open"].strip().strip("\r")),
-                    "high": float(row["high"].strip().strip("\r")),
-                    "low": float(row["low"].strip().strip("\r")),
-                    "close": float(row["close"].strip().strip("\r")),
+                    "open": Decimal(str(row["open"].strip().strip("\r"))),
+                    "high": Decimal(str(row["high"].strip().strip("\r"))),
+                    "low": Decimal(str(row["low"].strip().strip("\r"))),
+                    "close": Decimal(str(row["close"].strip().strip("\r"))),
                     "volume": int(float(row["volume"].strip().strip("\r"))),
                 })
 

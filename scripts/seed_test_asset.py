@@ -16,6 +16,7 @@ Usage: python scripts/seed_test_asset.py
 import sys
 import os
 import json
+from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.questdb_client import get_cursor
@@ -72,8 +73,9 @@ def seed_es_asset():
                 "ES", "VALIDATED", "VALIDATED", "WARM_UP",
                 0.0, json.dumps({}), locked_strategy,
                 json.dumps({"current_contract": "ESH6", "next_contract": "ESM6", "next_roll_date": "2026-06-19", "roll_confirmed": False}),
-                "America/New_York", 50.0, 0.25,
-                12650.0, session_hours, session_schedule,
+                "America/New_York",
+                Decimal("50"), Decimal("0.25"),
+                Decimal("12650"), session_hours, session_schedule,
                 "/captain/data/p1_outputs/ES/", "/captain/data/p2_outputs/ES/",
                 data_sources, "CLEAN",
             ),
@@ -126,7 +128,7 @@ def seed_capital_silo():
             )""",
             (
                 "primary_user", "ACTIVE", "ADMIN",
-                0.0, 0.0, json.dumps([]),
+                Decimal("0"), Decimal("0"), json.dumps([]),
                 0, 0.10, 0.70, 1.0,
                 json.dumps([]), None,
             ),

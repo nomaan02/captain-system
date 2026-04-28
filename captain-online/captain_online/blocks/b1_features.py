@@ -28,6 +28,7 @@ Features computed per asset at session open:
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
 import numpy as np
@@ -1500,8 +1501,9 @@ def store_daily_ohlcv(asset_id: str):
                     """INSERT INTO p3_d30_daily_ohlcv
                        (asset_id, trade_date, open, high, low, close, volume, ts)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
-                    (asset_id, today_str, float(opn), float(high),
-                     float(low), float(close),
+                    (asset_id, today_str,
+                     Decimal(str(opn)), Decimal(str(high)), Decimal(str(low)),
+                     Decimal(str(close)),
                      int(float(volume or 0))),
                 )
             logger.info("Stored daily OHLCV for %s: close=%.2f", asset_id, float(close))

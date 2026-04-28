@@ -85,9 +85,9 @@ CREATE TABLE IF NOT EXISTS p3_d00_asset_universe (
     locked_strategy STRING,
     roll_calendar STRING,
     exchange_timezone STRING,
-    point_value DOUBLE,
-    tick_size DOUBLE,
-    margin_per_contract DOUBLE,
+    point_value DECIMAL(14, 4),
+    tick_size DECIMAL(14, 4),
+    margin_per_contract DECIMAL(14, 4),
     session_hours STRING,
     session_schedule STRING,
     p1_data_path STRING,
@@ -296,8 +296,8 @@ CREATE TABLE IF NOT EXISTS p3_d16_user_capital_silos (
     user_id SYMBOL,
     status SYMBOL,
     role SYMBOL,
-    starting_capital DOUBLE,
-    total_capital DOUBLE,
+    starting_capital DECIMAL(18, 2),
+    total_capital DECIMAL(18, 2),
     accounts STRING,
     max_simultaneous_positions INT,
     max_portfolio_risk_pct DOUBLE,
@@ -640,10 +640,10 @@ D30_DAILY_OHLCV = """
 CREATE TABLE IF NOT EXISTS p3_d30_daily_ohlcv (
     asset_id SYMBOL,
     trade_date STRING,
-    open DOUBLE,
-    high DOUBLE,
-    low DOUBLE,
-    close DOUBLE,
+    open DECIMAL(14, 4),
+    high DECIMAL(14, 4),
+    low DECIMAL(14, 4),
+    close DECIMAL(14, 4),
     volume LONG,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY YEAR WAL
@@ -982,6 +982,43 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M033_d03_slippage_to_decimal",
         "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN slippage TYPE DECIMAL(18, 4)",
+    ),
+    # Phase C — capital silos, asset constants, daily OHLCV (MONETARY_DECIMAL_MIGRATION_PLAN)
+    (
+        "M034_d16_starting_capital_to_decimal",
+        "ALTER TABLE p3_d16_user_capital_silos ALTER COLUMN starting_capital TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M035_d16_total_capital_to_decimal",
+        "ALTER TABLE p3_d16_user_capital_silos ALTER COLUMN total_capital TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M036_d00_point_value_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN point_value TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M037_d00_tick_size_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN tick_size TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M038_d00_margin_per_contract_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN margin_per_contract TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M039_d30_open_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN open TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M040_d30_high_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN high TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M041_d30_low_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN low TYPE DECIMAL(14, 4)",
+    ),
+    (
+        "M042_d30_close_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN close TYPE DECIMAL(14, 4)",
     ),
 ]
 

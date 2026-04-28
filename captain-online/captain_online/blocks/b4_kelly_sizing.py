@@ -32,6 +32,7 @@ import json
 import logging
 import math
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from shared.statistics import get_ewma_for_regime
@@ -40,6 +41,15 @@ from shared.constants import now_et
 from shared.sizing_helpers import resolve_sizing_sl
 
 logger = logging.getLogger(__name__)
+
+
+def _silo_money(x: object) -> Decimal:
+    """D16 capital amounts from DB or test fixtures (Decimal or legacy float)."""
+    if x is None:
+        return Decimal("0")
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
 
 
 def run_kelly_sizing(
@@ -69,15 +79,16 @@ def run_kelly_sizing(
                 user_id, len(accounts), len(active_assets))
 
     # Step 0: Silo-level drawdown check
-    starting_capital = user_silo.get("starting_capital", 0)
-    total_capital = user_silo.get("total_capital", 0)
+    starting_capital = _silo_money(user_silo.get("starting_capital", 0))
+    total_capital = _silo_money(user_silo.get("total_capital", 0))
     max_silo_dd = _load_system_param("max_silo_drawdown_threshold", 0.30)
+    max_silo_dd_d = Decimal(str(max_silo_dd))
 
     if starting_capital > 0:
-        silo_drawdown_pct = 1 - (total_capital / starting_capital)
-        if silo_drawdown_pct > max_silo_dd:
+        silo_drawdown_pct = Decimal("1") - (total_capital / starting_capital)
+        if silo_drawdown_pct > max_silo_dd_d:
             logger.warning("ON-B4: SILO DRAWDOWN %.1f%% > %.1f%% — user %s BLOCKED",
-                           silo_drawdown_pct * 100, max_silo_dd * 100, user_id)
+                           float(silo_drawdown_pct * 100), float(max_silo_dd_d * 100), user_id)
             # NOTIFY: CRITICAL alert for silo drawdown (P3-PG-24 lines 734-736)
             try:
                 from shared.redis_client import get_redis_client, CH_ALERTS
@@ -86,8 +97,8 @@ def run_kelly_sizing(
                     "type": "SILO_DRAWDOWN",
                     "user_id": user_id,
                     "priority": "CRITICAL",
-                    "message": f"CRITICAL: Silo drawdown at {silo_drawdown_pct:.1%}. All trading halted for user {user_id}.",
-                    "silo_drawdown_pct": silo_drawdown_pct,
+                    "message": f"CRITICAL: Silo drawdown at {float(silo_drawdown_pct):.1%}. All trading halted for user {user_id}.",
+                    "silo_drawdown_pct": float(silo_drawdown_pct),
                     "timestamp": now_et().isoformat(),
                 }))
             except Exception as e:
@@ -162,7 +173,7 @@ def run_kelly_sizing(
         # Step 6: Per-account sizing
         asset_detail = assets_detail.get(u, {})
         strategy = locked_strategies.get(u, {})
-        point_value = asset_detail.get("point_value", 50.0)
+        point_value = float(asset_detail.get("point_value", 50.0))
         # Phase 2 (F-04): unified SL distance via shared helper. Replaces the
         # legacy `strategy.threshold` direct read so B4 and B5C agree on rho_j.
         # Primary path = sl_multiple × historical OR range avg from P3-D29.
@@ -252,7 +263,7 @@ def run_kelly_sizing(
             for ac in accounts
         )
         max_risk_pct = user_silo.get("max_portfolio_risk_pct", 0.10)
-        max_risk = max_risk_pct * total_capital if total_capital > 0 else float("inf")
+        max_risk = float(max_risk_pct) * float(total_capital) if total_capital > 0 else float("inf")
 
         if total_risk > max_risk and total_risk > 0:
             scale_factor = max_risk / total_risk
