@@ -22,11 +22,13 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
 from shared.constants import now_et
+from shared.decimal_json import dumps_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -382,34 +384,36 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
 
     classification = tsm.get("classification", {})
     topstep_opt = tsm.get("topstep_optimisation", False)
-    topstep_state = json.dumps({
+    topstep_state = dumps_decimal({
         "topstep_params": tsm.get("topstep_params", {}),
         "payout_rules": tsm.get("payout_rules", {}),
         "fee_schedule": tsm.get("fee_schedule", {}),
         "scaling_plan": tsm.get("scaling_plan", []),
     })
 
+    sb = tsm.get("starting_balance", 0)
+    cb = tsm.get("current_balance", tsm.get("starting_balance", 0))
     params = (
         account_id,
         tsm.get("user_id", ""),
         tsm.get("name", ""),
         json.dumps(classification),
-        tsm.get("starting_balance", 0),
-        tsm.get("current_balance", tsm.get("starting_balance", 0)),
-        tsm.get("max_drawdown_limit", 0),
-        tsm.get("max_daily_loss"),
-        0,  # daily_loss_used starts at 0
-        tsm.get("profit_target"),
+        Decimal(str(sb)),
+        Decimal(str(cb)),
+        Decimal(str(tsm.get("max_drawdown_limit", 0))),
+        Decimal(str(tsm.get("max_daily_loss"))) if tsm.get("max_daily_loss") is not None else None,
+        Decimal("0"),
+        Decimal(str(tsm.get("profit_target"))) if tsm.get("profit_target") is not None else None,
         tsm.get("max_contracts", 0),
-        tsm.get("commission_per_contract", 0),
+        Decimal(str(tsm.get("commission_per_contract", 0))),
         tsm.get("overnight_allowed", False),
         json.dumps(tsm.get("trading_hours", "")) if isinstance(tsm.get("trading_hours"), dict) else tsm.get("trading_hours", ""),
         classification.get("risk_goal", ""),
         topstep_opt,
         tsm.get("scaling_plan_active", False),
         topstep_state,
-        json.dumps(tsm.get("fee_schedule", {})),
-        json.dumps(tsm.get("payout_rules", {})),
+        dumps_decimal(tsm.get("fee_schedule", {})),
+        dumps_decimal(tsm.get("payout_rules", {})),
         now_et().isoformat(),
     )
 

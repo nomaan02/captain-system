@@ -63,6 +63,8 @@ sys.modules["shared.account_lifecycle"] = _lifecycle_module
 
 import pytest
 
+from decimal import Decimal
+
 from shared.account_lifecycle import (
     # Constants
     ACCOUNT_LOSS_FEE,
@@ -184,7 +186,7 @@ class TestTopstepEvalAccount:
     def test_pass_not_yet_one_cent_short(self):
         """Balance one cent below the profit target is not a pass."""
         acct = TopstepEvalAccount()
-        below_target = EVAL_STARTING_BALANCE + EVAL_PROFIT_TARGET - 0.01  # 158_999.99
+        below_target = EVAL_STARTING_BALANCE + EVAL_PROFIT_TARGET - Decimal("0.01")
         assert acct.check_pass(below_target) is False
 
     def test_pass_not_yet_round_number(self):
@@ -216,8 +218,8 @@ class TestTopstepEvalAccount:
 
     def test_custom_starting_balance(self):
         """Constructor accepts a custom starting balance."""
-        acct = TopstepEvalAccount(starting_balance=200_000.0)
-        assert acct.starting_balance == 200_000.0
+        acct = TopstepEvalAccount(starting_balance=Decimal("200000"))
+        assert acct.starting_balance == Decimal("200000")
         # Pass threshold shifts with the custom balance
         assert acct.check_pass(209_000.0) is True
         assert acct.check_pass(208_999.0) is False
@@ -294,7 +296,7 @@ class TestTopstepXFAAccount:
     def test_payout_commission_rate(self):
         """XFA payout commission is 10%."""
         acct = TopstepXFAAccount()
-        assert acct.payout_commission_rate == pytest.approx(0.10)
+        assert acct.payout_commission_rate == Decimal("0.10")
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +678,7 @@ class TestMultiStageLifecycle:
         assert acct.current_stage == TopstepStage.LIVE
 
         # Manually set tradable balance below threshold to simulate scenario
-        acct.tradable_balance = 8_000.0
+        acct.tradable_balance = Decimal("8000")
 
         # Loss of $2,000 should breach at low balance
         trade = {"day": "2026-05-01", "pnl": -2_000.0, "contracts": 1,
@@ -729,13 +731,13 @@ class TestMultiStageLifecycle:
         trades = make_trades(live_pnls, day_prefix="2026-05-")
         _run_daily(acct, trades)
 
-        live_pnl_total = sum(live_pnls)  # $9,000 added to tradable during trade processing
-        expected_tradable = initial_tradable + live_pnl_total + per_block
+        live_pnl_total = sum(live_pnls)
+        expected_tradable = initial_tradable + Decimal(str(live_pnl_total)) + per_block
         expected_reserve = initial_reserve - per_block
 
         assert acct.unlocks_remaining == initial_unlocks - 1
-        assert acct.tradable_balance == pytest.approx(expected_tradable)
-        assert acct.reserve_balance == pytest.approx(expected_reserve)
+        assert acct.tradable_balance == expected_tradable
+        assert acct.reserve_balance == expected_reserve
 
     def test_live_unlock_event_logged(self):
         """A CAPITAL_UNLOCK lifecycle event is recorded after an unlock."""
@@ -771,7 +773,7 @@ class TestMultiStageLifecycle:
 
     def test_failure_fee_matches_constant(self):
         """Fee constant is exactly $226.60."""
-        assert ACCOUNT_LOSS_FEE == pytest.approx(226.60)
+        assert ACCOUNT_LOSS_FEE == Decimal("226.60")
 
     def test_failure_increments_reset_counter(self):
         """Each failure increments total_resets."""

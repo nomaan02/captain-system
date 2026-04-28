@@ -23,6 +23,7 @@ import logging
 import math
 import os
 from datetime import datetime, timedelta, date, time as dtime, timezone
+from decimal import Decimal
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -1071,13 +1072,15 @@ def compute_contracts(
             cb_l0_blocked = (final == 0)
 
     # Step 12: CB L1 — Preemptive halt: abs(L_t) + rho_j >= c * e * A
-    l_t = abs(config.get("_intraday_cumulative_pnl", 0.0))
-    l_halt = c_param * e_param * user_capital
-    rho_j = final * (fallback_risk + fee_per_trade)
+    l_t = Decimal(str(abs(config.get("_intraday_cumulative_pnl", 0.0))))
+    l_halt = Decimal(str(c_param)) * Decimal(str(e_param)) * Decimal(str(user_capital))
+    rho_j = Decimal(final) * (Decimal(str(fallback_risk)) + Decimal(str(fee_per_trade)))
     cb_blocked = False
     if cb_enabled and final > 0 and (l_t + rho_j) >= l_halt:
         cb_blocked = True
-        while final > 0 and (l_t + final * (fallback_risk + fee_per_trade)) >= l_halt:
+        while final > 0 and (
+            l_t + Decimal(final) * (Decimal(str(fallback_risk)) + Decimal(str(fee_per_trade)))
+        ) >= l_halt:
             final -= 1
         final = max(final, 0)
 
@@ -1110,8 +1113,9 @@ def compute_contracts(
             # Significance gate: require p<0.05 AND n>=100
             if p_val > 0.05 or n_obs < 100:
                 beta_b = 0.0
-            l_b = config.get("_intraday_basket_pnl", {}).get(_model_m, 0.0)
-            mu_b = r_bar + beta_b * l_b
+            l_b_raw = config.get("_intraday_basket_pnl", {}).get(_model_m, 0.0)
+            l_b = l_b_raw if isinstance(l_b_raw, Decimal) else Decimal(str(l_b_raw))
+            mu_b = Decimal(str(r_bar)) + Decimal(str(beta_b)) * l_b
             if mu_b <= 0 and beta_b > 0:
                 cb_l3_blocked = True
                 final = 0
@@ -1124,9 +1128,10 @@ def compute_contracts(
         rho_bar = bp.get("rho_bar", 0.0)
         lambda_threshold = topstep_params_cb.get("lambda", 0.0)
         if sigma_cb > 0:
-            denom = sigma_cb * math.sqrt(1.0 + 2.0 * n_t * max(rho_bar, 0.0))
-            S = mu_b / denom if denom > 0 else 0.0
-            if S <= lambda_threshold:
+            sqrt_term = math.sqrt(1.0 + 2.0 * n_t * max(rho_bar, 0.0))
+            denom = Decimal(str(sigma_cb)) * Decimal(str(sqrt_term))
+            S = mu_b / denom if denom > 0 else Decimal("0")
+            if S <= Decimal(str(lambda_threshold)):
                 cb_l4_blocked = True
                 final = 0
 

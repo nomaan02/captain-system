@@ -30,6 +30,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -39,7 +40,8 @@ from shared.constants import TRADE_OUTCOME_VALUES, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
-from shared.json_helpers import parse_json
+from shared.json_helpers import parse_json, parse_json_decimal
+from shared.decimal_json import dumps_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -249,20 +251,21 @@ def resolve_commission(account_id: str, contracts: int, asset_id: str, tsm_confi
     tsm = tsm_configs.get(account_id, {})
 
     # Source 2: fee_schedule.fees_by_instrument (V3 priority)
-    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
             rt = fees_by_instrument[asset_id].get("round_turn", 0)
-            return rt * contracts
+            v = Decimal(str(rt)) * Decimal(contracts)
+            return float(v)
         default_rt = fee_schedule.get("default_round_turn", 0)
-        if default_rt > 0:
-            return default_rt * contracts
+        if default_rt and Decimal(str(default_rt)) > 0:
+            return float(Decimal(str(default_rt)) * Decimal(contracts))
 
     # Source 3: commission_per_contract (original spec)
     cpc = tsm.get("commission_per_contract", 0)
-    if cpc > 0:
-        return cpc * contracts * 2  # round trip
+    if cpc and Decimal(str(cpc)) > 0:
+        return float(Decimal(str(cpc)) * Decimal(contracts) * Decimal(2))
 
     # Source 4: Notify user
     logger.warning("ON-B7: Commission data missing for account %s — notifying user", account_id)
@@ -274,15 +277,19 @@ def get_expected_fee(tsm: dict, asset_id: str) -> float:
 
     Same logic as in B4 — factored here for shared use.
     """
-    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
-            return fees_by_instrument[asset_id].get("round_turn", 0.0)
-        return fee_schedule.get("default_round_turn", 0.0)
+            rt = fees_by_instrument[asset_id].get("round_turn", 0.0)
+            return float(Decimal(str(rt)))
+        drt = fee_schedule.get("default_round_turn", 0.0)
+        return float(Decimal(str(drt)))
 
     cpc = tsm.get("commission_per_contract", 0.0)
-    return cpc * 2 if cpc else 0.0
+    if cpc and Decimal(str(cpc)) > 0:
+        return float(Decimal(str(cpc)) * Decimal(2))
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -355,20 +362,24 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
 
         # ── Compute new states ──
         # D16 capital
+        net_dec = Decimal(str(net_pnl))
         if d16_row:
-            new_capital = (d16_row[3] or 0) + net_pnl
+            new_capital = Decimal(str(d16_row[3] or 0)) + net_dec
             d16_accounts = d16_row[4]
         else:
-            new_capital = net_pnl
+            new_capital = net_dec
             d16_accounts = None
 
         # D23 circuit breaker
-        l_t = (d23_row[0] or 0.0) + net_pnl if d23_row else net_pnl
+        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec
         n_t = (d23_row[1] or 0) + 1 if d23_row else 1
-        l_b = parse_json(d23_row[2], {}) if d23_row else {}
+        l_b = parse_json_decimal(d23_row[2], {}) if d23_row else {}
         n_b = parse_json(d23_row[3], {}) if d23_row else {}
         if model_m:
-            l_b[model_m] = l_b.get(model_m, 0.0) + net_pnl
+            prev = l_b.get(model_m, Decimal("0"))
+            if not isinstance(prev, Decimal):
+                prev = Decimal(str(prev))
+            l_b[model_m] = prev + net_dec
             n_b[model_m] = n_b.get(model_m, 0) + 1
 
         # ── Write both back-to-back ──
@@ -390,7 +401,7 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
             """INSERT INTO p3_d23_circuit_breaker_intraday
                (account_id, l_t, n_t, l_b, n_b, last_updated)
                VALUES (%s, %s, %s, %s, %s, now())""",
-            (account_id, l_t, n_t, json.dumps(l_b), json.dumps(n_b)),
+            (account_id, l_t, n_t, dumps_decimal(l_b), json.dumps(n_b)),
         )
 
     logger.debug("Capital+CB updated: user=%s account=%s pnl=%.2f", user_id, account_id, net_pnl)

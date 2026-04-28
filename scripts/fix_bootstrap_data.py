@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 import os
+from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, "/app")
@@ -174,15 +175,18 @@ def fix_tsm_daily_loss(dry_run=False):
                 last_updated
             ) VALUES (
                 %s, %s, %s, %s,
-                %s, %s, 0.0, 0.0,
                 %s, %s, %s, %s,
-                0.0, %s, false, 1.5, 'PASS_EVAL', true, false, 0, now()
+                %s, %s, %s, %s,
+                %s, %s, false, 1.5, 'PASS_EVAL', true, false, 0, now()
             )""",
             (
                 ACCOUNT_ID, USER_ID, limits["name"],
                 _json.dumps({"provider": "TopstepX", "category": "PROP_EVAL", "stage": "STAGE_1", "risk_goal": "PASS_EVAL"}),
-                STARTING_CAPITAL, STARTING_CAPITAL,
-                limits["profit_target"], limits["max_drawdown"], limits["daily_loss"], limits["max_contracts"],
+                Decimal(str(STARTING_CAPITAL)), Decimal(str(STARTING_CAPITAL)),
+                Decimal("0"), Decimal("0"),
+                Decimal(str(limits["profit_target"])), Decimal(str(limits["max_drawdown"])),
+                Decimal(str(limits["daily_loss"])), limits["max_contracts"],
+                Decimal("0"),
                 _json.dumps([]),
             ),
         )
