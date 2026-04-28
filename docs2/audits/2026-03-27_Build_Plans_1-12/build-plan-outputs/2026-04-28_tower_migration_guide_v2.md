@@ -43,7 +43,9 @@ Almost every script in this guide runs inside `captain-offline` with `PYTHONPATH
 
 ```fish
 function cap-run
-    docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-offline python /captain/scripts/$argv
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-offline python /captain/scripts/$script $rest
 end
 ```
 
@@ -101,6 +103,7 @@ bash scripts/captain-update.sh
 ```
 
 This script does **all of the following** in one shot:
+
 1. `git pull origin main`
 2. Warns about new vars in `.env.template`
 3. Syncs `config/` into the three service build contexts
@@ -124,11 +127,13 @@ bash scripts/captain-update.sh --skip-pull
 
 ### 2.3 What to watch for in the script output
 
-| Message | Action |
-| --- | --- |
-| `New variables found in .env.template` | Open `.env.template`, copy any new keys into `.env`, then `dco up -d` to restart |
-| `DATA INTEGRITY CHECK FAILED` | **Do not trade.** Restore from `backups/questdb/questdb-pre-update-*.tar.gz` per the script's printed instructions |
-| `init_questdb.py [FAIL]` lines | See §7.3 |
+
+| Message                                | Action                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `New variables found in .env.template` | Open `.env.template`, copy any new keys into `.env`, then `dco up -d` to restart                                   |
+| `DATA INTEGRITY CHECK FAILED`          | **Do not trade.** Restore from `backups/questdb/questdb-pre-update-*.tar.gz` per the script's printed instructions |
+| `init_questdb.py [FAIL]` lines         | See §7.3                                                                                                           |
+
 
 ---
 
@@ -305,16 +310,16 @@ The `tests/` directory is mounted into `captain-offline` at `/app/tests` via the
 
 Tick all on **each** tower:
 
-- [ ] `git rev-parse HEAD` matches the intended commit
-- [ ] `git remote -v` shows the right remote for this tower
-- [ ] `bash scripts/captain-update.sh` finished without `DATA INTEGRITY CHECK FAILED`
-- [ ] `.env` parity is `0` on Tower A, `1` on Tower B
-- [ ] D03 backfill run (only if legacy rows existed)
-- [ ] `verify_schema_drift.py` exit 0
-- [ ] `verify_questdb_state.py` reviewed — no unexpected CRITICAL
-- [ ] Fast pytest gate green (§5.3)
-- [ ] Live schema pytest green (§5.4)
-- [ ] One log line tailed per service: `dco logs --tail=20 captain-offline captain-online captain-command`
+- `git rev-parse HEAD` matches the intended commit
+- `git remote -v` shows the right remote for this tower
+- `bash scripts/captain-update.sh` finished without `DATA INTEGRITY CHECK FAILED`
+- `.env` parity is `0` on Tower A, `1` on Tower B
+- D03 backfill run (only if legacy rows existed)
+- `verify_schema_drift.py` exit 0
+- `verify_questdb_state.py` reviewed — no unexpected CRITICAL
+- Fast pytest gate green (§5.3)
+- Live schema pytest green (§5.4)
+- One log line tailed per service: `dco logs --tail=20 captain-offline captain-online captain-command`
 
 When **both towers** show the same `git rev-parse HEAD` and pass everything above, the rollout is aligned.
 
@@ -351,17 +356,17 @@ Use the `dco` / `cap-run` helpers from §0 to make this impossible to forget.
 
 1. Read the failing migration's SQL — it's in `shared/canonical_schemas.py` under `CANONICAL_MIGRATIONS`.
 2. Check whether the column already exists with a different type:
-   ```fish
+  ```fish
    cap-run verify_schema_drift.py
-   ```
+  ```
 3. If the table is broken beyond repair, restore the latest backup:
-   ```fish
+  ```fish
    ls -lah backups/questdb/
    docker compose -f docker-compose.yml -f docker-compose.local.yml down
    tar -xzf backups/questdb/questdb-pre-update-<TIMESTAMP>.tar.gz -C questdb/
    docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
    cap-run init_questdb.py
-   ```
+  ```
 
 ### 7.4 Pytest: `ModuleNotFoundError: No module named 'shared'` (or `captain_offline`, etc.)
 
@@ -377,12 +382,14 @@ python -c "import shared, captain_offline, captain_online, captain_command; prin
 These ship via the service `requirements.txt` files. Three options:
 
 **Option A — install into host venv:**
+
 ```fish
 source .venv/bin/activate.fish
 pip install scipy hmmlearn pysignalr "psycopg2-binary>=2.9"
 ```
 
 **Option B — split venvs per service** (avoids version conflicts):
+
 ```fish
 python3 -m venv .venv-offline
 source .venv-offline/bin/activate.fish
@@ -446,6 +453,7 @@ Confirm the rows actually have NULL/empty (not whitespace) and that QuestDB DEDU
 ### 7.12 `verify_schema_drift.py` flags an unexpected column
 
 Either:
+
 - Code defines a column that wasn't migrated → run `cap-run init_questdb.py` again.
 - Live DB has an extra column from a prior experiment → drop it manually via QuestDB console, or accept as benign and document.
 
@@ -453,21 +461,23 @@ Either:
 
 ## 8. Script catalog (most-used)
 
-| Script | Purpose |
-| --- | --- |
-| `init_questdb.py` | Apply `CANONICAL_DDLS` + `CANONICAL_MIGRATIONS` (idempotent) |
-| `init_all.py` | Full Phase-1 init: tables + SQLite journals + baseline seeds |
-| `backfill_d03_signal_ids.py` | Phase 7: assign `LEGACY-*` to old D03 rows |
-| `compact_questdb_tables.py` | Compact D01/D02/D05/D12/D25 |
-| `verify_schema_drift.py` | Diff live DB vs canonical DDLs (CRITICAL gate) |
-| `verify_questdb_state.py` | Full health audit (counts, freshness, liveness) |
-| `verify_questdb.py` | Older smoke checklist for major P3 tables |
-| `health_smoke_test.py` | Connectivity + read + dedup scratch write |
-| `seed_all_assets.py` | Full multi-asset seed (called by `captain-update.sh`) |
-| `bootstrap_production.py` | Populate D00/D16/D02/D25 from env-driven account/silo config |
-| `paper_trader.py` | Simulated trading loop (writes D03 with `signal_id`/`model_m`) |
-| `captain-update.sh` | Pull → backup → rebuild → init → seed → integrity check |
-| `captain-setup.sh` | Interactive first-machine setup |
+
+| Script                       | Purpose                                                        |
+| ---------------------------- | -------------------------------------------------------------- |
+| `init_questdb.py`            | Apply `CANONICAL_DDLS` + `CANONICAL_MIGRATIONS` (idempotent)   |
+| `init_all.py`                | Full Phase-1 init: tables + SQLite journals + baseline seeds   |
+| `backfill_d03_signal_ids.py` | Phase 7: assign `LEGACY-*` to old D03 rows                     |
+| `compact_questdb_tables.py`  | Compact D01/D02/D05/D12/D25                                    |
+| `verify_schema_drift.py`     | Diff live DB vs canonical DDLs (CRITICAL gate)                 |
+| `verify_questdb_state.py`    | Full health audit (counts, freshness, liveness)                |
+| `verify_questdb.py`          | Older smoke checklist for major P3 tables                      |
+| `health_smoke_test.py`       | Connectivity + read + dedup scratch write                      |
+| `seed_all_assets.py`         | Full multi-asset seed (called by `captain-update.sh`)          |
+| `bootstrap_production.py`    | Populate D00/D16/D02/D25 from env-driven account/silo config   |
+| `paper_trader.py`            | Simulated trading loop (writes D03 with `signal_id`/`model_m`) |
+| `captain-update.sh`          | Pull → backup → rebuild → init → seed → integrity check        |
+| `captain-setup.sh`           | Interactive first-machine setup                                |
+
 
 Full list: see the original guide §I or `ls scripts/`.
 
@@ -480,3 +490,4 @@ Full list: see the original guide §I or `ls scripts/`.
 - Canonical DDL/migrations: `shared/canonical_schemas.py`
 - QuestDB env vars: `shared/questdb_client.py`
 - Original (verbose) guide: `2026-04-28_tower_migration_and_implementation_guide.md` (this folder)
+
