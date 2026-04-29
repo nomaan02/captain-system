@@ -1,11 +1,11 @@
 # Monetary Decimal Migration — Merge validation (Linux + fish)
 
-**Purpose:** Step-by-step **fish shell** commands to pull the migration work, satisfy dependencies, run schema checks and tests, and interpret **exact outputs** before you merge to **`main`** and consider the migration **finalised**.
+**Purpose:** Step-by-step **fish shell** commands to pull the migration work, satisfy dependencies, run schema checks and tests, and interpret **exact outputs** before you merge to `**main`** and consider the migration **finalised**.
 
 **Related guides:**
 
 - Tower operations (compose, `cap-run`, host venv, troubleshooting):  
-  `docs2/audits/2026-03-27_Build_Plans_1-12/build-plan-outputs/2026-04-28_tower_migration_guide_v2.md`
+`docs2/audits/2026-03-27_Build_Plans_1-12/build-plan-outputs/2026-04-28_tower_migration_guide_v2.md`
 - Migration plan: `MONETARY_DECIMAL_MIGRATION_PLAN.md`
 - Phase reports: `MONETARY_DECIMAL_PHASE_A_REPORT.md`, `MONETARY_DECIMAL_PHASE_B_REPORT.md`, `MONETARY_DECIMAL_PHASE_C_REPORT.md`
 
@@ -66,7 +66,7 @@ git stash push -m "pre-decimal-merge local"
 cd ~/captain-system
 git fetch origin
 git checkout migration/decimal-phase-c
-git pull origin migration/decimal-phase-c
+git checkout migration/decimal-phase-c
 ```
 
 **If your GitHub remote is named `multi-user` instead of `origin`:**
@@ -86,13 +86,13 @@ git rev-parse HEAD           # copy this SHA — Tower B must match before merge
 git log --oneline -15        # expect migration(decimal) commits for phases A/B/C
 ```
 
-**Pass criteria:** Branch name is **`migration/decimal-phase-c`**, and **`git rev-parse HEAD`** is the **same** on every machine that will vote on the merge.
+**Pass criteria:** Branch name is `**migration/decimal-phase-c`**, and `**git rev-parse HEAD**` is the **same** on every machine that will vote on the merge.
 
 ---
 
 ## 4. Bring up Docker + apply schema (QuestDB must see M010–M042)
 
-Migrations live in `shared/canonical_schemas.py` as `CANONICAL_MIGRATIONS`. They are applied by **`init_questdb.py`** (idempotent).
+Migrations live in `shared/canonical_schemas.py` as `CANONICAL_MIGRATIONS`. They are applied by `**init_questdb.py`** (idempotent).
 
 ### 4.1 Full stack update (recommended on towers)
 
@@ -169,7 +169,7 @@ python3 -m venv .venv
 source .venv/bin/activate.fish
 ```
 
-**Fish note:** Use **`activate.fish`**, not `source .venv/bin/activate` (bash). If you see `command not found: source`, you are not in fish.
+**Fish note:** Use `**activate.fish`**, not `source .venv/bin/activate` (bash). If you see `command not found: source`, you are not in fish.
 
 ```fish
 pip install --upgrade pip
@@ -179,10 +179,10 @@ pip install -r captain-command/requirements.txt
 pip install pytest pytest-asyncio psycopg2-binary
 ```
 
-If **`pip install` fails** due to conflicting pins between services, use tower guide **§7.5**:
+If `**pip install` fails** due to conflicting pins between services, use tower guide **§7.5**:
 
 - **Option A:** Install missing wheels explicitly, e.g.  
-  `pip install scipy hmmlearn pysignalr`
+`pip install scipy hmmlearn pysignalr`
 - **Option B:** Separate venvs per service (`/.venv-offline`, etc.).
 - **Option C:** Skip host venv and run pytest **inside** `captain-offline` (§6).
 
@@ -209,7 +209,7 @@ python -c "import shared; import captain_online; import captain_offline; import 
 
 **If `ModuleNotFoundError: No module named 'shared'`:** `PYTHONPATH` is wrong or venv not activated — re-run §5.2.
 
-**If QuestDB connection errors during tests:** ensure Docker publishes **8812** to the host and questdb is `Up` (`dco ps`). For pytest **inside** the container, use **`QUESTDB_HOST=questdb`** (service name), not `127.0.0.1` (tower guide §7.6 / §5.6).
+**If QuestDB connection errors during tests:** ensure Docker publishes **8812** to the host and questdb is `Up` (`dco ps`). For pytest **inside** the container, use `**QUESTDB_HOST=questdb`** (service name), not `127.0.0.1` (tower guide §7.6 / §5.6).
 
 ---
 
@@ -287,10 +287,12 @@ Adjust the test path / list as needed. Confirm tests are mounted:
 
 ### 7.1 `verify_schema_drift.py`
 
-| Check | Pass | Fail |
-|-------|------|------|
+
+| Check     | Pass                                                       | Fail                            |
+| --------- | ---------------------------------------------------------- | ------------------------------- |
 | Last line | `PASS: all <N> canonical tables match live QuestDB schema` | `FAIL:` or `DRIFT` or `MISSING` |
-| Exit code | `0` | non-zero |
+| Exit code | `0`                                                        | non-zero                        |
+
 
 ```fish
 cap-run verify_schema_drift.py; echo $status
@@ -298,16 +300,20 @@ cap-run verify_schema_drift.py; echo $status
 
 ### 7.2 `init_questdb.py`
 
-| Check | Pass | Fail |
-|-------|------|------|
+
+| Check   | Pass                           | Fail                              |
+| ------- | ------------------------------ | --------------------------------- |
 | Process | Completes, no Python traceback | `[FAIL]` on migration / traceback |
+
 
 ### 7.3 `pytest` (host or container)
 
-| Check | Pass | Fail |
-|-------|------|------|
+
+| Check        | Pass                                           | Fail                             |
+| ------------ | ---------------------------------------------- | -------------------------------- |
 | Summary line | `=== ... passed ... in ...` (e.g. `50 passed`) | `FAILED`, `ERROR`, exit non-zero |
-| Exit code | `0` | `1`–`5` etc. |
+| Exit code    | `0`                                            | `1`–`5` etc.                     |
+
 
 Example passing tail:
 
@@ -329,7 +335,7 @@ SHOW COLUMNS FROM p3_d00_asset_universe;
 SHOW COLUMNS FROM p3_d30_daily_ohlcv;
 ```
 
-**Pass criteria (examples):** Monetary columns show **`DECIMAL`** with expected precision (e.g. `DECIMAL(18,2)`, `DECIMAL(14,4)`) per `MONETARY_DECIMAL_MIGRATION_PLAN.md` matrices — not legacy `DOUBLE` for those fields.
+**Pass criteria (examples):** Monetary columns show `**DECIMAL`** with expected precision (e.g. `DECIMAL(18,2)`, `DECIMAL(14,4)`) per `MONETARY_DECIMAL_MIGRATION_PLAN.md` matrices — not legacy `DOUBLE` for those fields.
 
 ---
 
@@ -337,13 +343,15 @@ SHOW COLUMNS FROM p3_d30_daily_ohlcv;
 
 Per tower guide §6:
 
-| Step | Tower A | Tower B |
-|------|---------|---------|
-| Same branch | `migration/decimal-phase-c` | same |
-| Same SHA | `git rev-parse HEAD` | **must match** A |
-| Drift | `cap-run verify_schema_drift.py` → PASS | same |
-| State audit | `cap-run verify_questdb_state.py` reviewed | same |
-| Tests | At minimum §6.1 **B** + **C** + drift gate; add **A** for full regression | same |
+
+| Step        | Tower A                                                                   | Tower B          |
+| ----------- | ------------------------------------------------------------------------- | ---------------- |
+| Same branch | `migration/decimal-phase-c`                                               | same             |
+| Same SHA    | `git rev-parse HEAD`                                                      | **must match** A |
+| Drift       | `cap-run verify_schema_drift.py` → PASS                                   | same             |
+| State audit | `cap-run verify_questdb_state.py` reviewed                                | same             |
+| Tests       | At minimum §6.1 **B** + **C** + drift gate; add **A** for full regression | same             |
+
 
 When **both** towers show the **same `git rev-parse HEAD`** and all chosen gates pass, the rollout is aligned and you may proceed with the **human** merge approval process.
 
@@ -363,11 +371,11 @@ git merge --no-ff migration/decimal-phase-c
 git push origin main
 ```
 
-4. After merge, tag or document the **merge commit SHA** for production rollouts.
+1. After merge, tag or document the **merge commit SHA** for production rollouts.
 
 **Do not merge** if any of the following are true:
 
-- `verify_schema_drift.py` does not print **`PASS: all ...`** or exits non-zero.
+- `verify_schema_drift.py` does not print `**PASS: all ...`** or exits non-zero.
 - `init_questdb.py` fails on **M010–M042** (or any migration) against a DB that should be migratable.
 - Required pytest suites show **FAILED** / **ERROR**.
 - Towers **A** and **B** are not on the **same** commit for the validated branch.
@@ -376,24 +384,28 @@ git push origin main
 
 ## 10. Quick troubleshooting pointer
 
-| Symptom | See |
-|---------|-----|
-| `/captain/scripts/...` not found | Tower guide §7.2 — use **both** compose `-f` files |
-| `shared` import error on host | §5.2 `PYTHONPATH` + `activate.fish` |
-| `scipy` / `psycopg2` missing | §5.1 and tower guide §7.5 |
-| QuestDB connection refused on host tests | §5.2 hosts/ports; use `questdb` inside container |
+
+| Symptom                                        | See                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `/captain/scripts/...` not found               | Tower guide §7.2 — use **both** compose `-f` files            |
+| `shared` import error on host                  | §5.2 `PYTHONPATH` + `activate.fish`                           |
+| `scipy` / `psycopg2` missing                   | §5.1 and tower guide §7.5                                     |
+| QuestDB connection refused on host tests       | §5.2 hosts/ports; use `questdb` inside container              |
 | `test_account_lifecycle.py` poisons collection | tower guide §7.7 — `--ignore=tests/test_account_lifecycle.py` |
-| Migration `[FAIL]` | tower guide §7.3 |
+| Migration `[FAIL]`                             | tower guide §7.3                                              |
+
 
 ---
 
 ## 11. Document history
 
-| Item | Value |
-|------|--------|
-| Created for | Monetary DECIMAL migration merge validation |
+
+| Item                  | Value                                         |
+| --------------------- | --------------------------------------------- |
+| Created for           | Monetary DECIMAL migration merge validation   |
 | Fish + tower patterns | From `2026-04-28_tower_migration_guide_v2.md` |
-| Branch | `migration/decimal-phase-c` (integration) |
+| Branch                | `migration/decimal-phase-c` (integration)     |
+
 
 ---
 

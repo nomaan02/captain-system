@@ -45,10 +45,10 @@ def seed_from_combined(csv_path: str) -> int:
             rows_by_asset[asset].append({
                 "asset_id": asset,
                 "trade_date": row["date"].strip().strip("\r"),
-                "open": str(Decimal(str(row["open"].strip().strip("\r")))),
-                "high": str(Decimal(str(row["high"].strip().strip("\r")))),
-                "low": str(Decimal(str(row["low"].strip().strip("\r")))),
-                "close": str(Decimal(str(row["close"].strip().strip("\r")))),
+                "open": Decimal(str(row["open"].strip().strip("\r"))),
+                "high": Decimal(str(row["high"].strip().strip("\r"))),
+                "low": Decimal(str(row["low"].strip().strip("\r"))),
+                "close": Decimal(str(row["close"].strip().strip("\r"))),
                 "volume": int(float(row["volume"].strip().strip("\r"))),
             })
 
@@ -85,10 +85,10 @@ def seed_from_per_asset(data_dir: str) -> int:
                 rows.append({
                     "asset_id": asset,
                     "trade_date": row["date"].strip().strip("\r"),
-                    "open": str(Decimal(str(row["open"].strip().strip("\r")))),
-                    "high": str(Decimal(str(row["high"].strip().strip("\r")))),
-                    "low": str(Decimal(str(row["low"].strip().strip("\r")))),
-                    "close": str(Decimal(str(row["close"].strip().strip("\r")))),
+                    "open": Decimal(str(row["open"].strip().strip("\r"))),
+                    "high": Decimal(str(row["high"].strip().strip("\r"))),
+                    "low": Decimal(str(row["low"].strip().strip("\r"))),
+                    "close": Decimal(str(row["close"].strip().strip("\r"))),
                     "volume": int(float(row["volume"].strip().strip("\r"))),
                 })
 

@@ -182,11 +182,11 @@ def fix_tsm_daily_loss(dry_run=False):
             (
                 ACCOUNT_ID, USER_ID, limits["name"],
                 _json.dumps({"provider": "TopstepX", "category": "PROP_EVAL", "stage": "STAGE_1", "risk_goal": "PASS_EVAL"}),
-                str(Decimal(str(STARTING_CAPITAL))), str(Decimal(str(STARTING_CAPITAL))),
-                str(Decimal("0")), str(Decimal("0")),
-                str(Decimal(str(limits["profit_target"]))), str(Decimal(str(limits["max_drawdown"]))),
-                str(Decimal(str(limits["daily_loss"]))), limits["max_contracts"],
-                str(Decimal("0")),
+                Decimal(str(STARTING_CAPITAL)), Decimal(str(STARTING_CAPITAL)),
+                Decimal("0"), Decimal("0"),
+                Decimal(str(limits["profit_target"])), Decimal(str(limits["max_drawdown"])),
+                Decimal(str(limits["daily_loss"])), limits["max_contracts"],
+                Decimal("0"),
                 _json.dumps([]),
             ),
         )

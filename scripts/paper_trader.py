@@ -405,7 +405,7 @@ class PaperTrader:
                     (
                         pos.trade_id, pos.signal_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
-                        str(Decimal(str(pos.entry_price))), pos.contracts, "OPEN",
+                        Decimal(str(pos.entry_price)), pos.contracts, "OPEN",
                         pos.entry_time.isoformat(), 1,  # session 1 = NY
                         model_m,
                     ),
@@ -417,9 +417,9 @@ class PaperTrader:
                          net_pnl: float, commission: float):
         """Insert closed trade into P3-D03."""
         model_m = _get_locked_m("ES")
-        gross = str(Decimal(str(round(net_pnl + commission, 2))))
-        comm_d = str(Decimal(str(round(commission, 2))))
-        net_d = str(Decimal(str(round(net_pnl, 2))))
+        gross = Decimal(str(round(net_pnl + commission, 2)))
+        comm_d = Decimal(str(round(commission, 2)))
+        net_d = Decimal(str(round(net_pnl, 2)))
         try:
             with get_cursor() as cur:
                 cur.execute(
@@ -432,7 +432,7 @@ class PaperTrader:
                     (
                         pos.trade_id, pos.signal_id, USER_ID, ACCOUNT_ID, "ES",
                         pos.direction,  # INT: 1 or -1
-                        str(Decimal(str(pos.entry_price))), str(Decimal(str(exit_price))),
+                        Decimal(str(pos.entry_price)), Decimal(str(exit_price)),
                         pos.contracts,
                         gross, comm_d, net_d, pos.status,
                         pos.entry_time.isoformat(),
