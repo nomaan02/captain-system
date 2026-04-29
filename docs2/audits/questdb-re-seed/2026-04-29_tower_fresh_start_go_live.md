@@ -109,10 +109,10 @@ If you want to preserve any accumulated live data (D30 bars, D29 OR volumes, D33
 
 ```fish
 dco exec -T -e PYTHONPATH=/app captain-offline \
-    python3 /captain/scripts/backup_live_tables.py --backup-root /captain/backups/live
+    python3 /captain/scripts/backup_live_tables.py --backup-root /captain/backups
 ```
 
-This creates `~/captain-backups/live-tables-<YYYYMMDD-HHMMSS>/` with one CSV per table. The `restore_live_delta.py` script can re-insert D29/D30/D33/spread rows beyond the seed frontier later.
+The `${HOME}/captain-backups` directory on the host is bind-mounted into the container at `/captain/backups` (see `docker-compose.local.yml`), so the resulting `live-tables-<YYYYMMDD-HHMMSS>/` folder appears at both paths simultaneously. `restore_live_delta.py` can re-insert D29/D30/D33/spread rows beyond the seed frontier later (see D.5).
 
 ### A.5 Disk check
 
@@ -310,11 +310,13 @@ Runs inside **captain-command** (needs `shared/topstep_client.py` and live API a
 
 ### D.5 Restore live delta (optional, if backup exists)
 
+The host's `~/captain-backups/` is bind-mounted into the container at `/captain/backups/` (see `docker-compose.local.yml`). Pass the **in-container** path — the script runs inside the container and won't see your host `~/`.
+
 ```fish
 docker compose -f docker-compose.yml -f docker-compose.local.yml \
     exec -T -e PYTHONPATH=/app captain-offline \
     python /captain/scripts/restore_live_delta.py \
-    --backup-dir ~/captain-backups/live-tables-YYYYMMDD-HHMMSS
+    --backup-dir /captain/backups/live-tables-20260421-140617
 ```
 
 This computes per-asset seed frontiers from committed CSVs, then inserts only rows with dates **after** the frontier. Covers D30, D29, D33, and `p3_spread_history`. Does **not** restore D03, D08, or any other tables.
