@@ -85,9 +85,9 @@ CREATE TABLE IF NOT EXISTS p3_d00_asset_universe (
     locked_strategy STRING,
     roll_calendar STRING,
     exchange_timezone STRING,
-    point_value DECIMAL(14, 4),
-    tick_size DECIMAL(14, 4),
-    margin_per_contract DECIMAL(14, 4),
+    point_value DECIMAL(14, 6),
+    tick_size DECIMAL(14, 8),
+    margin_per_contract DECIMAL(14, 6),
     session_hours STRING,
     session_schedule STRING,
     p1_data_path STRING,
@@ -405,9 +405,9 @@ CREATE TABLE IF NOT EXISTS p3_d03_trade_outcome_log (
     account_id SYMBOL,
     asset SYMBOL,
     direction INT,
-    entry_price DECIMAL(14, 4),
-    signal_entry_price DECIMAL(14, 4),
-    exit_price DECIMAL(14, 4),
+    entry_price DECIMAL(14, 6),
+    signal_entry_price DECIMAL(14, 6),
+    exit_price DECIMAL(14, 6),
     contracts INT,
     gross_pnl DECIMAL(18, 4),
     commission DECIMAL(18, 4),
@@ -640,10 +640,10 @@ D30_DAILY_OHLCV = """
 CREATE TABLE IF NOT EXISTS p3_d30_daily_ohlcv (
     asset_id SYMBOL,
     trade_date STRING,
-    open DECIMAL(14, 4),
-    high DECIMAL(14, 4),
-    low DECIMAL(14, 4),
-    close DECIMAL(14, 4),
+    open DECIMAL(14, 6),
+    high DECIMAL(14, 6),
+    low DECIMAL(14, 6),
+    close DECIMAL(14, 6),
     volume LONG,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY YEAR WAL
@@ -957,15 +957,15 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     # --- Phase B (monetary DECIMAL): D03 trade outcome ---
     (
         "M027_d03_entry_price_to_decimal",
-        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN entry_price TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN entry_price TYPE DECIMAL(14, 6)",
     ),
     (
         "M028_d03_signal_entry_price_to_decimal",
-        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN signal_entry_price TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN signal_entry_price TYPE DECIMAL(14, 6)",
     ),
     (
         "M029_d03_exit_price_to_decimal",
-        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN exit_price TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN exit_price TYPE DECIMAL(14, 6)",
     ),
     (
         "M030_d03_gross_pnl_to_decimal",
@@ -994,31 +994,31 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     ),
     (
         "M036_d00_point_value_to_decimal",
-        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN point_value TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN point_value TYPE DECIMAL(14, 6)",
     ),
     (
         "M037_d00_tick_size_to_decimal",
-        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN tick_size TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN tick_size TYPE DECIMAL(14, 8)",
     ),
     (
         "M038_d00_margin_per_contract_to_decimal",
-        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN margin_per_contract TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN margin_per_contract TYPE DECIMAL(14, 6)",
     ),
     (
         "M039_d30_open_to_decimal",
-        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN open TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN open TYPE DECIMAL(14, 6)",
     ),
     (
         "M040_d30_high_to_decimal",
-        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN high TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN high TYPE DECIMAL(14, 6)",
     ),
     (
         "M041_d30_low_to_decimal",
-        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN low TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN low TYPE DECIMAL(14, 6)",
     ),
     (
         "M042_d30_close_to_decimal",
-        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN close TYPE DECIMAL(14, 4)",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN close TYPE DECIMAL(14, 6)",
     ),
 ]
 
