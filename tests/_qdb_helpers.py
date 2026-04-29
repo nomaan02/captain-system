@@ -7,9 +7,14 @@ flushed yet. Production code is unaffected because read/write cycles are
 spaced seconds apart by event loops, but an INSERT-then-SELECT inside a
 single test races the applier and produces flaky failures.
 
-This module provides ``wait_for_row``: a tiny polling helper that retries
-the SELECT until a row appears or the timeout elapses. Use it in any
-real-QuestDB test that reads back a value it just inserted.
+This module provides:
+
+* ``wait_for_row`` — poll a SELECT until any row appears.
+* ``wait_for_count`` — poll a count() query until it reaches a target value
+  (use when running an aggregate like SUM that needs *all* rows visible,
+  not just one).
+
+Both helpers timeout deterministically rather than retrying forever.
 """
 from __future__ import annotations
 
@@ -55,4 +60,38 @@ def wait_for_row(
             return row
         if time.monotonic() >= deadline:
             return None
+        time.sleep(interval)
+
+
+def wait_for_count(
+    cur,
+    sql: str,
+    params: Optional[Sequence[Any]] = None,
+    *,
+    target: int,
+    max_wait: float = 5.0,
+    interval: float = 0.1,
+) -> int:
+    """Poll a ``SELECT count() ...`` query until it reaches ``target`` or
+    a timeout. Returns the final count observed.
+
+    Use before aggregate queries (SUM, AVG, MIN, MAX) that depend on
+    *every* row being visible — a single-row poll via ``wait_for_row``
+    isn't sufficient because the aggregate would happily return a
+    partial result.
+
+    The supplied ``sql`` must be a ``SELECT count() ...`` (or equivalent
+    aggregate returning a single integer). The function does not modify
+    the SQL; the caller writes whatever ``WHERE`` filter they need.
+    """
+    deadline = time.monotonic() + max_wait
+    last = 0
+    while True:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        last = int(row[0]) if row and row[0] is not None else 0
+        if last >= target:
+            return last
+        if time.monotonic() >= deadline:
+            return last
         time.sleep(interval)
