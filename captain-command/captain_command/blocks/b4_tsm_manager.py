@@ -438,18 +438,58 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                  now()
              )"""
 
+    import psycopg2
+
     for attempt in range(retries):
+        mogrified = None
         try:
             with get_cursor() as cur:
-                cur.execute(sql, params)
+                # Substitute params into the SQL ourselves so we can log the
+                # exact bytes that get sent to QuestDB.  This eliminates an
+                # entire class of wire-protocol-binding bugs and makes any
+                # remaining server-side parse error trivially reproducible
+                # by pasting the printed SQL into the QuestDB web console.
+                mogrified = cur.mogrify(sql, params)
+                cur.execute(mogrified)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
-        except Exception as exc:
-            if "table busy" in str(exc) and attempt < retries - 1:
+        except psycopg2.Error as exc:
+            msg = str(exc)
+            if "table busy" in msg and attempt < retries - 1:
                 logger.warning("D08 table busy, retrying in %ds... (%d/%d)",
                                attempt + 1, attempt + 1, retries)
                 time.sleep(attempt + 1)
-            else:
-                logger.error("Failed to store TSM in D08: %s", exc, exc_info=True)
-                return False
+                continue
+            diag = getattr(exc, "diag", None)
+            logger.error(
+                "D08 INSERT failed for account=%s.\n"
+                "  exc_class : %s\n"
+                "  exc_str   : %r\n"
+                "  pgcode    : %s\n"
+                "  pgerror   : %s\n"
+                "  diag.message_primary  : %s\n"
+                "  diag.message_detail   : %s\n"
+                "  diag.message_hint     : %s\n"
+                "  diag.statement_position: %s\n"
+                "  diag.severity         : %s\n"
+                "  param types: %s\n"
+                "  mogrified SQL (first 2000 chars):\n%s",
+                account_id,
+                type(exc).__name__,
+                msg,
+                getattr(exc, "pgcode", None),
+                getattr(exc, "pgerror", None),
+                getattr(diag, "message_primary", None) if diag else None,
+                getattr(diag, "message_detail", None) if diag else None,
+                getattr(diag, "message_hint", None) if diag else None,
+                getattr(diag, "statement_position", None) if diag else None,
+                getattr(diag, "severity", None) if diag else None,
+                [(i, type(p).__name__) for i, p in enumerate(params)],
+                (mogrified.decode("utf-8", errors="replace") if isinstance(mogrified, bytes) else str(mogrified))[:2000],
+                exc_info=True,
+            )
+            return False
+        except Exception as exc:
+            logger.error("D08 INSERT failed (non-pg) for account=%s: %s", account_id, exc, exc_info=True)
+            return False
     return False
