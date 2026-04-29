@@ -17,10 +17,17 @@ import psycopg2.extensions
 from contextlib import contextmanager
 
 # QuestDB maps psycopg2's NUMERIC wire type to DOUBLE, then rejects
-# DOUBLE→DECIMAL casts.  Sending Decimal as a quoted string lets QuestDB
-# parse it directly into its native DECIMAL type.
+# DOUBLE→DECIMAL casts on assignment.  Quoted-string DECIMAL literals
+# also crash the QuestDB server (HTTP 500, empty error, position=0)
+# for short values like '0', '1', '1.4' — the parser hits an unhandled
+# code path on values shorter than ~5 chars.  See:
+#   docs2/audits/questdb-re-seed/2026-04-29_d08_tsm_insert_debug_handoff.md
+# The only universally safe form is an explicit cast — QuestDB infers
+# scale from the value and narrows it at column-assignment time, so a
+# single adapter handles every DECIMAL(p,s) column in the schema.
 psycopg2.extensions.register_adapter(
-    Decimal, lambda d: psycopg2.extensions.AsIs("'" + str(d) + "'")
+    Decimal,
+    lambda d: psycopg2.extensions.AsIs("cast('" + str(d) + "' as DECIMAL)"),
 )
 
 # QuestDB's PG wire doesn't handle psycopg2's binary boolean format.

@@ -393,19 +393,28 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
 
     sb = tsm.get("starting_balance", 0)
     cb = tsm.get("current_balance", tsm.get("starting_balance", 0))
+
+    # Pass Decimals through psycopg2 so the global adapter in
+    # shared.questdb_client emits the cast('<value>' as DECIMAL) form.
+    # Pre-converting to str here would route through psycopg2's str
+    # adapter instead (emits a bare quoted literal), which crashes
+    # QuestDB for short DECIMAL values like '0', '1', '1.4'.
+    def _dec_or_none(v):
+        return Decimal(str(v)) if v is not None else None
+
     params = (
         account_id,
         tsm.get("user_id", ""),
         tsm.get("name", ""),
         json.dumps(classification),
-        str(Decimal(str(sb))),
-        str(Decimal(str(cb))),
-        str(Decimal(str(tsm.get("max_drawdown_limit", 0)))),
-        str(Decimal(str(tsm.get("max_daily_loss")))) if tsm.get("max_daily_loss") is not None else None,
-        str(Decimal("0")),
-        str(Decimal(str(tsm.get("profit_target")))) if tsm.get("profit_target") is not None else None,
+        Decimal(str(sb)),
+        Decimal(str(cb)),
+        Decimal(str(tsm.get("max_drawdown_limit", 0))),
+        _dec_or_none(tsm.get("max_daily_loss")),
+        Decimal("0"),
+        _dec_or_none(tsm.get("profit_target")),
         tsm.get("max_contracts", 0),
-        str(Decimal(str(tsm.get("commission_per_contract", 0)))),
+        Decimal(str(tsm.get("commission_per_contract", 0))),
         tsm.get("overnight_allowed", False),
         json.dumps(tsm.get("trading_hours", "")) if isinstance(tsm.get("trading_hours"), dict) else tsm.get("trading_hours", ""),
         classification.get("risk_goal", ""),
@@ -441,16 +450,9 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
     import psycopg2
 
     for attempt in range(retries):
-        mogrified = None
         try:
             with get_cursor() as cur:
-                # Substitute params into the SQL ourselves so we can log the
-                # exact bytes that get sent to QuestDB.  This eliminates an
-                # entire class of wire-protocol-binding bugs and makes any
-                # remaining server-side parse error trivially reproducible
-                # by pasting the printed SQL into the QuestDB web console.
-                mogrified = cur.mogrify(sql, params)
-                cur.execute(mogrified)
+                cur.execute(sql, params)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
         except psycopg2.Error as exc:
@@ -460,32 +462,15 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                                attempt + 1, attempt + 1, retries)
                 time.sleep(attempt + 1)
                 continue
+            # QuestDB sometimes returns an empty pgerror string with the
+            # context only in diag.* — capture both so production logs
+            # are useful even when the top-level message is blank.
             diag = getattr(exc, "diag", None)
             logger.error(
-                "D08 INSERT failed for account=%s.\n"
-                "  exc_class : %s\n"
-                "  exc_str   : %r\n"
-                "  pgcode    : %s\n"
-                "  pgerror   : %s\n"
-                "  diag.message_primary  : %s\n"
-                "  diag.message_detail   : %s\n"
-                "  diag.message_hint     : %s\n"
-                "  diag.statement_position: %s\n"
-                "  diag.severity         : %s\n"
-                "  param types: %s\n"
-                "  mogrified SQL (first 2000 chars):\n%s",
-                account_id,
-                type(exc).__name__,
-                msg,
-                getattr(exc, "pgcode", None),
-                getattr(exc, "pgerror", None),
+                "D08 INSERT failed for account=%s: %s [pgcode=%s, primary=%r, position=%s]",
+                account_id, msg, getattr(exc, "pgcode", None),
                 getattr(diag, "message_primary", None) if diag else None,
-                getattr(diag, "message_detail", None) if diag else None,
-                getattr(diag, "message_hint", None) if diag else None,
                 getattr(diag, "statement_position", None) if diag else None,
-                getattr(diag, "severity", None) if diag else None,
-                [(i, type(p).__name__) for i, p in enumerate(params)],
-                (mogrified.decode("utf-8", errors="replace") if isinstance(mogrified, bytes) else str(mogrified))[:2000],
                 exc_info=True,
             )
             return False
