@@ -63,11 +63,21 @@ def main():
     gate = check_compliance_gate()
     print(f"  Compliance: mode={gate['execution_mode']}")
 
-    signal_result = adapter.send_signal({
-        "asset": "ES", "direction": "BUY", "size": 1,
-        "tp": 5900.0, "sl": 5700.0, "timestamp": "2026-03-16T22:00:00Z",
-    })
-    print(f"  Send signal (MANUAL): status={signal_result['status']}")
+    # IMPORTANT: only fire the test signal when the compliance gate is in
+    # MANUAL mode. In MANUAL mode send_signal short-circuits and returns
+    # MANUAL_PENDING without hitting the broker. In AUTO mode it would
+    # place a real market order on the live account — exactly what a
+    # verification script must NOT do.
+    if gate["execution_mode"] == "MANUAL":
+        signal_result = adapter.send_signal({
+            "asset": "ES", "direction": "BUY", "size": 1,
+            "tp": 5900.0, "sl": 5700.0, "timestamp": "2026-03-16T22:00:00Z",
+        })
+        print(f"  Send signal (MANUAL): status={signal_result['status']}")
+    else:
+        print(f"  Send signal: SKIPPED (gate={gate['execution_mode']}, "
+              "would place a real order — use scripts/test_bracket_order.py "
+              "for an explicit live-order test)")
 
     # 4. Stream connectivity
     print("\n[4] STREAM CONNECTIVITY")
@@ -96,51 +106,60 @@ def main():
     market.stop()
     user.stop()
 
-    # 5. B1 data ingestion stubs
+    # 5. B1 data ingestion stubs (captain_online — only available when run
+    # from host venv with all three service trees on PYTHONPATH; skipped
+    # cleanly when run inside captain-command).
     print("\n[5] B1 DATA INGESTION")
-    from captain_online.blocks.b1_data_ingestion import (
-        _get_latest_price, _get_prior_close,
-        _get_current_session_volume, _get_avg_session_volume_20d,
-    )
-    from captain_online.blocks.b1_features import (
-        _get_latest_price as f_price, _get_open_price,
-        _get_prior_close_for_date,
-        _get_best_bid, _get_best_ask, _get_daily_closes,
-        _get_session_open_time,
-    )
+    try:
+        from captain_online.blocks.b1_data_ingestion import (
+            _get_latest_price, _get_prior_close,
+            _get_current_session_volume, _get_avg_session_volume_20d,
+        )
+        from captain_online.blocks.b1_features import (
+            _get_latest_price as f_price, _get_open_price,
+            _get_prior_close_for_date,
+            _get_best_bid, _get_best_ask, _get_daily_closes,
+            _get_session_open_time,
+        )
+        checks = {
+            "latest_price": _get_latest_price("ES"),
+            "prior_close": _get_prior_close("ES"),
+            "session_volume": _get_current_session_volume("ES"),
+            "avg_volume_20d": _get_avg_session_volume_20d("ES"),
+            "feat_price": f_price("ES"),
+            "open_price": _get_open_price("ES", None),
+            "prior_close_date": _get_prior_close_for_date("ES", None),
+            "bid": _get_best_bid("ES"),
+            "ask": _get_best_ask("ES"),
+            "session_open": str(_get_session_open_time("ES")),
+        }
+        for k, v in checks.items():
+            tag = "OK" if v is not None else "None (market closed)"
+            print(f"  {k}: {v} - {tag}")
+    except ModuleNotFoundError as e:
+        print(f"  SKIPPED: {e} (captain_online not on PYTHONPATH — "
+              "run from host venv to exercise this block)")
 
-    checks = {
-        "latest_price": _get_latest_price("ES"),
-        "prior_close": _get_prior_close("ES"),
-        "session_volume": _get_current_session_volume("ES"),
-        "avg_volume_20d": _get_avg_session_volume_20d("ES"),
-        "feat_price": f_price("ES"),
-        "open_price": _get_open_price("ES", None),
-        "prior_close_date": _get_prior_close_for_date("ES", None),
-        "bid": _get_best_bid("ES"),
-        "ask": _get_best_ask("ES"),
-        "session_open": str(_get_session_open_time("ES")),
-    }
-    for k, v in checks.items():
-        tag = "OK" if v is not None else "None (market closed)"
-        print(f"  {k}: {v} - {tag}")
-
-    # 6. B2 GUI data server
+    # 6. B2 GUI data server (captain_command — only available when run
+    # inside captain-command or from host venv).
     print("\n[6] B2 GUI DATA SERVER")
-    from captain_command.blocks.b2_gui_data_server import (
-        _get_capital_silo, _get_live_market_data,
-        _get_api_connection_status,
-    )
-    capital = _get_capital_silo("user1")
-    print(f"  Capital silo: ${capital.get('total_capital', 0):,.2f} "
-          f"(source={capital.get('source')})")
+    try:
+        from captain_command.blocks.b2_gui_data_server import (
+            _get_capital_silo, _get_live_market_data,
+            _get_api_connection_status,
+        )
+        capital = _get_capital_silo("user1")
+        print(f"  Capital silo: ${capital.get('total_capital', 0):,.2f} "
+              f"(source={capital.get('source')})")
 
-    market_data = _get_live_market_data()
-    print(f"  Live market: connected={market_data.get('connected')}")
+        market_data = _get_live_market_data()
+        print(f"  Live market: connected={market_data.get('connected')}")
 
-    api_stat = _get_api_connection_status()
-    print(f"  API: authenticated={api_stat.get('api_authenticated')}, "
-          f"token_age={api_stat.get('token_age_hours', 'N/A')}h")
+        api_stat = _get_api_connection_status()
+        print(f"  API: authenticated={api_stat.get('api_authenticated')}, "
+              f"token_age={api_stat.get('token_age_hours', 'N/A')}h")
+    except ModuleNotFoundError as e:
+        print(f"  SKIPPED: {e}")
 
     # 7. Enum sanity check
     print("\n[7] ENUM VERIFICATION")
@@ -154,15 +173,19 @@ def main():
     assert PositionType.SHORT == 2
     print("  All enum values correct")
 
-    # 8. Docker compose validation
+    # 8. Docker compose validation (host-only — paths don't exist inside
+    # containers).
     print("\n[8] DOCKER COMPOSE")
-    with open("captain-system/docker-compose.yml") as f:
-        content = f.read()
-    assert "env_file:" in content
-    assert "- .env" in content
-    print("  env_file directive: present in captain-online + captain-command")
+    try:
+        with open("captain-system/docker-compose.yml") as f:
+            content = f.read()
+        assert "env_file:" in content
+        assert "- .env" in content
+        print("  env_file directive: present in captain-online + captain-command")
+    except FileNotFoundError:
+        print("  SKIPPED: not running from host (captain-system/ path absent)")
 
-    # 9. Anti-pattern check
+    # 9. Anti-pattern check (host-only — paths don't exist inside containers).
     print("\n[9] ANTI-PATTERN CHECK")
     check_files = [
         "captain-system/shared/topstep_client.py",
@@ -172,17 +195,20 @@ def main():
         "captain-system/captain-online/captain_online/blocks/b1_data_ingestion.py",
         "captain-system/captain-online/captain_online/blocks/b1_features.py",
     ]
-    issues = []
-    for fpath in check_files:
-        with open(fpath) as f:
-            text = f.read()
-        if "import tsxapipy" in text:
-            issues.append(f"{fpath}: imports tsxapipy")
-    if issues:
-        for i in issues:
-            print(f"  WARNING: {i}")
-    else:
-        print("  No anti-patterns found")
+    try:
+        issues = []
+        for fpath in check_files:
+            with open(fpath) as f:
+                text = f.read()
+            if "import tsxapipy" in text:
+                issues.append(f"{fpath}: imports tsxapipy")
+        if issues:
+            for i in issues:
+                print(f"  WARNING: {i}")
+        else:
+            print("  No anti-patterns found")
+    except FileNotFoundError:
+        print("  SKIPPED: not running from host (captain-system/ path absent)")
 
     # Cleanup
     adapter.disconnect()
