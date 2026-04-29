@@ -66,11 +66,28 @@ def _parse_ddl_columns(ddl: str) -> dict:
         line = raw_line.strip().rstrip(",")
         if not line:
             continue
-        parts = line.split()
-        if len(parts) >= 2:
-            col_name = parts[0]
-            col_type = _normalise(parts[1])
-            columns[col_name] = col_type
+        # Split off only the first token (column name); the rest is the type.
+        # We can't use plain split() because parametric types like
+        # `DECIMAL(14, 6)` contain whitespace inside the parens.
+        head, _, rest = line.partition(" ")
+        if not head or not rest:
+            continue
+        col_name = head.strip()
+        rest = rest.strip()
+        # Take the type up to the first whitespace that is OUTSIDE any
+        # parenthesis group (e.g. stop before `NOT NULL` or `DEFAULT ...`).
+        depth = 0
+        cut = len(rest)
+        for i, ch in enumerate(rest):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch.isspace() and depth == 0:
+                cut = i
+                break
+        col_type = rest[:cut].replace(" ", "")
+        columns[col_name] = _normalise(col_type)
     return columns
 
 
