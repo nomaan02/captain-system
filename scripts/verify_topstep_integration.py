@@ -136,7 +136,7 @@ def main():
         for k, v in checks.items():
             tag = "OK" if v is not None else "None (market closed)"
             print(f"  {k}: {v} - {tag}")
-    except ModuleNotFoundError as e:
+    except ImportError as e:
         print(f"  SKIPPED: {e} (captain_online not on PYTHONPATH — "
               "run from host venv to exercise this block)")
 
@@ -145,20 +145,26 @@ def main():
     print("\n[6] B2 GUI DATA SERVER")
     try:
         from captain_command.blocks.b2_gui_data_server import (
-            _get_capital_silo, _get_live_market_data,
+            _get_capital_silo, _get_all_live_market_data,
             _get_api_connection_status,
         )
         capital = _get_capital_silo("user1")
         print(f"  Capital silo: ${capital.get('total_capital', 0):,.2f} "
               f"(source={capital.get('source')})")
 
-        market_data = _get_live_market_data()
-        print(f"  Live market: connected={market_data.get('connected')}")
+        market_data = _get_all_live_market_data()
+        # _get_all_live_market_data returns a dict keyed by asset; report
+        # the count of populated assets and a coarse "any connected" flag.
+        if isinstance(market_data, dict):
+            populated = sum(1 for v in market_data.values() if v)
+            print(f"  Live market: {populated}/{len(market_data)} assets populated")
+        else:
+            print(f"  Live market: {market_data!r}")
 
         api_stat = _get_api_connection_status()
         print(f"  API: authenticated={api_stat.get('api_authenticated')}, "
               f"token_age={api_stat.get('token_age_hours', 'N/A')}h")
-    except ModuleNotFoundError as e:
+    except ImportError as e:
         print(f"  SKIPPED: {e}")
 
     # 7. Enum sanity check
