@@ -7,6 +7,7 @@ import pytest
 from psycopg2 import OperationalError
 
 from shared.questdb_client import get_cursor
+from tests._qdb_helpers import wait_for_row
 
 pytestmark = pytest.mark.real_questdb
 
@@ -44,14 +45,14 @@ def test_d16_decimal_capital_columns_roundtrip():
                 None,
             ),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             """SELECT starting_capital, total_capital
                FROM p3_d16_user_capital_silos WHERE user_id = %s
                ORDER BY last_updated DESC LIMIT 1""",
             (uid,),
         )
-        row = cur.fetchone()
-    assert row is not None
+    assert row is not None, "row not visible after WAL wait"
     assert Decimal(str(row[0])) == v
     assert Decimal(str(row[1])) == v
 
@@ -99,14 +100,14 @@ def test_d00_decimal_asset_specs_roundtrip():
                 "CLEAN",
             ),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             """SELECT point_value, tick_size, margin_per_contract
                FROM p3_d00_asset_universe WHERE asset_id = %s
                ORDER BY last_updated DESC LIMIT 1""",
             (aid,),
         )
-        row = cur.fetchone()
-    assert row is not None
+    assert row is not None, "row not visible after WAL wait"
     assert Decimal(str(row[0])) == pv
     assert Decimal(str(row[1])) == ts
     assert Decimal(str(row[2])) == margin
@@ -127,14 +128,14 @@ def test_d30_decimal_ohlc_roundtrip():
                VALUES (%s,%s,%s,%s,%s,%s,%s, now())""",
             (aid, day, o, h, lo, c, 1),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             """SELECT open, high, low, close FROM p3_d30_daily_ohlcv
                WHERE asset_id = %s AND trade_date = %s
                ORDER BY ts DESC LIMIT 1""",
             (aid, day),
         )
-        row = cur.fetchone()
-    assert row is not None
+    assert row is not None, "row not visible after WAL wait"
     assert Decimal(str(row[0])) == o
     assert Decimal(str(row[1])) == h
     assert Decimal(str(row[2])) == lo

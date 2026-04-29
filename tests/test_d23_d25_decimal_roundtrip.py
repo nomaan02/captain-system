@@ -6,6 +6,7 @@ import pytest
 from psycopg2 import OperationalError
 
 from shared.questdb_client import get_cursor
+from tests._qdb_helpers import wait_for_row
 
 pytestmark = pytest.mark.real_questdb
 
@@ -29,13 +30,14 @@ def test_d23_l_t_decimal_roundtrip():
                VALUES (%s, %s, 0, '{}', '{}', now())""",
             (aid, v),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             """SELECT l_t FROM p3_d23_circuit_breaker_intraday
                WHERE account_id = %s ORDER BY last_updated DESC LIMIT 1""",
             (aid,),
         )
-        row = cur.fetchone()
-    assert row and Decimal(str(row[0])) == v
+    assert row is not None, "row not visible after WAL wait"
+    assert Decimal(str(row[0])) == v
 
 
 def test_d25_l_star_decimal_roundtrip():
@@ -50,10 +52,11 @@ def test_d25_l_star_decimal_roundtrip():
             VALUES (%s, 0, 0, 0, 1, 0, 0, 1, %s, true, now())""",
             (aid, v),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             """SELECT l_star FROM p3_d25_circuit_breaker_params
                WHERE account_id = %s ORDER BY last_updated DESC LIMIT 1""",
             (aid,),
         )
-        row = cur.fetchone()
-    assert row and Decimal(str(row[0])) == v
+    assert row is not None, "row not visible after WAL wait"
+    assert Decimal(str(row[0])) == v
