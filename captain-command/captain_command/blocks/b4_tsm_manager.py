@@ -414,7 +414,6 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
         topstep_state,
         dumps_decimal(tsm.get("fee_schedule", {})),
         dumps_decimal(tsm.get("payout_rules", {})),
-        now_et().isoformat(),
     )
 
     sql = """INSERT INTO p3_d08_tsm_state(
@@ -436,17 +435,12 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                  %s, %s,
                  %s, %s,
                  %s, %s, %s,
-                 %s
+                 now()
              )"""
 
     for attempt in range(retries):
         try:
             with get_cursor() as cur:
-                try:
-                    debug_sql = cur.mogrify(sql, params)
-                    logger.debug("D08 INSERT SQL (first 500 chars): %s", debug_sql[:500])
-                except Exception:
-                    pass
                 cur.execute(sql, params)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
@@ -456,8 +450,6 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                                attempt + 1, attempt + 1, retries)
                 time.sleep(attempt + 1)
             else:
-                logger.error("Failed to store TSM in D08: %r", exc)
-                logger.error("D08 params types: %s", [(i, type(v).__name__, repr(v)[:80]) for i, v in enumerate(params)])
-                logger.error("Full traceback:", exc_info=True)
+                logger.error("Failed to store TSM in D08: %s", exc, exc_info=True)
                 return False
     return False
