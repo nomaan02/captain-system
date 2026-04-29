@@ -53,6 +53,102 @@ def _money_d(x: object) -> Decimal:
     return Decimal(str(x))
 
 
+# ---------------------------------------------------------------------------
+# Per-symbol contract economics — Bug A guard (Tier 1 fix, 2026-04-29)
+# ---------------------------------------------------------------------------
+#
+# Authoritative source of `point_value` is p3_d00_asset_universe.point_value.
+# Historic regression: the live PnL path read `pos.get("point_value", 50.0)`
+# at multiple layers, defaulting to ES's PV (50) for every asset whenever
+# the upstream chain failed to populate the field. `sanitise_for_api` in
+# captain-command/.../b1_core_routing.py strips the field, so the default
+# fired for every non-ES trade and inflated D03 gross_pnl by `50 / true_pv`.
+#
+# Tier 1 fix policy:
+#   - ALWAYS look up D00 in this module (do NOT trust pos["point_value"]).
+#   - Cache per process-lifetime (asset spec is effectively static intraday).
+#   - On D00 miss / DB failure: log CRITICAL and RAISE — never default to 50.
+#     A loud failure aborting one resolve_position call is incomparably safer
+#     than silently writing inflated PnL to D03 and tripping circuit breakers.
+# ---------------------------------------------------------------------------
+
+_POINT_VALUE_CACHE: dict[str, Decimal] = {}
+
+
+class PointValueResolutionError(RuntimeError):
+    """Raised when point_value cannot be resolved from D00 for an asset.
+
+    Caller should treat this as a non-recoverable error for that single
+    position resolution and escalate (alert + manual close), NOT default.
+    """
+
+
+def _resolve_point_value(asset_id: str) -> Decimal:
+    """Return the canonical point_value for `asset_id` from D00.
+
+    Strict semantics:
+      * Always reads `p3_d00_asset_universe` (LATEST ON last_updated).
+      * Caches the first successful resolution for the lifetime of the
+        process (D00 specs change only on bootstrap / contract roll).
+      * Raises `PointValueResolutionError` on missing or NULL value.
+      * Raises on DB failure after logging CRITICAL.
+
+    Never returns a default. The 50.0 fallback was Bug A — see module
+    docstring above.
+    """
+    if not asset_id:
+        raise PointValueResolutionError(
+            "point_value lookup called with empty asset_id"
+        )
+    cached = _POINT_VALUE_CACHE.get(asset_id)
+    if cached is not None:
+        return cached
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT point_value FROM p3_d00_asset_universe "
+                "WHERE asset_id = %s "
+                "LATEST ON last_updated PARTITION BY asset_id",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value query failed for %s: %s",
+            asset_id, exc,
+        )
+        raise PointValueResolutionError(
+            f"D00 point_value query failed for {asset_id}: {exc}"
+        ) from exc
+
+    if not row or row[0] is None:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value row missing/NULL for asset=%s "
+            "(refusing legacy default=50.0; resolve via D00 bootstrap)",
+            asset_id,
+        )
+        raise PointValueResolutionError(
+            f"D00 has no point_value for asset {asset_id}"
+        )
+
+    pv = row[0] if isinstance(row[0], Decimal) else Decimal(str(row[0]))
+    if pv <= 0:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value for %s is non-positive: %s",
+            asset_id, pv,
+        )
+        raise PointValueResolutionError(
+            f"D00 point_value for {asset_id} is non-positive: {pv}"
+        )
+    _POINT_VALUE_CACHE[asset_id] = pv
+    return pv
+
+
+def _reset_point_value_cache() -> None:
+    """Clear the D00 point_value cache. Test/ops helper; called on contract roll."""
+    _POINT_VALUE_CACHE.clear()
+
+
 def _get_locked_m(asset: str) -> int | None:
     """Return the locked-strategy m for asset from p3_d00_asset_universe."""
     try:
@@ -101,13 +197,27 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
         if current_price is None:
             continue
 
-        point_value = pos.get("point_value", 50.0)
+        # Bug A guard: ALWAYS resolve from D00; never trust pos["point_value"]
+        # which the historic 50.0-default cascade could leave at ES's PV for
+        # every asset. _resolve_point_value raises rather than defaulting.
+        try:
+            pv = _resolve_point_value(pos["asset"])
+        except PointValueResolutionError as exc:
+            logger.error(
+                "ON-B7: skipping live PnL update for %s — %s",
+                pos.get("asset"), exc,
+            )
+            _notify(
+                pos.get("user_id", "SYSTEM"), "CRITICAL",
+                f"PnL tracking halted for {pos.get('asset')}: D00 point_value "
+                "missing — verify D00 bootstrap before close",
+            )
+            continue
 
         # P&L tracking (Decimal arithmetic; float on pos for downstream % calcs)
         direction = pos.get("direction", 1)
         entry_price = pos.get("entry_price", 0)
         contracts = pos.get("contracts", 0)
-        pv = _money_d(point_value)
         cp = (
             (_money_d(current_price) - _money_d(entry_price))
             * Decimal(direction)
@@ -182,8 +292,15 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     """Resolve a position: log trade outcome, update capital, publish to Offline.
 
     CRITICAL: This is the feedback loop bridge to Offline learning.
+
+    Bug A guard (2026-04-29): point_value is resolved from D00 here, never
+    from `pos`. The historic `pos.get("point_value", 50.0)` default produced
+    50× / 25× / 100× inflated gross_pnl for every non-ES asset and tripped
+    the silo drawdown circuit breaker on phantom losses. Resolution failure
+    now raises and is escalated to the user — no silent default.
     """
-    pv = _money_d(pos.get("point_value", 50.0))
+    asset = pos["asset"]
+    pv = _resolve_point_value(asset)
     direction = pos.get("direction", 1)
     contracts = pos.get("contracts", 0)
     entry_price = pos.get("entry_price", 0)
