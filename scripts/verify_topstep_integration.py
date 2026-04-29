@@ -11,8 +11,14 @@ sys.path.insert(0, "captain-system")
 sys.path.insert(0, "captain-system/captain-command")
 sys.path.insert(0, "captain-system/captain-online")
 
-from dotenv import load_dotenv
-load_dotenv("captain-system/.env", override=True)
+# When run inside a container, env vars are already injected via docker-compose
+# env_file. dotenv is only needed for direct host execution. Make it optional so
+# the script works in both contexts.
+try:
+    from dotenv import load_dotenv
+    load_dotenv("captain-system/.env", override=True)
+except ImportError:
+    pass
 
 
 def main():
