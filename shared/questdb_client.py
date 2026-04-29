@@ -23,6 +23,12 @@ psycopg2.extensions.register_adapter(
     Decimal, lambda d: psycopg2.extensions.AsIs("'" + str(d) + "'")
 )
 
+# QuestDB's PG wire doesn't handle psycopg2's binary boolean format.
+# Send as SQL keyword literals instead.
+psycopg2.extensions.register_adapter(
+    bool, lambda b: psycopg2.extensions.AsIs("true" if b else "false")
+)
+
 logger = logging.getLogger(__name__)
 
 
