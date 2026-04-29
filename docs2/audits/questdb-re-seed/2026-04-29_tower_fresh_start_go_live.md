@@ -447,22 +447,115 @@ Ordered steps. Complete all before the next 09:30 ET session.
 These are **expected** to be empty or frozen after a fresh start. No action needed:
 
 
-| Domain               | State               | Why                                                                                                                                                                  |
-| -------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D01 `model_object`   | NULL                | AIM models retrain via live Offline `b1_aim_lifecycle.py`. Cold-start / BOOTSTRAPPED status until ~50+ sessions.                                                     |
-| D03 trade history    | Empty               | Populated by Online B7 on each trade close. No seed script for this.                                                                                                 |
-| D04 BOCPD/CUSUM      | Cold-start from P1  | Reset to `bocpd_cp_probability=0.01`, no live changepoint history.                                                                                                   |
-| D05/D12 EWMA/Kelly   | P1 research vintage | Frozen to historical trade stats (2009–2025). Updated by Offline on each D03 event.                                                                                  |
-| D06/D06b injection   | Empty               | Populated by Offline `b5_strategy_injection.py` at runtime.                                                                                                          |
-| D11 pseudotrader     | Empty               | Populated by Offline `b3_pseudotrader.py`. Default backtest behavior does **not** require old D11 rows — the block reads D03/D05/D12 and generates new D11/D27 rows. |
-| D26 HMM              | Empty (cold-start)  | Offline PG-01C trains after enough sessions. Online uses uniform opportunity weights in the meantime.                                                                |
-| D31/D32 (non-ES)     | Empty               | **Gap:** no seed CSV or API script exists for these 9 assets. AIM features 4/6 start from scratch.                                                                   |
-| All event/log tables | Empty               | D09, D10, D13, D18, D19, D21, D22, D27, D28, audit_log, replay, session events — all runtime-only.                                                                   |
+| Domain                | State               | Why                                                                                                                                                                  |
+| --------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D01 `model_object`    | NULL                | AIM models retrain via live Offline `b1_aim_lifecycle.py`. Cold-start / BOOTSTRAPPED status until ~50+ sessions.                                                     |
+| D03 trade history     | Empty               | Populated by Online B7 on each trade close. No seed script for this.                                                                                                 |
+| D04 BOCPD/CUSUM       | Cold-start from P1  | Reset to `bocpd_cp_probability=0.01`, no live changepoint history.                                                                                                   |
+| D05/D12 EWMA/Kelly    | P1 research vintage | Frozen to historical trade stats (2009–2025). Updated by Offline on each D03 event.                                                                                  |
+| D06/D06b injection    | Empty               | Populated by Offline `b5_strategy_injection.py` at runtime.                                                                                                          |
+| D11 pseudotrader      | Empty               | Populated by Offline `b3_pseudotrader.py`. Default backtest behavior does **not** require old D11 rows — the block reads D03/D05/D12 and generates new D11/D27 rows. |
+| D26 HMM               | Empty (cold-start)  | Offline PG-01C trains after enough sessions. Online uses uniform opportunity weights in the meantime.                                                                |
+| D31/D32 (non-ES)      | Empty               | **Gap:** no seed CSV or API script exists for these 9 assets. AIM features 4/6 start from scratch.                                                                   |
+| `p3_spread_history`   | Empty               | **CRITICAL flag is benign on a fresh tower.** Auto-populated by Online B1 at next session open (one row per spread tick). Only non-empty if a pre-wipe backup was restored via `restore_live_delta.py` (D.5). |
+| All event/log tables  | Empty               | D09, D10, D13, D18, D19, D21, D22, D27, D28, audit_log, replay, session events — all runtime-only.                                                                   |
 
 
 ### F.4 Pseudotrader note
 
 The pseudotrader (Offline `b3_pseudotrader.py`) does **not** depend on old D11 rows for "default backtest behavior." It reads current D03 (trade outcomes), D05 (EWMA), D12 (Kelly), and D00 (strategy) to generate new D11 results and D27 forecasts. On a fresh start with empty D03, it has nothing to process until live trades accumulate — this is correct behavior.
+
+---
+
+## G) Tower Recovery / Lessons Learned
+
+Both towers have walked this guide end-to-end. Two recurring footguns surfaced; this section documents the recovery for each so the next operator doesn't trip on them.
+
+### G.1 Missed AIM-data seeds (D31, D32, D33)
+
+**Symptom:** `verify_questdb_state.py` emits 3 CRITICALs:
+
+```
+[X] Freshness :: p3_d33_opening_volatility — 0 rows — external data not seeded
+[X] Freshness :: p3_d31_implied_vol         — 0 rows — external data not seeded
+[X] Freshness :: p3_d32_options_skew        — 0 rows — external data not seeded
+```
+
+**Cause:** Steps C.3 (or `captain-update.sh` step 7) was skipped or run before `init_questdb.py` finished. The seed CSVs (`data/seed/aim_data/es_iv_rv.csv`, `es_skew.csv`, `data/seed/or_volume_data/*_or_volume.csv`) **are** committed to git, so a `git pull` on any tower has them.
+
+**Fix:**
+
+```fish
+cap-run seed_iv_rv_from_extract.py        # → 122 rows in p3_d31_implied_vol (ES only)
+cap-run seed_skew_from_extract.py         # →  81 rows in p3_d32_options_skew (ES only)
+cap-run seed_opening_vol_from_qc.py       # → ~240 sessions in p3_d33_opening_volatility (10 assets)
+cap-run verify_questdb_state.py
+```
+
+Expected: 3 CRITICALs gone. `p3_spread_history` may remain CRITICAL — that's benign per F.3.
+
+### G.2 `REPRO_TEST` poison row in D16 (debug-script artifact)
+
+**Symptom:** `verify_questdb_state.py` emits 2 CRITICALs:
+
+```
+[X] D16 capital :: REPRO_TEST.accounts                  — empty list
+[X] D16 capital :: REPRO_TEST.max_simultaneous_positions — None
+```
+
+**Cause:** `scripts/debug_d08_minimal_repro.py` writes a row with `user_id='REPRO_TEST'` to D16 as part of its Q3 baseline test. Older revisions of the script (pre-2026-04-29) used `accounts='[]'` and omitted `max_simultaneous_positions`, both of which trip `check_d16_capital`. The cleanup section that DELETEs the row was added on 2026-04-29 — towers that ran the debug script before that commit will carry the poison row forward.
+
+The row is invisible to production code (which filters `WHERE user_id = %s` on the active `BOOTSTRAP_USER_ID`); it only affects the verifier's `LATEST ON … PARTITION BY user_id` projection.
+
+**Fix (surgical, no service restart):**
+
+```fish
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+    exec -T -e PYTHONPATH=/app captain-offline \
+    python -c "
+from shared.questdb_client import get_cursor
+with get_cursor() as cur:
+    cur.execute(\"DELETE FROM p3_d16_user_capital_silos WHERE user_id = 'REPRO_TEST'\")
+    cur.execute(\"DELETE FROM p3_d08_tsm_state WHERE account_id IN ('FMT_PROBE_0','FMT_PROBE_1','FMT_PROBE_2','FMT_PROBE_3','FMT_PROBE_4','FMT_PROBE_5','FMT_PROBE_6','FMT_PROBE_7','SHAPE_3a','SHAPE_4a','SHAPE_4b','SHAPE_4c','SHAPE_5a','SHAPE_5b','SHAPE_5c','SHAPE_5d','FULL_PROBE','BARE_PROBE','CAST_PROBE')\")
+print('D16 REPRO_TEST + D08 probe rows removed')
+"
+cap-run verify_questdb_state.py
+```
+
+DELETE on WAL tables is supported (production reference: `captain-offline/captain_offline/blocks/version_snapshot.py:168`).
+
+**Fallback if DELETE rejects the table for any reason:** drop and rebootstrap *just* D16. All other tables are untouched, and `bootstrap_production.py` is idempotent (line 218-226 explicitly skips already-bootstrapped users):
+
+```fish
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+    exec -T questdb \
+    curl -s 'http://localhost:9000/exec' \
+    --data-urlencode "query=DROP TABLE p3_d16_user_capital_silos;"
+
+cap-run init_questdb.py                  # recreates D16 schema only (CREATE TABLE IF NOT EXISTS)
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+    exec -T -e PYTHONPATH=/app \
+    -e BOOTSTRAP_ACCOUNT_ID=(grep BOOTSTRAP_ACCOUNT_ID .env | cut -d= -f2) \
+    -e BOOTSTRAP_USER_ID=primary_user \
+    -e BOOTSTRAP_STARTING_CAPITAL=(grep BOOTSTRAP_STARTING_CAPITAL .env | cut -d= -f2) \
+    captain-offline python /captain/scripts/bootstrap_production.py
+cap-run fix_bootstrap_data.py
+```
+
+### G.3 `p3_spread_history` CRITICAL on a fresh tower
+
+**Symptom:** `verify_questdb_state.py` emits
+
+```
+[X] Freshness :: p3_spread_history — 0 rows — external data not seeded
+   fix: Auto-populated by Online B1; will fill on session open
+```
+
+**Cause:** No pre-wipe backup was restored via `restore_live_delta.py` (D.5). Tower-1's GO-LIVE READY state had 666 rows from a backup at `~/captain-backups/live-tables-20260421-140617/`; fresh towers without that snapshot start at 0 rows.
+
+**Action:** None required. Online B1 writes one row per spread tick during live sessions, so the table fills the moment captain-online sees its first websocket message at session open. This CRITICAL is **benign** for go-live readiness on a fresh tower (tracked in F.3).
+
+If you want the CRITICAL gone before session open *and* you have a backup to restore from, run D.5.
 
 ---
 

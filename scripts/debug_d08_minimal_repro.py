@@ -22,6 +22,12 @@ Outcome will be one of:
   - All formats fail → likely a real QuestDB bug; we file a workaround
     (e.g. drop and recreate the table, or use ILP for D08)
 
+Cleanup: section Z at the end DELETEs every probe row this script writes
+(REPRO_TEST in D16, FMT_PROBE_*/SHAPE_*/FULL_PROBE/BARE_PROBE/CAST_PROBE in
+D08) so verify_questdb_state.py stays clean. The Q3 D16 baseline INSERT also
+fills verifier-required fields (non-empty accounts, max_simultaneous_positions=1)
+as a safety net in case cleanup fails mid-run.
+
 Run:
 
     docker compose -f docker-compose.yml -f docker-compose.local.yml \
@@ -127,10 +133,15 @@ def main():
         run(label, sql)
 
     section("Q3 — D16 baseline (DECIMAL inside a multi-column INSERT — known to work)")
-    run("D16 7-col with quoted DECIMAL",
+    # Verifier-safe values so that if cleanup at the end fails, the row still
+    # passes verify_questdb_state.py's check_d16_capital (no empty accounts,
+    # no NULL max_simultaneous_positions, status flagged as ARCHIVED).
+    run("D16 8-col with quoted DECIMAL — verifier-safe values",
         "INSERT INTO p3_d16_user_capital_silos("
-        "user_id, status, role, starting_capital, total_capital, accounts, last_updated) "
-        "VALUES('REPRO_TEST', 'ACTIVE', 'ADMIN', '100', '100', '[]', now())")
+        "user_id, status, role, starting_capital, total_capital, accounts, "
+        "max_simultaneous_positions, last_updated) "
+        "VALUES('REPRO_TEST', 'ARCHIVED', 'TEST', '100', '100', '[\"NONE\"]', "
+        "1, now())")
 
     section("Q4 — D08 with EVERY column listed, in EXACT schema order")
     # Every one of D08's 32 columns, in declared order, with safe values.
@@ -194,6 +205,21 @@ def main():
         "false, '{}', '{}', '{}', now())"
     )
     run("21-col, DECIMAL values via explicit cast", cast_form)
+
+    section("Z — Cleanup: remove debug rows so verify_questdb_state.py stays clean")
+    # DELETE is supported on WAL tables in this QuestDB build — see
+    # captain-offline/captain_offline/blocks/version_snapshot.py:168 for the
+    # production reference. Cleanup MUST run on every invocation, even if
+    # earlier probes failed, to avoid polluting D08/D16 across runs.
+    run("DELETE D08 probe rows",
+        "DELETE FROM p3_d08_tsm_state WHERE account_id IN ("
+        "'FMT_PROBE_0', 'FMT_PROBE_1', 'FMT_PROBE_2', 'FMT_PROBE_3', "
+        "'FMT_PROBE_4', 'FMT_PROBE_5', 'FMT_PROBE_6', 'FMT_PROBE_7', "
+        "'SHAPE_3a', 'SHAPE_4a', 'SHAPE_4b', 'SHAPE_4c', "
+        "'SHAPE_5a', 'SHAPE_5b', 'SHAPE_5c', 'SHAPE_5d', "
+        "'FULL_PROBE', 'BARE_PROBE', 'CAST_PROBE')")
+    run("DELETE D16 REPRO_TEST row",
+        "DELETE FROM p3_d16_user_capital_silos WHERE user_id = 'REPRO_TEST'")
 
 
 if __name__ == "__main__":
