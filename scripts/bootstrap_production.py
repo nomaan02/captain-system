@@ -156,9 +156,9 @@ def phase1_update_d00(dry_run: bool = False):
         updates = {
             "captain_status": "ACTIVE",
             "locked_strategy": locked_strategy,
-            "point_value": Decimal(str(spec["point_value"])),
-            "tick_size": Decimal(str(spec["tick_size"])),
-            "margin_per_contract": Decimal(str(spec["margin"])),
+            "point_value": str(Decimal(str(spec["point_value"]))),
+            "tick_size": str(Decimal(str(spec["tick_size"]))),
+            "margin_per_contract": str(Decimal(str(spec["margin"]))),
             "session_hours": session_hours,
             "session_schedule": session_schedule,
             "exchange_timezone": spec["tz"],
@@ -241,7 +241,7 @@ def phase2_update_capital_silo(dry_run: bool = False):
             )""",
             (
                 USER_ID,
-                STARTING_CAPITAL, STARTING_CAPITAL, accounts_json,
+                str(STARTING_CAPITAL), str(STARTING_CAPITAL), accounts_json,
                 MAX_SIMULTANEOUS_POSITIONS,
                 dumps_decimal(
                     [{"date": "2026-03-27", "event": "initial_bootstrap",

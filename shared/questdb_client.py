@@ -10,8 +10,18 @@ import logging
 import os
 import threading
 import time
+from decimal import Decimal
+
 import psycopg2
+import psycopg2.extensions
 from contextlib import contextmanager
+
+# QuestDB maps psycopg2's NUMERIC wire type to DOUBLE, then rejects
+# DOUBLE→DECIMAL casts.  Sending Decimal as a quoted string lets QuestDB
+# parse it directly into its native DECIMAL type.
+psycopg2.extensions.register_adapter(
+    Decimal, lambda d: psycopg2.extensions.AsIs("'" + str(d) + "'")
+)
 
 logger = logging.getLogger(__name__)
 

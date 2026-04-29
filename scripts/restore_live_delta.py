@@ -148,10 +148,10 @@ def restore_d30(backup_dir: Path, dry_run: bool) -> tuple[int, int]:
             ts = datetime.strptime(d, "%Y-%m-%d")
             to_insert.append((
                 a, d,
-                Decimal(str(row[_idx(header, "open")])),
-                Decimal(str(row[_idx(header, "high")])),
-                Decimal(str(row[_idx(header, "low")])),
-                Decimal(str(row[_idx(header, "close")])),
+                str(Decimal(str(row[_idx(header, "open")]))),
+                str(Decimal(str(row[_idx(header, "high")]))),
+                str(Decimal(str(row[_idx(header, "low")]))),
+                str(Decimal(str(row[_idx(header, "close")]))),
                 int(row[_idx(header, "volume")]),
                 ts,
             ))
