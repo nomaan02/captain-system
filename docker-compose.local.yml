@@ -51,6 +51,7 @@ services:
 
   captain-command:
     volumes:
+      - ./scripts:/captain/scripts:ro
       - ./captain-command/captain_command:/app/captain_command:ro
     deploy:
       resources:
