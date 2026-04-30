@@ -40,8 +40,20 @@ def init_questdb() -> bool:
                 cur.execute(alter_sql)
             print(f"  [OK] {migration_id}")
         except Exception as exc:
-            if "already exists" in str(exc).lower() or "duplicate" in str(exc).lower():
+            msg = str(exc).lower()
+            # Idempotent paths — script is safe to re-run on a tower
+            # whose schema already matches the canonical state.
+            if "already exists" in msg or "duplicate" in msg:
+                # ADD COLUMN that already ran on a previous deploy.
                 print(f"  [SKIP] {migration_id} (column already present)")
+            elif "type is already" in msg:
+                # ALTER COLUMN ... TYPE ... that already ran. QuestDB
+                # rejects the no-op rather than treating it as a SKIP,
+                # so detect the message string and translate.
+                # Phase A migrations M010-M042 (DECIMAL re-types) hit
+                # this every time the script is re-run on a tower whose
+                # DECIMAL state is already in place.
+                print(f"  [SKIP] {migration_id} (column type already correct)")
             else:
                 print(f"  [FAIL] {migration_id}: {exc}")
                 ok = False
