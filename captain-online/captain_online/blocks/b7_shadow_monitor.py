@@ -96,18 +96,25 @@ def monitor_shadow_positions(shadow_positions: list[dict]) -> list[dict]:
             continue
 
         # Get live price
-        current_price = _get_live_price(shadow["asset"])
-        if current_price is None:
+        current_price_raw = _get_live_price(shadow["asset"])
+        if current_price_raw is None:
             continue
 
-        tp = shadow.get("tp_level")
-        sl = shadow.get("sl_level")
+        # Bug C boundary (2026-04-30): shadow tp/sl arrive as Decimal via
+        # parse_json_decimal/loads_decimal; current_price comes from the
+        # live quote stream as float. Coerce all to Decimal once for
+        # consistent comparison; pass float to _resolve_shadow which
+        # expects float exit_price.
+        from shared.decimal_boundary import as_money
+        current_price = as_money(current_price_raw)
+        tp = as_money(shadow["tp_level"]) if shadow.get("tp_level") is not None else None
+        sl = as_money(shadow["sl_level"]) if shadow.get("sl_level") is not None else None
 
         # Check TP hit
         if tp is not None:
             if (direction == 1 and current_price >= tp) or \
                (direction == -1 and current_price <= tp):
-                _resolve_shadow(shadow, "TP_HIT", current_price)
+                _resolve_shadow(shadow, "TP_HIT", float(current_price))
                 resolved.append(shadow)
                 continue
 
@@ -115,7 +122,7 @@ def monitor_shadow_positions(shadow_positions: list[dict]) -> list[dict]:
         if sl is not None:
             if (direction == 1 and current_price <= sl) or \
                (direction == -1 and current_price >= sl):
-                _resolve_shadow(shadow, "SL_HIT", current_price)
+                _resolve_shadow(shadow, "SL_HIT", float(current_price))
                 resolved.append(shadow)
                 continue
 
@@ -128,19 +135,27 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
     Publishes to stream:signal_outcomes for Offline Category A learning.
     The theoretical outcome has the same schema as a real trade outcome
     but is flagged as theoretical=True so CB params (Category B) ignore it.
+
+    Bug C: shadow["entry_price"] / point_value flow through Redis as
+    Decimal; exit_price comes in as float from the caller. Coerce both
+    sides to float for the gross_pnl arithmetic — shadow PnL is a
+    statistical estimate (Kelly feedback loop), float precision is fine.
     """
+    from shared.decimal_boundary import to_float
+
     shadow["resolved"] = True
 
     direction = shadow.get("direction", 1)
-    entry_price = shadow.get("entry_price", 0)
+    entry_price = to_float(shadow.get("entry_price"))
     contracts = shadow.get("contracts", 1)
-    point_value = shadow.get("point_value", 50.0)
+    point_value = to_float(shadow.get("point_value"), default=50.0)
+    exit_price_f = to_float(exit_price)
 
     if entry_price is None or entry_price == 0:
         logger.warning("Shadow resolve skipped — no entry price for %s", shadow["signal_id"])
         return
 
-    gross_pnl = (exit_price - entry_price) * direction * contracts * point_value
+    gross_pnl = (exit_price_f - entry_price) * direction * contracts * point_value
 
     theoretical_outcome = {
         "trade_id": f"SHADOW-{uuid.uuid4().hex[:12].upper()}",
@@ -201,17 +216,21 @@ def _infer_entry(signal: dict) -> float | None:
             return float(ac_detail["entry_price"])
 
     # Compute from TP/SL midpoint as last resort (ORB strategy: entry is between TP and SL)
+    # Bug C: tp/sl arrive as Decimal via parse_json_decimal; coerce to
+    # float because the entry-inference is a heuristic estimate and the
+    # caller stores it back into the shadow dict for display only.
+    from shared.decimal_boundary import to_float
+
     tp = signal.get("tp_level")
     sl = signal.get("sl_level")
     direction = signal.get("direction", 0)
     if tp is not None and sl is not None and direction != 0:
-        # For ORB: entry divides TP-SL range at sl_multiple/(tp_multiple+sl_multiple)
-        # Default tp_multiple=0.95, sl_multiple=0.05 → entry is 1/20 from SL toward TP
-        # Simpler: entry = SL + (TP-SL) * sl_frac where sl_frac = 0.05/(0.05+0.95) = 1/20
+        tp_f = to_float(tp)
+        sl_f = to_float(sl)
         if direction == 1:
-            return sl + (tp - sl) / 3.0
+            return sl_f + (tp_f - sl_f) / 3.0
         else:
-            return tp + (sl - tp) / 3.0
+            return tp_f + (sl_f - tp_f) / 3.0
 
     return None
 

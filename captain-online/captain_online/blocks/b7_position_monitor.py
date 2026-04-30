@@ -186,12 +186,24 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
 
     Called every 10 seconds by the orchestrator while positions are open.
     Returns list of resolved positions (removed from open_positions).
+
+    Decimal/float boundary discipline (2026-04-30 Bug C, third sister-bug
+    after Bug A round 2):
+      * Position state (tp_level, sl_level, entry_price, risk_amount)
+        flows through Redis stream payloads via parse_json_decimal /
+        loads_decimal -> Decimal-typed.
+      * current_price comes from the live quote stream (TopstepX) -> float.
+      * Arithmetic between them tripped TypeError at NY open today.
+      * Fix: coerce ALL price fields via `_money_d` (alias for
+        shared.decimal_boundary.as_money) ONCE at the top of each
+        iteration. Use Decimal end-to-end for arithmetic and comparisons,
+        convert to float only when notifying / formatting / publishing.
     """
     resolved = []
 
     for pos in open_positions:
-        current_price = _get_live_price(pos["asset"])
-        if current_price is None:
+        current_price_raw = _get_live_price(pos["asset"])
+        if current_price_raw is None:
             continue
 
         # Bug A guard: ALWAYS resolve from D00; never trust pos["point_value"]
@@ -211,41 +223,52 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
             )
             continue
 
+        # Bug C boundary: coerce every position-state monetary field to
+        # Decimal once. tp/sl/entry_price come from Redis (Decimal after
+        # loads_decimal); current_price comes from the live quote stream
+        # (float). Arithmetic and comparison stay Decimal end-to-end.
+        current_price = _money_d(current_price_raw)
+        entry_price = _money_d(pos.get("entry_price", 0))
+        risk_amount = _money_d(pos.get("risk_amount", 1))
+        tp = _money_d(pos["tp_level"]) if pos.get("tp_level") is not None else None
+        sl = _money_d(pos["sl_level"]) if pos.get("sl_level") is not None else None
+
         # P&L tracking (Decimal arithmetic; float on pos for downstream % calcs)
         direction = pos.get("direction", 1)
-        entry_price = pos.get("entry_price", 0)
         contracts = pos.get("contracts", 0)
         cp = (
-            (_money_d(current_price) - _money_d(entry_price))
+            (current_price - entry_price)
             * Decimal(direction)
             * Decimal(contracts)
             * pv
         )
         pos["current_pnl"] = float(cp)
-        risk_amount = pos.get("risk_amount", 1)
         pos["pnl_pct"] = (
-            float(cp / _money_d(risk_amount)) if risk_amount > 0 else 0.0
+            float(cp / risk_amount) if risk_amount > 0 else 0.0
         )
 
-        # TP/SL proximity
-        tp = pos.get("tp_level")
-        sl = pos.get("sl_level")
-
-        if tp and entry_price:
+        # TP/SL proximity (Decimal arithmetic throughout)
+        if tp is not None and entry_price > 0:
             tp_range = abs(tp - entry_price)
-            tp_distance = abs(tp - current_price) / tp_range if tp_range > 0 else 1.0
+            tp_distance = (
+                abs(tp - current_price) / tp_range if tp_range > 0 else Decimal("1")
+            )
 
-            if tp_distance < 0.10:
+            if tp_distance < Decimal("0.10"):
                 _notify(pos["user_id"], "HIGH",
-                        f"TP approaching for {pos['asset']}: {current_price} vs TP {tp}")
+                        f"TP approaching for {pos['asset']}: "
+                        f"{float(current_price)} vs TP {float(tp)}")
 
-        if sl and entry_price:
+        if sl is not None and entry_price > 0:
             sl_range = abs(sl - entry_price)
-            sl_distance = abs(sl - current_price) / sl_range if sl_range > 0 else 1.0
+            sl_distance = (
+                abs(sl - current_price) / sl_range if sl_range > 0 else Decimal("1")
+            )
 
-            if sl_distance < 0.10:
+            if sl_distance < Decimal("0.10"):
                 _notify(pos["user_id"], "CRITICAL",
-                        f"SL approaching for {pos['asset']}: {current_price} vs SL {sl}")
+                        f"SL approaching for {pos['asset']}: "
+                        f"{float(current_price)} vs SL {float(sl)}")
 
         # VIX spike alert
         _check_vix_spike(pos)
@@ -255,16 +278,17 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
             _notify(pos["user_id"], "CRITICAL",
                     f"Regime shift detected for {pos['asset']} — review position")
 
-        # Position resolution — TP/SL hit
-        if tp:
+        # Position resolution — TP/SL hit (Decimal comparison; pass float
+        # exit_price to resolve_position which already coerces internally)
+        if tp is not None:
             if (direction == 1 and current_price >= tp) or (direction == -1 and current_price <= tp):
-                resolve_position(pos, "TP_HIT", current_price, tsm_configs)
+                resolve_position(pos, "TP_HIT", float(current_price), tsm_configs)
                 resolved.append(pos)
                 continue
 
-        if sl:
+        if sl is not None:
             if (direction == 1 and current_price <= sl) or (direction == -1 and current_price >= sl):
-                resolve_position(pos, "SL_HIT", current_price, tsm_configs)
+                resolve_position(pos, "SL_HIT", float(current_price), tsm_configs)
                 resolved.append(pos)
                 continue
 
@@ -278,7 +302,7 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
                 if datetime.now(ZoneInfo("America/New_York")) >= buffer_time:
                     _notify(pos["user_id"], "CRITICAL",
                             f"TIME EXIT: {pos['asset']} closing — account does not allow overnight")
-                    resolve_position(pos, "TIME_EXIT", current_price, tsm_configs)
+                    resolve_position(pos, "TIME_EXIT", float(current_price), tsm_configs)
                     resolved.append(pos)
                     continue
 

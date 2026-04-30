@@ -936,20 +936,29 @@ class OnlineOrchestrator:
         user_id = data.get("user_id")
 
         if action == "TAKEN":
-            # Create open position for B7 monitoring
+            # Bug C boundary (2026-04-30): `data` came from a Redis stream
+            # message reassembled via loads_decimal, so monetary fields
+            # are Decimal-typed. Coerce all price / monetary fields via
+            # the shared boundary helpers so the open_positions dict is
+            # type-pure for monitor_positions / shadow_monitor downstream.
+            from shared.decimal_boundary import as_money, as_money_or_none
             position = {
                 "signal_id": signal_id,
                 "user_id": user_id,
                 "asset": data.get("asset"),
                 "direction": 1 if data.get("direction") in (1, "BUY") else -1 if data.get("direction") in (-1, "SELL") else int(data.get("direction") or 1),
-                "entry_price": data.get("actual_entry_price", data.get("entry_price")),
-                "signal_entry_price": data.get("entry_price"),
-                "actual_entry_price": data.get("actual_entry_price"),
-                "contracts": data.get("contracts", 0),
-                "tp_level": data.get("tp_level"),
-                "sl_level": data.get("sl_level"),
-                "point_value": data.get("point_value", 50.0),
-                "risk_amount": data.get("risk_amount", 0),
+                "entry_price": as_money_or_none(
+                    data.get("actual_entry_price")
+                    if data.get("actual_entry_price") is not None
+                    else data.get("entry_price")
+                ),
+                "signal_entry_price": as_money_or_none(data.get("entry_price")),
+                "actual_entry_price": as_money_or_none(data.get("actual_entry_price")),
+                "contracts": int(data.get("contracts", 0) or 0),
+                "tp_level": as_money_or_none(data.get("tp_level")),
+                "sl_level": as_money_or_none(data.get("sl_level")),
+                "point_value": as_money(data.get("point_value"), default=as_money(50)),
+                "risk_amount": as_money(data.get("risk_amount")),
                 "account": data.get("account_id"),
                 "session": data.get("session"),
                 "regime_state": data.get("regime_state"),
@@ -966,10 +975,16 @@ class OnlineOrchestrator:
                 self.shadow_positions = [
                     s for s in self.shadow_positions if s.get("signal_id") != signal_id
                 ]
+            # Bug C: position dict now holds Decimals (Phase 5 type purity).
+            # Use dumps_decimal so Decimal serialises as a string in the
+            # Redis hash; the corresponding read path is _reconcile_open_positions
+            # which already coerces back to float on recovery (line 116).
             pos_for_redis = dict(position)
             pos_for_redis["entry_time"] = position["entry_time"].isoformat()
             try:
-                get_redis_client().hset(REDIS_KEY_OPEN_POSITIONS, signal_id, json.dumps(pos_for_redis))
+                from shared.decimal_json import dumps_decimal
+                get_redis_client().hset(REDIS_KEY_OPEN_POSITIONS, signal_id,
+                                        dumps_decimal(pos_for_redis))
             except Exception as exc:
                 logger.error("Failed to persist position to Redis: %s", exc)
             logger.info("Position opened: %s for user %s (%d contracts)",
