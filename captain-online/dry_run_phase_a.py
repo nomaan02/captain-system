@@ -21,6 +21,8 @@ import sys
 
 sys.path.insert(0, "/app")
 
+from shared.decimal_boundary import as_money, to_float
+
 logging.basicConfig(
     level=logging.INFO,
     format="[DRY-RUN] %(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -190,21 +192,27 @@ def main():
             results[f"silo_{user_id}"] = FAIL
             continue
 
+        # Phase 4 boundary discipline: D16 monetary fields stay Decimal
+        # via as_money so this dry-run mirrors the production orchestrator
+        # path. The display arithmetic below converts at the explicit
+        # to_float boundary.
         user_silo = {
             "user_id": row[0],
-            "starting_capital": row[1] or 0,
-            "total_capital": row[2] or 0,
+            "starting_capital": as_money(row[1]),
+            "total_capital": as_money(row[2]),
             "accounts": row[3] or "[]",
             "max_simultaneous_positions": row[4],
-            "max_portfolio_risk_pct": row[5] or 0.10,
-            "correlation_threshold": row[6] or 0.7,
-            "user_kelly_ceiling": row[7] or 1.0,
+            "max_portfolio_risk_pct": row[5] if row[5] is not None else 0.10,  # decimal-boundary: ok
+            "correlation_threshold": row[6] if row[6] is not None else 0.7,  # decimal-boundary: ok
+            "user_kelly_ceiling": row[7] if row[7] is not None else 1.0,  # decimal-boundary: ok
         }
 
         accounts = parse_json(user_silo.get("accounts", "[]"), [])
+        _total = to_float(user_silo["total_capital"])
+        _starting = to_float(user_silo["starting_capital"])
         logger.info("  Capital: $%.0f / $%.0f (%.1f%% drawdown)",
-                     user_silo["total_capital"], user_silo["starting_capital"],
-                     (1 - user_silo["total_capital"] / max(user_silo["starting_capital"], 1)) * 100)
+                     _total, _starting,
+                     (1 - _total / max(_starting, 1.0)) * 100)
         logger.info("  Accounts: %s", accounts)
         logger.info("  Max positions: %s", user_silo["max_simultaneous_positions"])
 

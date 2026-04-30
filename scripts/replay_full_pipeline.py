@@ -743,8 +743,8 @@ def run_replay(target_date: date, session_type: str = "NY"):
                     logger.info("*** OR BREAKOUT: %s %s at %.2f (range=%.4f) at %s ***",
                                 asset,
                                 "LONG" if state.direction == 1 else "SHORT",
-                                state.entry_price or 0,
-                                state.or_range or 0,
+                                state.entry_price or 0,  # decimal-boundary: ok (price for log display only, not arithmetic)
+                                state.or_range or 0,  # decimal-boundary: ok (or_range is a price range, not money)
                                 t_et.strftime("%H:%M:%S ET"))
                 else:
                     logger.info("*** OR EXPIRED: %s — no breakout within cutoff ***", asset)
@@ -762,8 +762,8 @@ def run_replay(target_date: date, session_type: str = "NY"):
             # Convert to dict for Phase B
             state_dict = {
                 "direction": state.direction,
-                "entry_price": state.entry_price or 0,
-                "or_range": state.or_range or 0,
+                "entry_price": state.entry_price or 0,  # decimal-boundary: ok (price for downstream simulation; OR tracker uses native floats)
+                "or_range": state.or_range or 0,  # decimal-boundary: ok (or_range is a price range, not money)
                 "state": state.state.value,
             }
             result = run_phase_b(asset, state_dict, phase_a,

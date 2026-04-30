@@ -295,7 +295,7 @@ def _rpt04_aim_effectiveness(user_id: str, params: dict) -> str:
                 aim_id, asset_id, status,
                 round(inc_prob, 4) if inc_prob else None,
                 inc_flag,
-                days_below or 0,
+                days_below or 0,  # decimal-boundary: ok (counter, not money)
                 round(effectiveness, 4) if effectiveness else None,
                 stats["total"],
                 round(accuracy, 1) if accuracy is not None else None,

@@ -523,8 +523,8 @@ def _update_capital_and_cb(
             d16_accounts = None
 
         # D23 circuit breaker
-        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec
-        n_t = (d23_row[1] or 0) + 1 if d23_row else 1
+        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
+        n_t = (d23_row[1] or 0) + 1 if d23_row else 1  # decimal-boundary: ok (n_t is a trade count, not money)
         l_b = parse_json_decimal(d23_row[2], {}) if d23_row else {}
         n_b = parse_json(d23_row[3], {}) if d23_row else {}
         if model_m:

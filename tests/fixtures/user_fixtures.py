@@ -76,7 +76,11 @@ def make_tsm_config(account_id="acc_eval_1", category="PROP_EVAL",
             tp = {}
         c = tp.get("c", 0.5)
         e = tp.get("e", 0.01)
-        bal = base.get("current_balance", 0.0) or 0.0
+        # Test fixture: float bal is fine here because c, e are plain floats
+        # (test scenario constants). Production code uses Decimal end-to-end
+        # via shared.decimal_boundary.as_money — see b8_reconciliation.
+        bal_raw = base.get("current_balance", 0.0)
+        bal = float(bal_raw) if bal_raw is not None else 0.0  # decimal-boundary: ok (test fixture)
         base["topstep_state"] = json.dumps({
             "computed_sod": {
                 "L_halt": c * e * bal,

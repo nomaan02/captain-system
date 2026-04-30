@@ -452,8 +452,8 @@ def _load_aim_states_and_weights(assets: list[str], cur):
         aim_weights[key] = {
             "inclusion_probability": inc_prob if inc_prob is not None else 1.0,
             "inclusion_flag": inc_flag if inc_flag is not None else True,
-            "recent_effectiveness": effectiveness or 0.0,
-            "days_below_threshold": days_below or 0,
+            "recent_effectiveness": effectiveness or 0.0,  # decimal-boundary: ok (effectiveness is dimensionless score)
+            "days_below_threshold": days_below or 0,  # decimal-boundary: ok (counter, not money)
         }
 
     return aim_states, aim_weights

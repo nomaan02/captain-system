@@ -394,8 +394,8 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
         return max(cap, 0)
 
     elif category in ("BROKER_RETAIL", "BROKER_INSTITUTIONAL"):
-        margin = _to_float(tsm.get("margin_per_contract") or 0)
-        buffer = _to_float(tsm.get("margin_buffer_pct") or 1.5)
+        margin = _to_float(tsm.get("margin_per_contract") or 0)  # decimal-boundary: ok (defensive: _to_float coerces Decimal first)
+        buffer = _to_float(tsm.get("margin_buffer_pct") or 1.5)  # decimal-boundary: ok (margin_buffer_pct is a ratio, not money)
         balance = _to_float(tsm.get("current_balance", 0))
         if margin > 0:
             cap = math.floor(balance / (margin * buffer))

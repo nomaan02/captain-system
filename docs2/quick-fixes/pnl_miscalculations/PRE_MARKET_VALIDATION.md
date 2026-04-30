@@ -15,12 +15,13 @@ prevents trading — signals never reach the broker, or reach it with wrong sizi
 guide exercises every layer from market data streaming through order placement in a
 sequence that surfaces any hidden error before the next session open.
 
-Two real-world incidents that this guide would have caught:
+Three real-world incidents that this guide would have caught:
 
 | Incident | What happened | Test that catches it |
 |---|---|---|
 | 2026-04-29 Bug A | `b7_position_monitor` used ES point value ($50) for all assets, inflating non-ES PnL by 5×–100×, tripping silo drawdown | T1 dry-run produces wrong gross_pnl for non-ES assets; T5 D08 drawdown check shows mismatch vs broker balance |
 | 2026-04-29 B4 crash | Phase A Decimal migration left D08 monetary fields as `Decimal` type; B4 Kelly sizing tried `Decimal - float` and crashed, killing the whole session | T1 dry-run session 1 crashes at B4 stage before even producing a verdict |
+| 2026-04-30 B6 crash | Same Phase A migration: `b6_signal_output._build_per_account` did `mdd_limit - current_dd` where the antipattern `r[N] or 0.0` collapsed `Decimal('0.00')` to float, producing a type-mixed dict. Fired on every account at NY/APAC open. | T2 lint: `pytest tests/test_decimal_boundary_lint.py` blocks any new `or 0.0` on monetary columns; T1 dry-run also exercises B6 indirectly via signal publication |
 
 ---
 
@@ -325,27 +326,52 @@ cap-run update_vix_daily.py
 
 ### T2.6 — Regression tests (host venv or in container)
 
-These are the pytest tests that pin the two specific bugs fixed on 2026-04-29.
+These are the pytest tests that pin the bugs fixed on 2026-04-29 and 2026-04-30.
 
 ```fish
 # Host venv (faster)
 set -gx PYTHONPATH $PWD $PWD/captain-online $PWD/captain-offline $PWD/captain-command
-python -B -m pytest tests/test_b7_pnl_per_symbol.py tests/test_b4_kelly.py -v
+python -B -m pytest \
+    tests/test_b7_pnl_per_symbol.py \
+    tests/test_b4_kelly.py \
+    tests/test_decimal_boundary.py \
+    tests/test_b6_decimal_d08_boundary.py \
+    tests/test_reconciliation_decimal_boundary.py \
+    tests/test_tsm_simulation_decimal_input.py \
+    tests/test_kelly_fee_schedule_decimal.py \
+    tests/test_decimal_boundary_lint.py \
+    -v
 
 # OR inside container (no venv needed)
 dco exec -T -e PYTHONPATH=/app captain-online \
-    python -B -m pytest /app/tests/test_b7_pnl_per_symbol.py /app/tests/test_b4_kelly.py -v
+    python -B -m pytest /app/tests/test_b7_pnl_per_symbol.py \
+        /app/tests/test_b4_kelly.py /app/tests/test_decimal_boundary.py \
+        /app/tests/test_b6_decimal_d08_boundary.py \
+        /app/tests/test_reconciliation_decimal_boundary.py \
+        /app/tests/test_tsm_simulation_decimal_input.py \
+        /app/tests/test_kelly_fee_schedule_decimal.py \
+        /app/tests/test_decimal_boundary_lint.py -v
 ```
 
 **What it tests:**
-- `test_b7_pnl_per_symbol.py` — 27 cases. Verifies `resolve_position` uses D00
-  `point_value` for each asset (ES, MES, MNQ, M2K, MGC, MYM, NKD, NQ, ZB, ZN) and
-  that the historic `pos.get("point_value", 50.0)` default is gone. Also verifies
-  `PointValueResolutionError` is raised (not defaulted) when D00 is missing.
-- `test_b4_kelly.py` — Verifies Kelly helpers compute correctly and `_to_float`
-  coerces D08 Decimal fields without raising TypeError.
+- `test_b7_pnl_per_symbol.py` (27 cases) — `resolve_position` uses D00 `point_value`
+  per asset; historic 50.0 default cascade is gone; raises on D00 miss.
+- `test_b4_kelly.py` — Kelly helpers compute correctly and `_to_float` coerces
+  D08 Decimal fields without TypeError.
+- `test_decimal_boundary.py` (27 cases) — `as_money` / `as_money_or_none` /
+  `to_float` / `assert_money_dict` primitives.
+- `test_b6_decimal_d08_boundary.py` — exact NY-open 2026-04-30 failure mode
+  (zero `current_drawdown` + zero `daily_loss_used` + Decimal `max_drawdown_limit`).
+- `test_reconciliation_decimal_boundary.py` — broker-float vs system-Decimal
+  mismatch path + new CRITICAL log + GUI alert when reconciliation fails.
+- `test_tsm_simulation_decimal_input.py` — `run_tsm_simulation` accepts a fully
+  Decimal-typed `tsm_config` (was the silent TypeError mode in offline MC).
+- `test_kelly_fee_schedule_decimal.py` — Phase-A-encoded `fee_schedule` JSON
+  round-trips through `parse_json_decimal` + `as_money` correctly.
+- `test_decimal_boundary_lint.py` — CI gate: refuses any new `or 0.0` antipattern
+  on monetary columns (calls `scripts/lint_decimal_boundary.py`).
 
-**Expected:** `44 passed`
+**Expected:** `~80 passed`
 
 **Fail:** Any FAILED line → the patch is not loaded. Re-checkout the branch and rebuild.
 

@@ -105,8 +105,8 @@ def _slot_features_for_day_sess(
     )
     row = cur.fetchone()
     if row:
-        n_signals = int(row[0] or 0)
-        session_pnl = float(row[1] or 0)
+        n_signals = int(row[0] or 0)  # decimal-boundary: ok (count, not money)
+        session_pnl = float(row[1] or 0)  # decimal-boundary: ok (defensive: float() coerces Decimal first)
         oo = row[2]
         mean_oo = float(oo if oo is not None else 0.0)
 
@@ -199,7 +199,7 @@ def build_observation_panel(
             prev_pnl = 0.0
             for d in weekdays:
                 for session_int in (1, 2, 3, 4):
-                    vx = get_vix_close_on_or_before(d) or 0.0
+                    vx = get_vix_close_on_or_before(d) or 0.0  # decimal-boundary: ok (VIX is a volatility index, not money)
                     vec, spnl = _slot_features_for_day_sess(
                         cur,
                         sess_date=d,
@@ -242,7 +242,7 @@ def build_single_observation_vector(
         )
         r7 = cur.fetchone()
         cross_mean = _mean_cross_asset_corr(r7[0] if r7 else None, asset_universe)
-        vx = get_vix_close_on_or_before(sess_date) or 0.0
+        vx = get_vix_close_on_or_before(sess_date) or 0.0  # decimal-boundary: ok (VIX is a volatility index, not money)
         vec, _ = _slot_features_for_day_sess(
             cur,
             sess_date=sess_date,

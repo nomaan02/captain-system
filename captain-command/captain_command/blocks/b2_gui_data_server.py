@@ -731,7 +731,7 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                     "daily_dd_limit": str(mll.quantize(Decimal("0.01"))),
                     "daily_loss_used": str(daily_used.quantize(Decimal("0.01"))),
                     "daily_dd_used_pct": round(float(min(daily_pct, Decimal(100))), 1),
-                    "profit_target": str(Decimal(str(r[9] or 0)).quantize(Decimal("0.01"))),
+                    "profit_target": str(Decimal(str(r[9] or 0)).quantize(Decimal("0.01"))),  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
                     "pass_probability": r[6],
                 })
 

@@ -522,6 +522,7 @@ migration(decimal): phase C — capital silos, asset constants, OHLCV
 
 ## Cross-cutting rules (apply to every phase)
 
+- **Use `shared.decimal_boundary` at every Decimal/float crossing.** All read sites for DECIMAL columns and all dict-construction sites for monetary fields MUST use `as_money` / `as_money_or_none` / `to_float`. Per-file private `_money*` helpers were consolidated 2026-04-30 — never re-create them. The CI gate `tests/test_decimal_boundary_lint.py` blocks PRs that re-introduce the `r[N] or 0.0` antipattern. See `docs2/quick-fixes/fixing-decimal-errors/` for the audit.
 - **Read before write.** Before editing any file, read it in full to confirm its current state matches the audit. If it doesn't, stop and report.
 - **One phase at a time.** Do not preemptively touch anything that belongs to a later phase, even if convenient. The exception is Phase B's temporary `Decimal(str(point_value))` wrappers, which Phase C explicitly removes.
 - **Cite `file:line` in every phase report** for every change made. The Phase 1 audit's wide line ranges are NOT acceptable as citations — resolve them via F4 before making changes.

@@ -399,16 +399,19 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
         raw = 0
 
     # Step 7: MDD budget cap (remaining MDD / budget_divisor)
-    max_dd = tsm.get("max_drawdown_limit") or 999999
-    current_dd = tsm.get("current_drawdown") or 0
+    # `tsm` is loaded at line 578-581 below via to_float, so all monetary
+    # fields are float here. to_float() at point of use is defensive in
+    # case the caller injects raw Decimal/int values.
+    max_dd = to_float(tsm.get("max_drawdown_limit"), default=999999.0)
+    current_dd = to_float(tsm.get("current_drawdown"))
     remaining_mdd = max_dd - current_dd
     budget_divisor = 20  # default
     daily_budget = remaining_mdd / budget_divisor
     mdd_cap = math.floor(daily_budget / fallback_risk) if fallback_risk > 0 else 999
 
     # Step 8: Daily loss cap (MLL)
-    max_daily = tsm.get("max_daily_loss")
-    daily_used = tsm.get("daily_loss_used") or 0
+    max_daily = to_float(tsm.get("max_daily_loss")) if tsm.get("max_daily_loss") is not None else None
+    daily_used = to_float(tsm.get("daily_loss_used"))
     if max_daily and max_daily > 0:
         remaining_daily = max_daily - daily_used
         daily_cap = math.floor(remaining_daily / fallback_risk) if fallback_risk > 0 else 999
@@ -572,15 +575,17 @@ def main() -> int:
                 classification = json.loads(classification)
             except (json.JSONDecodeError, TypeError):
                 classification = {}
+        # Replay tsm dict: float at compute (offline, summary statistics)
+        # via to_float at the boundary so D08 DECIMAL columns flow cleanly.
         tsm = {
             "account_id": row[0],
             "classification": classification,
-            "starting_balance": row[2] or 150000,
-            "current_balance": row[3] or 150000,
-            "current_drawdown": row[4] or 0,
-            "daily_loss_used": row[5] or 0,
-            "max_drawdown_limit": row[6],
-            "max_daily_loss": row[7],
+            "starting_balance": to_float(row[2], default=150000.0),
+            "current_balance": to_float(row[3], default=150000.0),
+            "current_drawdown": to_float(row[4]),
+            "daily_loss_used": to_float(row[5]),
+            "max_drawdown_limit": to_float(row[6]) if row[6] is not None else None,
+            "max_daily_loss": to_float(row[7]) if row[7] is not None else None,
             "max_contracts": row[8] or 15,
             "risk_goal": row[10] or (classification.get("risk_goal", "GROW_CAPITAL") if classification else "GROW_CAPITAL"),
         }

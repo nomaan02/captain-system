@@ -42,6 +42,7 @@ from shared.redis_client import (
 )
 from shared.journal import write_checkpoint
 from shared.process_logger import ProcessLogger
+from shared.decimal_boundary import as_money, as_money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +281,7 @@ class OfflineOrchestrator:
                 run_bocpd_update,
                 persist_combined_detector_state,
             )
-            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)
+            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)  # decimal-boundary: ok (contracts is INT, not money)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
             if cp_prob and cp_prob > 0.5:
@@ -392,7 +393,7 @@ class OfflineOrchestrator:
                 run_bocpd_update,
                 persist_combined_detector_state,
             )
-            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)
+            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)  # decimal-boundary: ok (contracts is INT, not money)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
 
@@ -956,12 +957,17 @@ class OfflineOrchestrator:
             if not row:
                 return  # no TSM config for this account
 
+            # D08 monetary fields preserved as Decimal/None — downstream
+            # b7_tsm_simulation.run_tsm_simulation coerces at its function
+            # boundary via to_float (Phase 2 fix).
             tsm_config = {
-                "starting_balance": row[0] or 150000,
-                "current_balance": row[1] or row[0] or 150000,
-                "max_drawdown_limit": row[2],
-                "max_daily_loss": row[3],
-                "profit_target": row[4],
+                "starting_balance": as_money(row[0], default=as_money(150000)),
+                "current_balance": as_money(row[1] if row[1] is not None
+                                            else row[0],
+                                            default=as_money(150000)),
+                "max_drawdown_limit": as_money_or_none(row[2]),
+                "max_daily_loss": as_money_or_none(row[3]),
+                "profit_target": as_money_or_none(row[4]),
                 "risk_goal": row[5] or "PASS_EVAL",
                 "evaluation_end_date": str(row[6]) if row[6] else None,
             }

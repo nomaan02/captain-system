@@ -392,7 +392,7 @@ class ORTracker:
             session.breakout_time = now
             logger.info("OR BREAKOUT LONG: %s — price=%.4f > OR high=%.4f, "
                         "or_range=%.4f", session.asset_id, price,
-                        session.or_high, session.or_range or 0)
+                        session.or_high, session.or_range or 0)  # decimal-boundary: ok (or_range is a price range, not money)
 
         elif broke_low:
             session.state = ORState.BREAKOUT_SHORT
@@ -401,4 +401,4 @@ class ORTracker:
             session.breakout_time = now
             logger.info("OR BREAKOUT SHORT: %s — price=%.4f < OR low=%.4f, "
                         "or_range=%.4f", session.asset_id, price,
-                        session.or_low, session.or_range or 0)
+                        session.or_low, session.or_range or 0)  # decimal-boundary: ok (or_range is a price range, not money)

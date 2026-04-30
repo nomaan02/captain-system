@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Lint guard against the falsy-zero antipattern on monetary fields.
+
+Refuses new occurrences of `r[N] or 0.0` / `or 0` / `or 0.25` / `or 1.5`
+in lines that mention any DECIMAL-typed monetary column or that live
+inside the data-ingestion / silo / TSM-config code paths.
+
+Background
+----------
+Phase A (2026-04-28) migrated D08, D16, D23, D25, D28, D03, D00, D30
+monetary columns to DECIMAL. Decimal('0.00') is falsy in Python, so
+`r[N] or 0.0` collapses zero-valued Decimals to float, producing
+type-mixed dicts that trip TypeError on Decimal vs float arithmetic
+(NY/APAC open 2026-04-30).
+
+Suppression
+-----------
+Add `# decimal-boundary: ok` to a line for legitimate non-monetary
+defaults (e.g. probability `or 0.5`, divisor `or 1`).
+
+Exit codes
+----------
+0 = no findings
+1 = at least one violation (CI fails)
+"""
+from __future__ import annotations
+
+import os
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Phase A/B/C DECIMAL column names — any line that references one of these
+# AND uses the `or <number>` antipattern is a violation.
+MONETARY_COLUMN_NAMES = {
+    # D00
+    "point_value", "tick_size", "margin_per_contract",
+    # D03
+    "entry_price", "signal_entry_price", "exit_price",
+    "gross_pnl", "commission", "pnl", "slippage",
+    # D08
+    "starting_balance", "current_balance", "current_drawdown",
+    "daily_loss_used", "profit_target", "max_drawdown_limit",
+    "max_daily_loss", "commission_per_contract",
+    # D16
+    "starting_capital", "total_capital",
+    # D23 / D25
+    "l_t", "l_star",
+    # D28
+    "balance_at_event", "fee_charged", "payout_amount", "payout_net",
+    "tradable_balance", "reserve_balance",
+    # D30
+    "open", "high", "low", "close",
+}
+
+# `or <number>` antipattern. Catches: `or 0`, `or 0.0`, `or 0.25`, `or 1.5`,
+# `or 50.0`, `or 150000`, `or 4500`, etc. Excludes string boolean defaults
+# like `or "[]"` and dict defaults `or {}`.
+OR_NUMBER_RE = re.compile(r"\bor\s+\d+(?:\.\d+)?\b")
+
+SUPPRESSION_MARKER = "# decimal-boundary: ok"
+
+# Files / directories to skip — lint script itself, tests of the boundary,
+# canonical schema (DDL strings), and the migration docs.
+SKIP_GLOBS = {
+    "scripts/lint_decimal_boundary.py",
+    "tests/test_decimal_boundary.py",
+    "tests/test_decimal_boundary_lint.py",
+    "shared/decimal_boundary.py",
+    "shared/canonical_schemas.py",
+    "MONETARY_DECIMAL_MIGRATION_PLAN.md",
+    "MONETARY_DECIMAL_MERGE_VALIDATION.md",
+}
+
+# Column-name search is per-line — a line that mentions e.g. `"current_drawdown"`
+# OR has `r[6]` (typical TSM_state column index for current_drawdown) is in scope.
+# Index check is heuristic but catches the b1_data_ingestion regression shape.
+INGESTION_PATH_RE = re.compile(
+    r"(_load_tsm_configs|_load_active_assets|_load_user_silo|"
+    r"specs\[.*\]\s*=|tsm\s*=\s*\{|kelly_params\[.*\]\s*=|"
+    r"ewma_states\[.*\]\s*=)"
+)
+
+
+def _line_in_scope(line: str) -> bool:
+    """A line is in scope if it mentions a known monetary column name OR
+    sits inside a known data-ingestion construct."""
+    if any(col in line for col in MONETARY_COLUMN_NAMES):
+        return True
+    return bool(INGESTION_PATH_RE.search(line))
+
+
+def lint_file(path: Path) -> list[tuple[int, str]]:
+    findings = []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return findings
+
+    for i, line in enumerate(content.splitlines(), start=1):
+        if SUPPRESSION_MARKER in line:
+            continue
+        if not _line_in_scope(line):
+            continue
+        if OR_NUMBER_RE.search(line):
+            findings.append((i, line.rstrip()))
+    return findings
+
+
+def iter_python_files(root: Path):
+    skip = {str(root / s) for s in SKIP_GLOBS}
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Skip caches / vendored / venv / git / git worktrees
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in {".git", ".venv", "__pycache__", "node_modules",
+                          ".pytest_cache", "questdb", "redis", "claude-mem",
+                          ".audit-worktrees", "voicetree-10-4"}
+        ]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            full = Path(dirpath) / fn
+            rel = str(full)
+            if any(rel == s or rel.startswith(s + os.sep) for s in skip):
+                continue
+            yield full
+
+
+def main() -> int:
+    total = 0
+    files_with_findings = 0
+    for fp in iter_python_files(REPO_ROOT):
+        findings = lint_file(fp)
+        if not findings:
+            continue
+        files_with_findings += 1
+        rel = fp.relative_to(REPO_ROOT)
+        for lineno, snippet in findings:
+            print(f"{rel}:{lineno}: {snippet}")
+            total += 1
+
+    if total == 0:
+        print("decimal-boundary lint: 0 violations")
+        return 0
+
+    print()
+    print(f"decimal-boundary lint: {total} violation(s) "
+          f"across {files_with_findings} file(s)")
+    print()
+    print("FIX: replace `... or 0.0` with shared.decimal_boundary.as_money(...) "
+          "for monetary fields. For legitimate non-monetary defaults "
+          "(probability, divisor, dimensionless ratio) add suffix marker:")
+    print(f"    {SUPPRESSION_MARKER}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

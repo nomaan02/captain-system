@@ -23,6 +23,7 @@ from datetime import datetime
 
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client
+from shared.decimal_boundary import to_float
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -101,8 +102,11 @@ def _load_ewma_regime(asset_id: str, regime: str) -> dict:
     if total_trades == 0:
         return {"avg_win": 0.01, "avg_loss": 0.01}
 
-    avg_win = sum((r[2] or 0) * (r[4] or 0) for r in rows) / total_trades
-    avg_loss = sum((r[3] or 0) * (r[4] or 0) for r in rows) / total_trades
+    # D05 avg_win/avg_loss may be DECIMAL on later migrations; r[4] (n_trades)
+    # is LONG. Coerce monetary fields via to_float so the float-typed
+    # weighted average composes regardless of column type.
+    avg_win = sum(to_float(r[2]) * (r[4] or 0) for r in rows) / total_trades  # decimal-boundary: ok (r[4]=n_trades INT)
+    avg_loss = sum(to_float(r[3]) * (r[4] or 0) for r in rows) / total_trades  # decimal-boundary: ok (r[4]=n_trades INT)
 
     return {
         "avg_win": max(avg_win, 0.01),
