@@ -6,13 +6,20 @@ made `row[N] or 0` collapse to int.
 
 Marked real_questdb because it requires a live QuestDB. Skipped in
 static-only environments.
+
+QuestDB note: this table is append-only (no DELETE FROM). Each test run
+uses a unique time-suffixed user_id and leaves the row in place.
 """
 from __future__ import annotations
 
+import json
+import time
 from decimal import Decimal
 
 import pytest
 from psycopg2 import OperationalError
+
+from tests._qdb_helpers import wait_for_row
 
 pytestmark = pytest.mark.real_questdb
 
@@ -26,14 +33,14 @@ def _skip_if_no_questdb():
         pytest.skip("QuestDB not reachable")
 
 
-@pytest.fixture
-def insert_test_d16_row():
+def test_load_user_silo_type_purity():
+    """starting_capital / total_capital must be Decimal even at zero."""
     _skip_if_no_questdb()
-    """Insert a fresh D16 row with zero capital, yield user_id."""
     from shared.questdb_client import get_cursor
-    import json
+    from captain_online.blocks.orchestrator import OnlineOrchestrator
+    from shared.decimal_boundary import assert_money_dict
 
-    user_id = "type_purity_silo_user"
+    user_id = f"silo-type-purity-{int(time.time())}"
 
     with get_cursor() as cur:
         cur.execute(
@@ -57,22 +64,18 @@ def insert_test_d16_row():
             ),
         )
 
-    yield user_id
-
-    with get_cursor() as cur:
-        cur.execute(
-            "DELETE FROM p3_d16_user_capital_silos WHERE user_id = %s",
+        # Wait for WAL applier to make the row visible
+        row = wait_for_row(
+            cur,
+            """SELECT user_id FROM p3_d16_user_capital_silos
+               WHERE user_id = %s
+               ORDER BY last_updated DESC LIMIT 1""",
             (user_id,),
         )
-
-
-def test_load_user_silo_type_purity(insert_test_d16_row):
-    """starting_capital / total_capital must be Decimal even at zero."""
-    from captain_online.blocks.orchestrator import OnlineOrchestrator
-    from shared.decimal_boundary import assert_money_dict
+    assert row is not None, "row not visible after WAL wait"
 
     orch = OnlineOrchestrator.__new__(OnlineOrchestrator)
-    silo = orch._load_user_silo(insert_test_d16_row)
+    silo = orch._load_user_silo(user_id)
 
     assert silo is not None
     assert_money_dict(silo, "starting_capital", "total_capital")

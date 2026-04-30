@@ -7,13 +7,21 @@ dicts and tripped TypeError in b6_signal_output at NY open 2026-04-30.
 
 Marked real_questdb because it requires a live QuestDB with the Phase A
 DECIMAL schema applied. Skipped in static-only environments.
+
+QuestDB note: this table is append-only (no DELETE FROM). Each test run
+uses a unique time-suffixed account_id and leaves the row in place,
+matching the pattern in tests/test_d08_decimal_roundtrip.py.
 """
 from __future__ import annotations
 
+import json
+import time
 from decimal import Decimal
 
 import pytest
 from psycopg2 import OperationalError
+
+from tests._qdb_helpers import wait_for_row
 
 pytestmark = pytest.mark.real_questdb
 
@@ -27,15 +35,15 @@ def _skip_if_no_questdb():
         pytest.skip("QuestDB not reachable")
 
 
-@pytest.fixture
-def insert_test_d08_row():
+def test_load_tsm_configs_type_purity():
+    """Every monetary field must be Decimal (or None for nullable)."""
     _skip_if_no_questdb()
-    """Insert a fresh D08 row with explicit Decimal values, yield account_id."""
     from shared.questdb_client import get_cursor
-    import json
+    from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
+    from shared.decimal_boundary import assert_money_dict
 
-    account_id = "TYPE_PURITY_TEST"
-    user_id = "type_purity_test_user"
+    account_id = f"TYPE-PURITY-{int(time.time())}"
+    user_id = f"type_purity_user_{int(time.time())}"
 
     with get_cursor() as cur:
         cur.execute(
@@ -60,8 +68,8 @@ def insert_test_d08_row():
                 %s, %s,
                 %s, %s,
                 %s, %s, %s,
-                %s, now(), %s,
-                %s, %s,
+                %s, null, %s,
+                null, %s,
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, now()
@@ -76,32 +84,30 @@ def insert_test_d08_row():
                 json.dumps([]), True,
                 "09:30-16:00", Decimal("0.00"), 1.5,
                 0.65, "GROW_CAPITAL",
-                None, json.dumps({}),
+                json.dumps([]),
                 False, json.dumps({}), json.dumps({}),
                 json.dumps({}), json.dumps({}), False,
                 0,
             ),
         )
 
-    yield account_id
-
-    with get_cursor() as cur:
-        cur.execute(
-            "DELETE FROM p3_d08_tsm_state WHERE account_id = %s", (account_id,)
+        # Wait for WAL applier to make the row visible
+        row = wait_for_row(
+            cur,
+            """SELECT account_id FROM p3_d08_tsm_state
+               WHERE account_id = %s
+               ORDER BY last_updated DESC LIMIT 1""",
+            (account_id,),
         )
-
-
-def test_load_tsm_configs_type_purity(insert_test_d08_row):
-    """Every monetary field must be Decimal (or None for nullable)."""
-    from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
-    from shared.decimal_boundary import assert_money_dict
+    assert row is not None, "row not visible after WAL wait"
 
     configs = _load_tsm_configs()
-    assert insert_test_d08_row in configs, (
-        f"Account {insert_test_d08_row} not found in loaded TSM configs"
+    assert account_id in configs, (
+        f"Account {account_id} not found in loaded TSM configs "
+        f"(found {len(configs)} accounts)"
     )
 
-    cfg = configs[insert_test_d08_row]
+    cfg = configs[account_id]
     assert_money_dict(
         cfg,
         "starting_balance",
@@ -116,7 +122,8 @@ def test_load_tsm_configs_type_purity(insert_test_d08_row):
         allow_none=("profit_target", "max_drawdown_limit", "max_daily_loss"),
     )
 
-    # Spot check exact preservation of Decimal('0.00')
+    # Spot check exact preservation of Decimal('0.00') (the falsy-zero
+    # boundary case that was the NY-open 2026-04-30 failure mode).
     assert cfg["current_drawdown"] == Decimal("0.00")
     assert cfg["daily_loss_used"] == Decimal("0.00")
     assert cfg["max_drawdown_limit"] == Decimal("3000.00")
