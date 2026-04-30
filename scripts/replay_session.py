@@ -23,6 +23,12 @@ import sys
 import os
 from datetime import datetime, timedelta, date, time as dtime, timezone
 
+# Phase 3 boundary discipline: all D08/D16/D00/D12/D05 reads coerce
+# through to_float so the float-typed sizing math composes cleanly with
+# Phase A's DECIMAL columns. See shared/decimal_boundary.py.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.decimal_boundary import to_float
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "captain-online"))
@@ -289,7 +295,7 @@ def simulate_orb(bars: list[dict], asset_id: str, session_type: str,
         exit_time = post_or[-1]["time"]
 
     pnl_per_contract = (exit_price - entry_price) * direction
-    point_value = spec.get("point_value", 50.0)
+    point_value = to_float(spec.get("point_value"), default=50.0)
     pnl_dollars = pnl_per_contract * point_value
 
     return {
@@ -328,7 +334,7 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
 
     Returns dict with contracts, kelly_raw, tsm_cap, risk_per_contract, etc.
     """
-    point_value = spec.get("point_value", 50.0)
+    point_value = to_float(spec.get("point_value"), default=50.0)
     # Phase 2 (F-04): unified SL distance via shared helper. Mirrors B4/B5C so
     # replay sizing produces the same `risk_per_contract` as production.
     try:
@@ -431,7 +437,7 @@ def compute_contracts(asset_id: str, pnl_per_contract: float, spec: dict,
         session_id=session_id,
         sl_distance=sl_dist,
         point_value=point_value,
-        fee_per_trade=tsm.get("commission_per_contract", 0.0) or 0.0,
+        fee_per_trade=to_float(tsm.get("commission_per_contract")),
         locked_strategies={asset_id: strategy} if strategy else None,
         assets_detail={asset_id: {"point_value": point_value}},
         open_positions=[],  # No live positions in replay
@@ -505,7 +511,11 @@ def main() -> int:
                     strategies[r[0]] = json.loads(r[1]) if isinstance(r[1], str) else r[1]
                 except (json.JSONDecodeError, TypeError):
                     strategies[r[0]] = {}
-                specs[r[0]] = {"point_value": r[2] or 50.0, "tick_size": r[3] or 0.25, "margin": r[4] or 0.0}
+                specs[r[0]] = {
+                    "point_value": to_float(r[2], default=50.0),
+                    "tick_size": to_float(r[3], default=0.25),
+                    "margin": to_float(r[4]),
+                }
 
     # Kelly params
     kelly_params = {}
@@ -517,7 +527,10 @@ def main() -> int:
             if key in seen:
                 continue
             seen.add(key)
-            kelly_params[key] = {"kelly_full": r[3] or 0.0, "shrinkage_factor": r[4] or 1.0}
+            kelly_params[key] = {
+                "kelly_full": to_float(r[3]),
+                "shrinkage_factor": to_float(r[4], default=1.0),
+            }
 
     # EWMA states
     ewma_states = {}
@@ -529,13 +542,17 @@ def main() -> int:
             if key in seen:
                 continue
             seen.add(key)
-            ewma_states[key] = {"win_rate": r[3] or 0.5, "avg_win": r[4] or 0.0, "avg_loss": r[5] or 0.0}
+            ewma_states[key] = {
+                "win_rate": to_float(r[3], default=0.5),
+                "avg_win": to_float(r[4]),
+                "avg_loss": to_float(r[5]),
+            }
 
     # Capital silo
     with get_cursor() as cur:
         cur.execute("SELECT total_capital, accounts, max_simultaneous_positions FROM p3_d16_user_capital_silos WHERE user_id = 'primary_user' ORDER BY last_updated DESC LIMIT 1")
         row = cur.fetchone()
-    user_capital = row[0] if row else 150000.0
+    user_capital = to_float(row[0], default=150000.0) if row else 150000.0
     max_positions = row[2] if row else 5
     print(f"  Capital: ${user_capital:,.0f}, max positions: {max_positions}")
 

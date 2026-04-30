@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, date, time as dtime, timezone
 from decimal import Decimal
 from typing import Any
 
+from shared.decimal_boundary import to_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,10 +92,13 @@ def load_replay_config(overrides: dict | None = None) -> dict:
                     )
                 except (json.JSONDecodeError, TypeError):
                     strategies[r[0]] = {}
+                # D00 monetary fields: Decimal for precise arithmetic in
+                # downstream sizing math; the explicit float boundary lives
+                # at use sites via to_float (see _compute_sizing).
                 specs[r[0]] = {
-                    "point_value": r[2] or 50.0,
-                    "tick_size": r[3] or 0.25,
-                    "margin": r[4] or 0.0,
+                    "point_value": to_float(r[2], default=50.0),
+                    "tick_size": to_float(r[3], default=0.25),
+                    "margin": to_float(r[4]),
                 }
 
     # --- Kelly params from D12 ---
@@ -109,9 +114,11 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             if key in seen:
                 continue
             seen.add(key)
+            # Kelly is a dimensionless fraction; coerce at boundary so
+            # downstream multiplication works regardless of column type.
             kelly_params[key] = {
-                "kelly_full": r[3] or 0.0,
-                "shrinkage_factor": r[4] or 1.0,
+                "kelly_full": to_float(r[3]),
+                "shrinkage_factor": to_float(r[4], default=1.0),
             }
 
     # --- EWMA states from D05 ---
@@ -127,10 +134,12 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             if key in seen:
                 continue
             seen.add(key)
+            # EWMA is statistical (per-contract dollar floats); coerce
+            # at boundary so D05 column type changes don't propagate.
             ewma_states[key] = {
-                "win_rate": r[3] or 0.5,
-                "avg_win": r[4] or 0.0,
-                "avg_loss": r[5] or 0.0,
+                "win_rate": to_float(r[3], default=0.5),
+                "avg_win": to_float(r[4]),
+                "avg_loss": to_float(r[5]),
             }
 
     # --- Capital silo from D16 ---
@@ -142,7 +151,9 @@ def load_replay_config(overrides: dict | None = None) -> dict:
             "LATEST ON last_updated PARTITION BY user_id"
         )
         row = cur.fetchone()
-    user_capital = row[0] if row else 150000.0
+    # D16 capital uses to_float so the Phase A DECIMAL column composes
+    # cleanly with the float-typed sizing math throughout this engine.
+    user_capital = to_float(row[0], default=150000.0) if row else 150000.0
     max_positions = row[2] if row else 5
 
     # Extract dynamic account_id from D16 accounts list
@@ -200,15 +211,21 @@ def load_replay_config(overrides: dict | None = None) -> dict:
                 if classification else "GROW_CAPITAL")
         )
         max_contracts = row[8] or 15
-        mdd_limit = row[6] or 4500.0
-        mll_limit = row[7] or 2250.0
-        current_drawdown = row[4] or 0.0
-        daily_loss_used = row[5] or 0.0
+        # D08 monetary fields → float for the float-typed sizing math
+        # used throughout this offline replay engine. Live code paths
+        # (b4_kelly_sizing, b5c_circuit_breaker, b7_position_monitor)
+        # keep Decimal end-to-end; replay can use float because the
+        # purpose is summary statistics (Sharpe, max DD) where float
+        # precision is more than adequate.
+        mdd_limit = to_float(row[6], default=4500.0)
+        mll_limit = to_float(row[7], default=2250.0)
+        current_drawdown = to_float(row[4])
+        daily_loss_used = to_float(row[5])
         tsm = {
             "account_id": row[0],
             "classification": classification,
-            "starting_balance": row[2] or 150000,
-            "current_balance": row[3] or 150000,
+            "starting_balance": to_float(row[2], default=150000.0),
+            "current_balance": to_float(row[3], default=150000.0),
             "current_drawdown": current_drawdown,
             "daily_loss_used": daily_loss_used,
             "max_drawdown_limit": mdd_limit,
@@ -295,13 +312,16 @@ def load_replay_config(overrides: dict | None = None) -> dict:
                 if key in seen_cb:
                     continue
                 seen_cb.add(key)
+                # D25 CB params: r_bar/sigma stay DOUBLE per migration
+                # spec, but coerce all numeric fields at the boundary so
+                # column-type drift doesn't break the regression formula.
                 cb_params[key] = {
-                    "r_bar": r[2] or 0.0,
-                    "beta_b": r[3] or 0.0,
-                    "sigma": r[4] or 0.0,
-                    "rho_bar": r[5] or 0.0,
+                    "r_bar": to_float(r[2]),
+                    "beta_b": to_float(r[3]),
+                    "sigma": to_float(r[4]),
+                    "rho_bar": to_float(r[5]),
                     "n_observations": r[6] or 0,
-                    "p_value": r[7] or 1.0,
+                    "p_value": to_float(r[7], default=1.0),
                 }
     except Exception:
         pass  # D25 may not be populated yet
@@ -1008,9 +1028,13 @@ def compute_contracts(
         raw = 0
 
     # Step 9: MDD budget cap (remaining MDD / budget_divisor)
+    # `tsm` was loaded via to_float at the boundary above, so all monetary
+    # fields are float here. Use to_float defensively in case `config`
+    # (replay caller-injected) carries Decimal/int values.
     tsm = config.get("_tsm", {})
-    max_dd = tsm.get("max_drawdown_limit") or config.get("mdd_limit", 999999)
-    current_dd = tsm.get("current_drawdown") or config.get("current_drawdown", 0)
+    max_dd = to_float(tsm.get("max_drawdown_limit") or config.get("mdd_limit"),
+                       default=999999.0)
+    current_dd = to_float(tsm.get("current_drawdown") or config.get("current_drawdown"))
     remaining_mdd = max_dd - current_dd
     budget_divisor = config.get("budget_divisor", 20)
     daily_budget = remaining_mdd / budget_divisor
@@ -1019,8 +1043,8 @@ def compute_contracts(
     )
 
     # Step 10: Daily loss cap (MLL)
-    max_daily = tsm.get("max_daily_loss") or config.get("mll_limit")
-    daily_used = tsm.get("daily_loss_used") or config.get("daily_loss_used", 0)
+    max_daily = to_float(tsm.get("max_daily_loss") or config.get("mll_limit"))
+    daily_used = to_float(tsm.get("daily_loss_used") or config.get("daily_loss_used"))
     if max_daily and max_daily > 0:
         remaining_daily = max_daily - daily_used
         daily_cap = (

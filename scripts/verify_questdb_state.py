@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from shared.questdb_client import get_connection, get_cursor  # noqa: E402
+from shared.decimal_boundary import to_float  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +536,10 @@ def check_d02_weights(cur, report: Report) -> None:
     for aim_id, asset_id, prob, flag, eff, dbt in rows:
         if asset_id not in EXPECTED_ASSETS:
             continue
-        by_asset[asset_id] = by_asset.get(asset_id, 0.0) + (prob or 0.0)
+        # `prob` is a probability in [0,1] — coerce via to_float so D02
+        # column-type drift (DOUBLE vs DECIMAL on later migrations) does
+        # not break the bootstrap-verification accumulator.
+        by_asset[asset_id] = by_asset.get(asset_id, 0.0) + to_float(prob)
         per_asset_count[asset_id] = per_asset_count.get(asset_id, 0) + 1
 
         if prob is None:

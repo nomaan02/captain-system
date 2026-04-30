@@ -31,8 +31,23 @@ from collections import defaultdict
 import numpy as np
 
 from shared.questdb_client import get_cursor
+from shared.decimal_boundary import to_float
 
 logger = logging.getLogger(__name__)
+
+
+def _money_get(d, key, default):
+    """Boundary helper: D08 monetary field -> float for offline pseudotrader.
+
+    Pseudotrader runs once a day on historical data and uses float
+    arithmetic throughout (numpy bootstrap, np.cumsum, np.std). The Phase
+    A DECIMAL columns flow into this module via tsm_config / account_config
+    dicts; coerce at the boundary so subtraction with float literals works.
+    """
+    raw = d.get(key)
+    if raw is None:
+        return default
+    return to_float(raw, default=default)
 
 # Anti-overfitting thresholds
 PBO_THRESHOLD = 0.5
@@ -288,18 +303,27 @@ def run_account_aware_replay(asset_id: str, update_type: str,
 
     # Extract constraints from account_config
     if account_config:
-        mdd_limit = account_config.get("max_drawdown_limit", 4500)
-        max_daily_loss = account_config.get("max_daily_loss")
+        # Phase 3 boundary: D08 monetary fields (DECIMAL post-Phase-A)
+        # arrive as Decimal in account_config; coerce to float at the
+        # boundary so the float-typed bootstrap math composes cleanly.
+        mdd_limit = _money_get(account_config, "max_drawdown_limit", 4500.0)
+        max_daily_loss = (
+            _money_get(account_config, "max_daily_loss", 0.0)
+            if account_config.get("max_daily_loss") is not None else None
+        )
         trading_hours = account_config.get("trading_hours")
         scaling_plan = account_config.get("scaling_plan")
         scaling_active = account_config.get("scaling_plan_active", False)
         consistency_rule = account_config.get("consistency_rule")
-        starting_balance = account_config.get("starting_balance", 150000)
+        starting_balance = _money_get(account_config, "starting_balance", 150000.0)
         max_contracts_micros = account_config.get("max_contracts", 15) * 10
         # Live accounts: no trailing MLL, use daily drawdown instead
-        max_daily_drawdown = account_config.get("max_daily_drawdown")
-        low_balance_threshold = account_config.get("low_balance_threshold", 10000)
-        low_balance_daily_dd = account_config.get("low_balance_daily_drawdown", 2000)
+        max_daily_drawdown = (
+            _money_get(account_config, "max_daily_drawdown", 0.0)
+            if account_config.get("max_daily_drawdown") is not None else None
+        )
+        low_balance_threshold = _money_get(account_config, "low_balance_threshold", 10000.0)
+        low_balance_daily_dd = _money_get(account_config, "low_balance_daily_drawdown", 2000.0)
         # Capital unlock (Live only): profit-target based reserve release
         capital_unlock = account_config.get("capital_unlock")
     else:
@@ -491,7 +515,7 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     if account_config:
         classification = account_config.get("classification", {})
         if classification.get("category") == "PROP_EVAL":
-            profit_target = account_config.get("profit_target", 0)
+            profit_target = _money_get(account_config, "profit_target", 0.0)
             if running_balance >= starting_balance + profit_target:
                 eval_result = "PASS"
             elif mdd_breached:
@@ -589,10 +613,15 @@ def fetch_active_accounts() -> list[dict]:
                 except (json.JSONDecodeError, TypeError):
                     row[json_field] = None
 
+        # Phase 3 boundary: D08 monetary fields stay raw here
+        # (DECIMAL or None). Per-pseudotrader-call coercion via _money_get
+        # at use sites — preserves nullable semantics for accounts where
+        # max_drawdown_limit / max_daily_loss / profit_target are NULL
+        # (BROKER_LIVE accounts).
         config = {
             "account_id": row.get("account_id"),
             "account_name": row.get("account_name"),
-            "starting_balance": row.get("starting_balance", 150000),
+            "starting_balance": row.get("starting_balance"),
             "max_drawdown_limit": row.get("max_drawdown_limit"),
             "max_daily_loss": row.get("max_daily_loss"),
             "profit_target": row.get("profit_target"),
@@ -1078,13 +1107,19 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
 
     # Extract account constraints (G-OFF-021: Doc 28 §3)
     if account_config:
-        mdd_limit = account_config.get("max_drawdown_limit")
-        max_daily_loss = account_config.get("max_daily_loss")
+        mdd_limit = (
+            _money_get(account_config, "max_drawdown_limit", 0.0)
+            if account_config.get("max_drawdown_limit") is not None else None
+        )
+        max_daily_loss = (
+            _money_get(account_config, "max_daily_loss", 0.0)
+            if account_config.get("max_daily_loss") is not None else None
+        )
         trading_hours = account_config.get("trading_hours")
         scaling_plan = account_config.get("scaling_plan")
         scaling_active = account_config.get("scaling_plan_active", False)
         consistency_rule = account_config.get("consistency_rule")
-        starting_balance = account_config.get("starting_balance", 150000)
+        starting_balance = _money_get(account_config, "starting_balance", 150000.0)
         max_contracts = account_config.get("max_contracts", 15)
         capital_unlock = account_config.get("capital_unlock")
     else:
@@ -1094,7 +1129,7 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
         scaling_plan = None
         scaling_active = False
         consistency_rule = None
-        starting_balance = cb_params.get("account_balance", 150000)
+        starting_balance = _money_get(cb_params, "account_balance", 150000.0)
         max_contracts = None
         capital_unlock = None
 
@@ -1168,8 +1203,11 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
                 continue
 
         # CB per-day state
-        account_balance_for_cb = cb_params.get("account_balance", running_balance)
-        mdd_for_cb = cb_params.get("mdd", cb_params.get("max_drawdown_limit", 4500))
+        account_balance_for_cb = _money_get(cb_params, "account_balance", running_balance)
+        mdd_for_cb = (
+            _money_get(cb_params, "mdd",
+                       _money_get(cb_params, "max_drawdown_limit", 4500.0))
+        )
         n_max = int(e * account_balance_for_cb / max(mdd_for_cb * p, 1))
         l_halt = c * e * account_balance_for_cb
 
@@ -1758,9 +1796,9 @@ def generate_forecast(trades: list[dict],
     if account_config:
         classification = account_config.get("classification", {})
         if classification.get("category") == "PROP_EVAL":
-            profit_target = account_config.get("profit_target", 9000)
-            mdd_limit = account_config.get("max_drawdown_limit", 4500)
-            starting_bal = account_config.get("starting_balance", 150000)
+            profit_target = _money_get(account_config, "profit_target", 9000.0)
+            mdd_limit = _money_get(account_config, "max_drawdown_limit", 4500.0)
+            starting_bal = _money_get(account_config, "starting_balance", 150000.0)
 
             # Simulate pass/fail over the full history
             pass_count = 0
