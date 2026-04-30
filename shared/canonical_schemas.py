@@ -85,9 +85,9 @@ CREATE TABLE IF NOT EXISTS p3_d00_asset_universe (
     locked_strategy STRING,
     roll_calendar STRING,
     exchange_timezone STRING,
-    point_value DOUBLE,
-    tick_size DOUBLE,
-    margin_per_contract DOUBLE,
+    point_value DECIMAL(14, 6),
+    tick_size DECIMAL(14, 8),
+    margin_per_contract DECIMAL(14, 6),
     session_hours STRING,
     session_schedule STRING,
     p1_data_path STRING,
@@ -216,20 +216,20 @@ CREATE TABLE IF NOT EXISTS p3_d08_tsm_state (
     user_id SYMBOL,
     name STRING,
     classification STRING,
-    starting_balance DOUBLE,
-    current_balance DOUBLE,
-    current_drawdown DOUBLE,
-    daily_loss_used DOUBLE,
-    profit_target DOUBLE,
-    max_drawdown_limit DOUBLE,
-    max_daily_loss DOUBLE,
+    starting_balance DECIMAL(18, 2),
+    current_balance DECIMAL(18, 2),
+    current_drawdown DECIMAL(18, 2),
+    daily_loss_used DECIMAL(18, 2),
+    profit_target DECIMAL(18, 2),
+    max_drawdown_limit DECIMAL(18, 2),
+    max_daily_loss DECIMAL(18, 2),
     max_contracts INT,
     scaling_plan STRING,
-    commission_per_contract DOUBLE,
+    commission_per_contract DECIMAL(18, 2),
     instrument_permissions STRING,
     overnight_allowed BOOLEAN,
     trading_hours STRING,
-    margin_per_contract DOUBLE,
+    margin_per_contract DECIMAL(18, 2),
     margin_buffer_pct DOUBLE,
     pass_probability DOUBLE,
     simulation_date TIMESTAMP,
@@ -296,8 +296,8 @@ CREATE TABLE IF NOT EXISTS p3_d16_user_capital_silos (
     user_id SYMBOL,
     status SYMBOL,
     role SYMBOL,
-    starting_capital DOUBLE,
-    total_capital DOUBLE,
+    starting_capital DECIMAL(18, 2),
+    total_capital DECIMAL(18, 2),
     accounts STRING,
     max_simultaneous_positions INT,
     max_portfolio_risk_pct DOUBLE,
@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS p3_d25_circuit_breaker_params (
     rho_bar DOUBLE,
     n_observations INT,
     p_value DOUBLE,
-    l_star DOUBLE,
+    l_star DECIMAL(18, 2),
     cold_start BOOLEAN,
     last_updated TIMESTAMP
 ) TIMESTAMP(last_updated) PARTITION BY MONTH WAL
@@ -383,7 +383,7 @@ DEDUP UPSERT KEYS(last_updated, account_id);
 D23_CIRCUIT_BREAKER_INTRADAY = """
 CREATE TABLE IF NOT EXISTS p3_d23_circuit_breaker_intraday (
     account_id SYMBOL,
-    l_t DOUBLE,
+    l_t DECIMAL(18, 2),
     n_t INT,
     l_b STRING,
     n_b STRING,
@@ -405,14 +405,14 @@ CREATE TABLE IF NOT EXISTS p3_d03_trade_outcome_log (
     account_id SYMBOL,
     asset SYMBOL,
     direction INT,
-    entry_price DOUBLE,
-    signal_entry_price DOUBLE,
-    exit_price DOUBLE,
+    entry_price DECIMAL(14, 6),
+    signal_entry_price DECIMAL(14, 6),
+    exit_price DECIMAL(14, 6),
     contracts INT,
-    gross_pnl DOUBLE,
-    commission DOUBLE,
-    pnl DOUBLE,
-    slippage DOUBLE,
+    gross_pnl DECIMAL(18, 4),
+    commission DECIMAL(18, 4),
+    pnl DECIMAL(18, 4),
+    slippage DECIMAL(18, 4),
     outcome STRING,
     entry_time TIMESTAMP,
     exit_time TIMESTAMP,
@@ -605,13 +605,13 @@ CREATE TABLE IF NOT EXISTS p3_d28_account_lifecycle (
     from_stage STRING,
     to_stage STRING,
     trigger STRING,
-    balance_at_event DOUBLE,
-    fee_charged DOUBLE,
-    payout_amount DOUBLE,
-    payout_net DOUBLE,
+    balance_at_event DECIMAL(18, 2),
+    fee_charged DECIMAL(18, 2),
+    payout_amount DECIMAL(18, 2),
+    payout_net DECIMAL(18, 2),
     payouts_taken INT,
-    tradable_balance DOUBLE,
-    reserve_balance DOUBLE,
+    tradable_balance DECIMAL(18, 2),
+    reserve_balance DECIMAL(18, 2),
     details STRING,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
@@ -640,10 +640,10 @@ D30_DAILY_OHLCV = """
 CREATE TABLE IF NOT EXISTS p3_d30_daily_ohlcv (
     asset_id SYMBOL,
     trade_date STRING,
-    open DOUBLE,
-    high DOUBLE,
-    low DOUBLE,
-    close DOUBLE,
+    open DECIMAL(14, 6),
+    high DECIMAL(14, 6),
+    low DECIMAL(14, 6),
+    close DECIMAL(14, 6),
     volume LONG,
     ts TIMESTAMP
 ) TIMESTAMP(ts) PARTITION BY YEAR WAL
@@ -882,6 +882,143 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M009_d06_add_tracking_days",
         "ALTER TABLE p3_d06_injection_history ADD COLUMN tracking_days INT",
+    ),
+    # --- Phase A (monetary DECIMAL): D08 TSM state ---
+    (
+        "M010_d08_starting_balance_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN starting_balance TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M011_d08_current_balance_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN current_balance TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M012_d08_current_drawdown_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN current_drawdown TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M013_d08_daily_loss_used_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN daily_loss_used TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M014_d08_profit_target_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN profit_target TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M015_d08_max_drawdown_limit_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN max_drawdown_limit TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M016_d08_max_daily_loss_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN max_daily_loss TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M017_d08_commission_per_contract_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN commission_per_contract TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M018_d08_margin_per_contract_to_decimal",
+        "ALTER TABLE p3_d08_tsm_state ALTER COLUMN margin_per_contract TYPE DECIMAL(18, 2)",
+    ),
+    # --- Phase A: D23 / D25 ---
+    (
+        "M019_d23_l_t_to_decimal",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday ALTER COLUMN l_t TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M020_d25_l_star_to_decimal",
+        "ALTER TABLE p3_d25_circuit_breaker_params ALTER COLUMN l_star TYPE DECIMAL(18, 2)",
+    ),
+    # --- Phase A: D28 account lifecycle ---
+    (
+        "M021_d28_balance_at_event_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN balance_at_event TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M022_d28_fee_charged_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN fee_charged TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M023_d28_payout_amount_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN payout_amount TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M024_d28_payout_net_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN payout_net TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M025_d28_tradable_balance_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN tradable_balance TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M026_d28_reserve_balance_to_decimal",
+        "ALTER TABLE p3_d28_account_lifecycle ALTER COLUMN reserve_balance TYPE DECIMAL(18, 2)",
+    ),
+    # --- Phase B (monetary DECIMAL): D03 trade outcome ---
+    (
+        "M027_d03_entry_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN entry_price TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M028_d03_signal_entry_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN signal_entry_price TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M029_d03_exit_price_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN exit_price TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M030_d03_gross_pnl_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN gross_pnl TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M031_d03_commission_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN commission TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M032_d03_pnl_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN pnl TYPE DECIMAL(18, 4)",
+    ),
+    (
+        "M033_d03_slippage_to_decimal",
+        "ALTER TABLE p3_d03_trade_outcome_log ALTER COLUMN slippage TYPE DECIMAL(18, 4)",
+    ),
+    # Phase C — capital silos, asset constants, daily OHLCV (MONETARY_DECIMAL_MIGRATION_PLAN)
+    (
+        "M034_d16_starting_capital_to_decimal",
+        "ALTER TABLE p3_d16_user_capital_silos ALTER COLUMN starting_capital TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M035_d16_total_capital_to_decimal",
+        "ALTER TABLE p3_d16_user_capital_silos ALTER COLUMN total_capital TYPE DECIMAL(18, 2)",
+    ),
+    (
+        "M036_d00_point_value_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN point_value TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M037_d00_tick_size_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN tick_size TYPE DECIMAL(14, 8)",
+    ),
+    (
+        "M038_d00_margin_per_contract_to_decimal",
+        "ALTER TABLE p3_d00_asset_universe ALTER COLUMN margin_per_contract TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M039_d30_open_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN open TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M040_d30_high_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN high TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M041_d30_low_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN low TYPE DECIMAL(14, 6)",
+    ),
+    (
+        "M042_d30_close_to_decimal",
+        "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN close TYPE DECIMAL(14, 6)",
     ),
 ]
 

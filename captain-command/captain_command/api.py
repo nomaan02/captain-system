@@ -26,6 +26,7 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 import jwt as pyjwt
@@ -530,6 +531,8 @@ def _make_json_safe(obj):
         return [_make_json_safe(v) for v in obj]
     if isinstance(obj, datetime):
         return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return format(obj, "f")
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     return obj

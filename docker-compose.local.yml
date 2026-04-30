@@ -32,6 +32,7 @@ services:
     volumes:
       - ./scripts:/captain/scripts:ro
       - ./captain-offline/captain_offline:/app/captain_offline:ro
+      - ${HOME}/captain-backups:/captain/backups
     deploy:
       resources:
         limits:
@@ -51,7 +52,9 @@ services:
 
   captain-command:
     volumes:
+      - ./scripts:/captain/scripts:ro
       - ./captain-command/captain_command:/app/captain_command:ro
+      - ${HOME}/captain-backups:/captain/backups
     deploy:
       resources:
         limits:

@@ -25,6 +25,7 @@ import math
 import os
 import threading
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from shared.questdb_client import get_cursor
@@ -33,6 +34,7 @@ from shared.constants import SYSTEM_TIMEZONE, now_et
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
 from shared.contract_resolver import resolve_contract_id
+from shared.decimal_json import loads_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -190,25 +192,32 @@ def _get_payout_panel(user_id: str) -> list[dict]:
             rows = cur.fetchall()
             for row in rows:
                 ac_id, tsm_name, balance, starting, mdd_limit, ts_state_raw = row
-                ts_state = json.loads(ts_state_raw) if ts_state_raw else {}
-                profit = balance - starting if balance and starting else 0
+                ts_state = loads_decimal(ts_state_raw) if ts_state_raw else {}
+                bal = Decimal(str(balance or 0))
+                st = Decimal(str(starting or 0))
+                profit = bal - st if balance and starting else Decimal("0")
+                mdd = Decimal(str(mdd_limit or 0))
 
                 payout_rules = ts_state.get("payout_rules", {})
-                max_per = payout_rules.get("max_per_payout", 5000)
-                max_pct = 0.50  # 50% of profit
-                commission_rate = payout_rules.get("commission_rate", 0.10)
-                tier_floor = payout_rules.get("scaling_tier_floor", 4500)
+                max_per = payout_rules.get("max_per_payout", Decimal("5000"))
+                if not isinstance(max_per, Decimal):
+                    max_per = Decimal(str(max_per))
+                max_pct = Decimal("0.5")
+                commission_rate = payout_rules.get("commission_rate", Decimal("0.10"))
+                if not isinstance(commission_rate, Decimal):
+                    commission_rate = Decimal(str(commission_rate))
+                tier_floor = payout_rules.get("scaling_tier_floor", Decimal("4500"))
+                if not isinstance(tier_floor, Decimal):
+                    tier_floor = Decimal(str(tier_floor))
 
-                # W(A) = min(max_per, max_pct * (A - starting))
-                w_max = min(max_per, max_pct * max(profit, 0))
-                net_amount = w_max * (1 - commission_rate) if w_max > 0 else 0
+                w_max = min(max_per, max_pct * max(profit, Decimal("0")))
+                net_amount = w_max * (Decimal("1") - commission_rate) if w_max > 0 else Decimal("0")
                 profit_after = profit - w_max
-                recommended = w_max >= 500 and profit > tier_floor
+                recommended = w_max >= Decimal("500") and profit > tier_floor
 
-                # MDD% calculations
-                mdd_pct_current = (mdd_limit / balance * 100) if balance and mdd_limit else 0
-                balance_after = balance - w_max if balance else 0
-                mdd_pct_after = (mdd_limit / balance_after * 100) if balance_after > 0 and mdd_limit else 0
+                mdd_pct_current = (mdd / bal * Decimal(100)) if bal and mdd else Decimal("0")
+                balance_after = bal - w_max if balance else Decimal("0")
+                mdd_pct_after = (mdd / balance_after * Decimal(100)) if balance_after > 0 and mdd else Decimal("0")
 
                 # Scaling tier lookup
                 tier_current = ts_state.get("scaling_tier", "unknown")
@@ -219,14 +228,14 @@ def _get_payout_panel(user_id: str) -> list[dict]:
                     "account_id": ac_id,
                     "tsm_name": tsm_name,
                     "recommended": recommended,
-                    "amount": round(w_max, 2),
-                    "net_after_commission": round(net_amount, 2),
-                    "profit_current": round(profit, 2),
-                    "profit_after": round(profit_after, 2),
+                    "amount": str(w_max.quantize(Decimal("0.01"))),
+                    "net_after_commission": str(net_amount.quantize(Decimal("0.01"))),
+                    "profit_current": str(profit.quantize(Decimal("0.01"))),
+                    "profit_after": str(profit_after.quantize(Decimal("0.01"))),
                     "tier_current": tier_current,
                     "tier_after": tier_after,
-                    "mdd_pct_current": round(mdd_pct_current, 2),
-                    "mdd_pct_after": round(mdd_pct_after, 2),
+                    "mdd_pct_current": round(float(mdd_pct_current), 2),
+                    "mdd_pct_after": round(float(mdd_pct_after), 2),
                     "payouts_remaining": payouts_remaining,
                 })
     except Exception as exc:
@@ -256,8 +265,7 @@ def _get_scaling_display(user_id: str) -> list[dict]:
             rows = cur.fetchall()
             for row in rows:
                 ac_id, balance, starting, ts_state_raw = row
-                ts_state = json.loads(ts_state_raw) if ts_state_raw else {}
-                profit = balance - starting if balance and starting else 0
+                ts_state = loads_decimal(ts_state_raw) if ts_state_raw else {}
 
                 current_max_micros = ts_state.get("current_max_micros", 0)
                 open_micros = ts_state.get("open_positions_micros", 0)
@@ -346,6 +354,15 @@ def _get_capital_silo(user_id: str, user_stream=None) -> dict:
     return result
 
 
+def _gui_money_json(v: Any) -> Any:
+    """Stringify Decimal monetary values for dashboard JSON (no float drift in wire)."""
+    if v is None:
+        return None
+    if isinstance(v, Decimal):
+        return format(v, "f")
+    return v
+
+
 def _get_open_positions(user_id: str) -> list[dict]:
     """Fetch open positions from P3-D03 (outcome is NULL = still open)."""
     try:
@@ -361,9 +378,9 @@ def _get_open_positions(user_id: str) -> list[dict]:
             return [
                 {
                     "signal_id": r[0], "asset": r[1], "direction": r[2],
-                    "entry_price": r[3], "contracts": r[4], "tp_level": None,
+                    "entry_price": _gui_money_json(r[3]), "contracts": r[4], "tp_level": None,
                     "sl_level": None, "account_id": r[5], "entry_time": r[6],
-                    "current_pnl": r[7],
+                    "current_pnl": _gui_money_json(r[7]),
                 }
                 for r in cur.fetchall()
             ]
@@ -406,10 +423,10 @@ def _get_closed_trades(user_id: str, limit: int = 50) -> list[dict]:
                     "asset": r[2],
                     "asset_id": r[2],
                     "direction": r[3],
-                    "entry_price": r[4],
-                    "exit_price": r[5],
+                    "entry_price": _gui_money_json(r[4]),
+                    "exit_price": _gui_money_json(r[5]),
                     "contracts": r[6],
-                    "pnl": r[7],
+                    "pnl": _gui_money_json(r[7]),
                     "outcome": r[8],
                     "entry_time": _serialize_trade_ts(r[9]),
                     "exit_time": exit_display,
@@ -692,27 +709,29 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                 account_id = r[0]
                 mdd_limit = r[3] or 0
                 starting_bal = r[7] or 0
-                # Only enrich the active account with live balance
                 is_active = active_account_id and str(account_id) == active_account_id
-                current_bal = live_balance if (live_balance is not None and is_active) else (r[2] or 0)
-                current_dd = r[8] or 0
-                # Drawdown used = peak - current (current_drawdown tracks this),
-                # or infer from starting_balance if current_drawdown not set
-                dd_used = current_dd if current_dd > 0 else max(starting_bal - current_bal, 0)
-                mdd_used_pct = (dd_used / mdd_limit * 100) if mdd_limit > 0 else 0
+                current_bal_raw = live_balance if (live_balance is not None and is_active) else (r[2] or 0)
+                mdd_d = Decimal(str(mdd_limit))
+                starting_d = Decimal(str(starting_bal))
+                current_d = Decimal(str(current_bal_raw))
+                current_dd = Decimal(str(r[8] or 0))
+                dd_used = current_dd if current_dd > 0 else max(starting_d - current_d, Decimal("0"))
+                mdd_used_pct = (dd_used / mdd_d * Decimal(100)) if mdd_d > 0 else Decimal("0")
 
-                mll = r[4] or 0
-                daily_used = r[5] or 0
-                daily_pct = (daily_used / mll * 100) if mll > 0 else 0
+                mll = Decimal(str(r[4] or 0))
+                daily_used = Decimal(str(r[5] or 0))
+                daily_pct = (daily_used / mll * Decimal(100)) if mll > 0 else Decimal("0")
 
                 results.append({
                     "account_id": account_id, "tsm_name": r[1],
-                    "starting_balance": starting_bal,
-                    "current_balance": current_bal,
-                    "mdd_limit": mdd_limit, "mdd_used_pct": round(min(mdd_used_pct, 100), 1),
-                    "daily_dd_limit": mll, "daily_loss_used": daily_used,
-                    "daily_dd_used_pct": round(min(daily_pct, 100), 1),
-                    "profit_target": r[9] or 0,
+                    "starting_balance": str(starting_d.quantize(Decimal("0.01"))),
+                    "current_balance": str(current_d.quantize(Decimal("0.01"))),
+                    "mdd_limit": str(mdd_d.quantize(Decimal("0.01"))),
+                    "mdd_used_pct": round(float(min(mdd_used_pct, Decimal(100))), 1),
+                    "daily_dd_limit": str(mll.quantize(Decimal("0.01"))),
+                    "daily_loss_used": str(daily_used.quantize(Decimal("0.01"))),
+                    "daily_dd_used_pct": round(float(min(daily_pct, Decimal(100))), 1),
+                    "profit_target": str(Decimal(str(r[9] or 0)).quantize(Decimal("0.01"))),
                     "pass_probability": r[6],
                 })
 

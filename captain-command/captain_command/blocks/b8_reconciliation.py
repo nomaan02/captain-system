@@ -30,6 +30,9 @@ from typing import Any, Callable
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
 from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, now_et
+from shared.json_helpers import parse_json_decimal
+from shared.decimal_json import dumps_decimal
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -191,66 +194,60 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         scaling_tier = lookup(profit)
     """
     try:
-        ts_state = json.loads(ac.get("topstep_state", "{}") or "{}")
-        ts_params = json.loads(ac.get("topstep_params", "{}") or "{}")
-        payout_rules = json.loads(ac.get("payout_rules", "{}") or "{}")
-        fee_schedule = json.loads(ac.get("fee_schedule", "{}") or "{}")
+        ts_state = parse_json_decimal(ac.get("topstep_state", "{}") or "{}", {})
+        ts_params = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
+        payout_rules = parse_json_decimal(ac.get("payout_rules", "{}") or "{}", {})
+        fee_schedule = parse_json_decimal(ac.get("fee_schedule", "{}") or "{}")
 
-        A = ac.get("current_balance", 0)
-        starting = ac.get("starting_balance", 150000)
+        A = Decimal(str(ac.get("current_balance", 0)))
+        starting = Decimal(str(ac.get("starting_balance", 150000)))
         profit = A - starting
 
         if A <= 0:
-            logger.warning("Account %s has non-positive balance: %.2f", ac_id, A)
+            logger.warning("Account %s has non-positive balance: %s", ac_id, A)
             return
 
-        p = ts_params.get("p", 0.005)
-        e = ts_params.get("e", 0.01)
-        c = ts_params.get("c", 0.5)
-        lam = ts_params.get("lambda", 0)
+        p = Decimal(str(ts_params.get("p", 0.005)))
+        e = Decimal(str(ts_params.get("e", 0.01)))
+        c = Decimal(str(ts_params.get("c", 0.5)))
 
-        # Default fee for primary instrument
         fees_by_inst = fee_schedule.get("fees_by_instrument", {})
-        phi = 0.0
+        phi = Decimal("0")
         if fees_by_inst:
-            # Use ES as default
             es_fees = fees_by_inst.get("ES", {})
-            phi = es_fees.get("round_turn", 0)
+            if isinstance(es_fees, dict):
+                phi = Decimal(str(es_fees.get("round_turn", 0)))
 
-        # f(A) — MDD as fraction of balance
-        mdd_limit = ac.get("max_drawdown_limit", 4500)
+        mdd_limit = Decimal(str(ac.get("max_drawdown_limit", 4500)))
         f_A = mdd_limit / A
 
-        # R_eff — effective risk per trade
         R_eff = p * f_A + phi / A
 
-        # N — max trades per day
         denom = mdd_limit * p + phi
-        N = math.floor((e * A) / denom) if denom > 0 else 0
+        N = math.floor((e * A / denom)) if denom > 0 else 0
 
-        # E — daily exposure budget
         E = e * A
-
-        # L_halt — hard halt threshold
         L_halt = c * e * A
 
-        # W(A) — max payout
-        max_per = payout_rules.get("max_per_payout", 5000)
-        max_pct = 0.50
-        commission_rate = payout_rules.get("commission_rate", 0.10)
-        tier_floor = payout_rules.get("scaling_tier_floor", 4500)
+        max_per = payout_rules.get("max_per_payout", Decimal("5000"))
+        if not isinstance(max_per, Decimal):
+            max_per = Decimal(str(max_per))
+        max_pct = Decimal("0.5")
+        commission_rate = payout_rules.get("commission_rate", Decimal("0.10"))
+        if not isinstance(commission_rate, Decimal):
+            commission_rate = Decimal(str(commission_rate))
+        tier_floor = payout_rules.get("scaling_tier_floor", Decimal("4500"))
+        if not isinstance(tier_floor, Decimal):
+            tier_floor = Decimal(str(tier_floor))
 
-        W = min(max_per, max_pct * max(A - starting, 0))
+        W = min(max_per, max_pct * max(A - starting, Decimal("0")))
 
-        # g(A) — post-payout MDD%
         balance_after_payout = A - W
-        g_A = mdd_limit / balance_after_payout if balance_after_payout > 0 else 0
+        g_A = (mdd_limit / balance_after_payout) if balance_after_payout > 0 else Decimal("0")
 
-        # Scaling tier — XFA-specific (only populate when scaling_plan_active).
-        # Eval/Live accounts skip this sub-block but still receive SOD params.
         if ac.get("scaling_plan_active"):
             from captain_command.blocks.b4_tsm_manager import get_scaling_tier
-            scaling = get_scaling_tier(ac, profit)
+            scaling = get_scaling_tier(ac, float(profit))
             scaling_plan = ts_state.get("scaling_plan", [])
             scaling_tier_label = scaling.get("tier_label", "")
             current_max_micros = scaling.get("max_micros", 0)
@@ -266,20 +263,21 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
             next_tier_label = ""
             tier_after_payout = ""
 
-        # Store computed params in P3-D08 topstep_state
+        q6 = Decimal("0.000001")
+        q2 = Decimal("0.01")
         computed = {
             "topstep_params": ts_params,
             "payout_rules": payout_rules,
             "fee_schedule": fee_schedule,
             "scaling_plan": scaling_plan,
             "computed_sod": {
-                "f_A": round(f_A, 6),
-                "R_eff": round(R_eff, 6),
+                "f_A": f_A.quantize(q6),
+                "R_eff": R_eff.quantize(q6),
                 "N_max_trades": N,
-                "E_daily_exposure": round(E, 2),
-                "L_halt": round(L_halt, 2),
-                "W_max_payout": round(W, 2),
-                "g_A_post_payout_mdd": round(g_A, 6),
+                "E_daily_exposure": E.quantize(q2),
+                "L_halt": L_halt.quantize(q2),
+                "W_max_payout": W.quantize(q2),
+                "g_A_post_payout_mdd": g_A.quantize(q6),
                 "computed_at": now_et().isoformat(),
             },
             "scaling_tier": scaling_tier_label,
@@ -291,12 +289,13 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
             "tier_after_payout": tier_after_payout,
         }
 
-        _persist_topstep_state_to_d08(ac_id, json.dumps(computed))
+        _persist_topstep_state_to_d08(ac_id, dumps_decimal(computed))
 
-        logger.info("SOD Topstep params computed for %s: f(A)=%.4f N=%d E=%.2f L_halt=%.2f",
-                    ac_id, f_A, N, E, L_halt)
+        logger.info(
+            "SOD Topstep params computed for %s: f(A)=%.4f N=%d E=%.2f L_halt=%.2f",
+            ac_id, float(f_A), N, float(E), float(L_halt),
+        )
 
-        # V3: Payout recommendation notification
         _check_payout_recommendation(
             ac_id, user_id, ac, profit, W, commission_rate,
             tier_floor, scaling, gui_push_fn, notify_fn,
@@ -312,8 +311,8 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
 
 
 def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
-                                  profit: float, W: float,
-                                  commission_rate: float, tier_floor: float,
+                                  profit: Any, W: Any,
+                                  commission_rate: Any, tier_floor: Any,
                                   scaling: dict, gui_push_fn: Callable,
                                   notify_fn: Callable | None):
     """Check if a payout is recommended using 4-step spec decision.
@@ -324,61 +323,64 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
     Step 3: Net after commission check (>= $500)
     Step 4: MDD% impact check
     """
+    profit_d = profit if isinstance(profit, Decimal) else Decimal(str(profit))
+    W_d = W if isinstance(W, Decimal) else Decimal(str(W))
+    cr = (
+        commission_rate if isinstance(commission_rate, Decimal)
+        else Decimal(str(commission_rate))
+    )
+    tf = tier_floor if isinstance(tier_floor, Decimal) else Decimal(str(tier_floor))
+
     # E7: Account-type-aware payout rules
     account_type = ac.get("account_type", "PROP_XFA")
     if account_type == "BROKER_LIVE":
-        commission_rate = 0.0  # Live accounts: 0% commission
-        # Live requires 30 winning days before payouts
+        cr = Decimal("0")
         winning_days = ac.get("winning_days", 0)
         if winning_days < 30:
-            return  # Not enough winning days for live payout
+            return
 
-    # Step 1: Tier-preserving max — ensure profit stays above tier floor
-    tier_preserving_max = profit - tier_floor
+    tier_preserving_max = profit_d - tf
     if tier_preserving_max <= 0:
-        return  # PROFIT_BELOW_TIER_FLOOR
+        return
 
-    # Step 2: Cap withdrawal to tier-preserving max
-    withdraw_amount = min(W, tier_preserving_max)
+    withdraw_amount = min(W_d, tier_preserving_max)
 
-    # Step 3: Net after commission check (not gross)
-    net_after_commission = withdraw_amount * (1 - commission_rate)
-    if net_after_commission < 500:
-        return  # NET_BELOW_MINIMUM
+    net_after_commission = withdraw_amount * (Decimal("1") - cr)
+    if net_after_commission < Decimal("500"):
+        return
 
-    # Step 4: MDD% impact check
-    A = ac.get("current_balance", 0)
-    mdd_limit = ac.get("max_drawdown_limit", 4500)
-    f_target_max = _get_d17_param("f_target_max", 0.03)
+    A = Decimal(str(ac.get("current_balance", 0)))
+    mdd_limit = Decimal(str(ac.get("max_drawdown_limit", 4500)))
+    f_target_max = Decimal(str(_get_d17_param("f_target_max", 0.03)))
 
     A_post = A - withdraw_amount
+    f_post = Decimal("0")
     if A_post > 0:
         f_post = mdd_limit / A_post
         if f_post > f_target_max:
-            # Reduce withdrawal to keep f_post within target
-            # f_target_max = mdd_limit / (A - W_adj) => W_adj = A - mdd_limit / f_target_max
             withdraw_amount = A - (mdd_limit / f_target_max)
-            withdraw_amount = min(withdraw_amount, tier_preserving_max, W)
-            withdraw_amount = max(withdraw_amount, 0)
-            # Recheck net after adjustment
-            net_after_commission = withdraw_amount * (1 - commission_rate)
-            if net_after_commission < 500:
-                return  # Adjusted amount too small
-            f_post = mdd_limit / (A - withdraw_amount) if (A - withdraw_amount) > 0 else 0
+            withdraw_amount = min(withdraw_amount, tier_preserving_max, W_d)
+            withdraw_amount = max(withdraw_amount, Decimal("0"))
+            net_after_commission = withdraw_amount * (Decimal("1") - cr)
+            if net_after_commission < Decimal("500"):
+                return
+            f_post = (
+                mdd_limit / (A - withdraw_amount)
+                if (A - withdraw_amount) > 0 else Decimal("0")
+            )
     else:
-        return  # Balance too low
+        return
 
-    # Build notification
-    profit_after = profit - withdraw_amount
+    profit_after = profit_d - withdraw_amount
     tsm_name = ac.get("tsm_name", ac_id)
     payouts_remaining = scaling.get("payouts_remaining", "N/A")
 
     message = (
         f"PAYOUT RECOMMENDED: {tsm_name}. "
         f"Withdraw ${withdraw_amount:,.0f} "
-        f"(receive ${net_after_commission:,.0f} after {commission_rate * 100:.0f}% commission). "
+        f"(receive ${net_after_commission:,.0f} after {float(cr) * 100:.0f}% commission). "
         f"Profit stays at ${profit_after:,.0f} → tier {scaling.get('tier_label', 'maintained')}. "
-        f"Post-payout MDD%: {f_post:.4f}. Payouts remaining: {payouts_remaining}."
+        f"Post-payout MDD%: {float(f_post):.4f}. Payouts remaining: {payouts_remaining}."
     )
 
     notif = {
@@ -390,11 +392,11 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
         "timestamp": now_et().isoformat(),
         "data": {
             "account_id": ac_id,
-            "payout_amount": round(withdraw_amount, 2),
-            "net_amount": round(net_after_commission, 2),
-            "profit_after": round(profit_after, 2),
+            "payout_amount": float(withdraw_amount.quantize(Decimal("0.01"))),
+            "net_amount": float(net_after_commission.quantize(Decimal("0.01"))),
+            "profit_after": float(profit_after.quantize(Decimal("0.01"))),
             "tier_after": scaling.get("tier_label", ""),
-            "f_post": round(f_post, 6),
+            "f_post": float(f_post.quantize(Decimal("0.000001"))),
             "payouts_remaining": payouts_remaining,
         },
     }
@@ -404,7 +406,10 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
     if notify_fn:
         notify_fn(notif)
 
-    logger.info("Payout recommendation sent: %s $%.0f for user %s", ac_id, withdraw_amount, user_id)
+    logger.info(
+        "Payout recommendation sent: %s $%s for user %s",
+        ac_id, withdraw_amount, user_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +451,8 @@ def _reset_daily_counters():
                        ) VALUES(%s, %s, %s, %s, %s, %s)""",
                     (
                         ac_id,
-                        0.0, 0,
-                        json.dumps({}), json.dumps({}),
+                        Decimal("0"), 0,
+                        dumps_decimal({}), json.dumps({}),
                         now_et().isoformat(),
                     ),
                 )
@@ -520,13 +525,14 @@ def _get_all_accounts() -> list[dict]:
     return []
 
 
-def _update_account_balance(ac_id: str, new_balance: float):
+def _update_account_balance(ac_id: str, new_balance: Any):
     """Update account balance in P3-D08 (via insert — QuestDB append-only).
 
     Reads the latest D08 snapshot for the account, replaces current_balance
     with *new_balance*, and appends a corrected row.  Also writes an audit
     entry to the session event log.
     """
+    new_bal = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
     try:
         with get_cursor() as cur:
             # 1. Read latest D08 snapshot to carry forward all fields
@@ -556,7 +562,7 @@ def _update_account_balance(ac_id: str, new_balance: float):
 
             # 2. Insert corrected D08 row with updated current_balance
             params = list(row)
-            params[5] = new_balance  # current_balance is column index 5
+            params[5] = new_bal  # current_balance is column index 5
             params.append(now_et().isoformat())  # last_updated
 
             cur.execute(
@@ -598,10 +604,10 @@ def _update_account_balance(ac_id: str, new_balance: float):
                 (
                     now_et().isoformat(), "SYSTEM",
                     "BALANCE_UPDATE", ac_id, "",
-                    json.dumps({"new_balance": new_balance}),
+                    dumps_decimal({"new_balance": new_bal}),
                 ),
             )
-            logger.info("D08 balance corrected for %s: %.2f", ac_id, new_balance)
+            logger.info("D08 balance corrected for %s: %s", ac_id, new_bal)
     except Exception as exc:
         logger.error("Balance update failed for %s: %s", ac_id, exc, exc_info=True)
 

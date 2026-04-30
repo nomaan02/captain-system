@@ -10,11 +10,12 @@ Uses a module-level singleton so all callers share one connection pool
 instead of creating a separate pool per get_redis_client() call.
 """
 
-import json
 import logging
 import os
 import threading
 import redis
+
+from shared.decimal_json import dumps_decimal, loads_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def publish_to_stream(stream: str, data: dict) -> str:
     """
     client = get_redis_client()
     msg_id = client.xadd(
-        stream, {"payload": json.dumps(data, default=str)}, maxlen=1000,
+        stream, {"payload": dumps_decimal(data)}, maxlen=1000,
     )
     return msg_id
 
@@ -129,8 +130,13 @@ def read_stream(stream: str, group: str, consumer: str,
     messages = []
     for msg_id, fields in results[0][1]:
         try:
-            data = json.loads(fields.get("payload", "{}"))
-        except (json.JSONDecodeError, TypeError):
+            raw = fields.get("payload", "{}")
+            data = (
+                loads_decimal(raw, coerce_json_int=False)
+                if isinstance(raw, str)
+                else {}
+            )
+        except (TypeError, ValueError):
             data = {}
         messages.append((msg_id, data))
     return messages
@@ -160,8 +166,13 @@ def read_pending_stream(stream: str, group: str, consumer: str,
         if not fields:
             continue
         try:
-            data = json.loads(fields.get("payload", "{}"))
-        except (json.JSONDecodeError, TypeError):
+            raw = fields.get("payload", "{}")
+            data = (
+                loads_decimal(raw, coerce_json_int=False)
+                if isinstance(raw, str)
+                else {}
+            )
+        except (TypeError, ValueError):
             data = {}
         messages.append((msg_id, data))
     return messages

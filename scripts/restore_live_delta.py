@@ -29,6 +29,7 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime
+from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -147,10 +148,10 @@ def restore_d30(backup_dir: Path, dry_run: bool) -> tuple[int, int]:
             ts = datetime.strptime(d, "%Y-%m-%d")
             to_insert.append((
                 a, d,
-                float(row[_idx(header, "open")]),
-                float(row[_idx(header, "high")]),
-                float(row[_idx(header, "low")]),
-                float(row[_idx(header, "close")]),
+                Decimal(str(row[_idx(header, "open")])),
+                Decimal(str(row[_idx(header, "high")])),
+                Decimal(str(row[_idx(header, "low")])),
+                Decimal(str(row[_idx(header, "close")])),
                 int(row[_idx(header, "volume")]),
                 ts,
             ))

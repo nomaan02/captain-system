@@ -30,6 +30,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -39,9 +40,113 @@ from shared.constants import TRADE_OUTCOME_VALUES, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
-from shared.json_helpers import parse_json
+from shared.json_helpers import parse_json, parse_json_decimal
+from shared.decimal_json import dumps_decimal
 
 logger = logging.getLogger(__name__)
+
+
+def _money_d(x: object) -> Decimal:
+    """Coerce a numeric or str value to Decimal for P&L / price arithmetic."""
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
+
+
+# ---------------------------------------------------------------------------
+# Per-symbol contract economics — Bug A guard (Tier 1 fix, 2026-04-29)
+# ---------------------------------------------------------------------------
+#
+# Authoritative source of `point_value` is p3_d00_asset_universe.point_value.
+# Historic regression: the live PnL path read `pos.get("point_value", 50.0)`
+# at multiple layers, defaulting to ES's PV (50) for every asset whenever
+# the upstream chain failed to populate the field. `sanitise_for_api` in
+# captain-command/.../b1_core_routing.py strips the field, so the default
+# fired for every non-ES trade and inflated D03 gross_pnl by `50 / true_pv`.
+#
+# Tier 1 fix policy:
+#   - ALWAYS look up D00 in this module (do NOT trust pos["point_value"]).
+#   - Cache per process-lifetime (asset spec is effectively static intraday).
+#   - On D00 miss / DB failure: log CRITICAL and RAISE — never default to 50.
+#     A loud failure aborting one resolve_position call is incomparably safer
+#     than silently writing inflated PnL to D03 and tripping circuit breakers.
+# ---------------------------------------------------------------------------
+
+_POINT_VALUE_CACHE: dict[str, Decimal] = {}
+
+
+class PointValueResolutionError(RuntimeError):
+    """Raised when point_value cannot be resolved from D00 for an asset.
+
+    Caller should treat this as a non-recoverable error for that single
+    position resolution and escalate (alert + manual close), NOT default.
+    """
+
+
+def _resolve_point_value(asset_id: str) -> Decimal:
+    """Return the canonical point_value for `asset_id` from D00.
+
+    Strict semantics:
+      * Always reads `p3_d00_asset_universe` (LATEST ON last_updated).
+      * Caches the first successful resolution for the lifetime of the
+        process (D00 specs change only on bootstrap / contract roll).
+      * Raises `PointValueResolutionError` on missing or NULL value.
+      * Raises on DB failure after logging CRITICAL.
+
+    Never returns a default. The 50.0 fallback was Bug A — see module
+    docstring above.
+    """
+    if not asset_id:
+        raise PointValueResolutionError(
+            "point_value lookup called with empty asset_id"
+        )
+    cached = _POINT_VALUE_CACHE.get(asset_id)
+    if cached is not None:
+        return cached
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT point_value FROM p3_d00_asset_universe "
+                "WHERE asset_id = %s "
+                "LATEST ON last_updated PARTITION BY asset_id",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value query failed for %s: %s",
+            asset_id, exc,
+        )
+        raise PointValueResolutionError(
+            f"D00 point_value query failed for {asset_id}: {exc}"
+        ) from exc
+
+    if not row or row[0] is None:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value row missing/NULL for asset=%s "
+            "(refusing legacy default=50.0; resolve via D00 bootstrap)",
+            asset_id,
+        )
+        raise PointValueResolutionError(
+            f"D00 has no point_value for asset {asset_id}"
+        )
+
+    pv = row[0] if isinstance(row[0], Decimal) else Decimal(str(row[0]))
+    if pv <= 0:
+        logger.error(
+            "ON-B7: CRITICAL D00 point_value for %s is non-positive: %s",
+            asset_id, pv,
+        )
+        raise PointValueResolutionError(
+            f"D00 point_value for {asset_id} is non-positive: {pv}"
+        )
+    _POINT_VALUE_CACHE[asset_id] = pv
+    return pv
+
+
+def _reset_point_value_cache() -> None:
+    """Clear the D00 point_value cache. Test/ops helper; called on contract roll."""
+    _POINT_VALUE_CACHE.clear()
 
 
 def _get_locked_m(asset: str) -> int | None:
@@ -92,15 +197,38 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
         if current_price is None:
             continue
 
-        point_value = pos.get("point_value", 50.0)
+        # Bug A guard: ALWAYS resolve from D00; never trust pos["point_value"]
+        # which the historic 50.0-default cascade could leave at ES's PV for
+        # every asset. _resolve_point_value raises rather than defaulting.
+        try:
+            pv = _resolve_point_value(pos["asset"])
+        except PointValueResolutionError as exc:
+            logger.error(
+                "ON-B7: skipping live PnL update for %s — %s",
+                pos.get("asset"), exc,
+            )
+            _notify(
+                pos.get("user_id", "SYSTEM"), "CRITICAL",
+                f"PnL tracking halted for {pos.get('asset')}: D00 point_value "
+                "missing — verify D00 bootstrap before close",
+            )
+            continue
 
-        # P&L tracking
+        # P&L tracking (Decimal arithmetic; float on pos for downstream % calcs)
         direction = pos.get("direction", 1)
         entry_price = pos.get("entry_price", 0)
         contracts = pos.get("contracts", 0)
-        pos["current_pnl"] = (current_price - entry_price) * direction * contracts * point_value
+        cp = (
+            (_money_d(current_price) - _money_d(entry_price))
+            * Decimal(direction)
+            * Decimal(contracts)
+            * pv
+        )
+        pos["current_pnl"] = float(cp)
         risk_amount = pos.get("risk_amount", 1)
-        pos["pnl_pct"] = pos["current_pnl"] / risk_amount if risk_amount > 0 else 0
+        pos["pnl_pct"] = (
+            float(cp / _money_d(risk_amount)) if risk_amount > 0 else 0.0
+        )
 
         # TP/SL proximity
         tp = pos.get("tp_level")
@@ -164,24 +292,38 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     """Resolve a position: log trade outcome, update capital, publish to Offline.
 
     CRITICAL: This is the feedback loop bridge to Offline learning.
+
+    Bug A guard (2026-04-29): point_value is resolved from D00 here, never
+    from `pos`. The historic `pos.get("point_value", 50.0)` default produced
+    50× / 25× / 100× inflated gross_pnl for every non-ES asset and tripped
+    the silo drawdown circuit breaker on phantom losses. Resolution failure
+    now raises and is escalated to the user — no silent default.
     """
-    point_value = pos.get("point_value", 50.0)
+    asset = pos["asset"]
+    pv = _resolve_point_value(asset)
     direction = pos.get("direction", 1)
     contracts = pos.get("contracts", 0)
     entry_price = pos.get("entry_price", 0)
     account_id = pos.get("account")
+    dir_d = Decimal(direction)
+    ctr = Decimal(contracts)
 
-    gross_pnl = (exit_price - entry_price) * direction * contracts * point_value
+    gross_pnl = (
+        (_money_d(exit_price) - _money_d(entry_price)) * dir_d * ctr * pv
+    )
 
     # Commission (V3: resolve_commission with fee_schedule priority)
     commission = resolve_commission(account_id, contracts, pos["asset"], tsm_configs)
-    net_pnl = gross_pnl - commission
+    net_pnl = gross_pnl - _money_d(commission)
 
     # Actual entry price
     actual_entry = _resolve_actual_entry_price(pos)
     slippage = None
     if actual_entry is not None:
-        slippage = (actual_entry - pos.get("signal_entry_price", entry_price)) * direction * contracts * point_value
+        sig_ref = pos.get("signal_entry_price", entry_price)
+        slippage = (
+            (_money_d(actual_entry) - _money_d(sig_ref)) * dir_d * ctr * pv
+        )
 
     # Trade ID
     trade_id = f"TRD-{uuid.uuid4().hex[:12].upper()}"
@@ -212,8 +354,12 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     )
 
     # Notify user
-    _notify(pos["user_id"], "CRITICAL",
-            f"Position closed: {pos['asset']} {outcome} Net PnL=${net_pnl:.2f} (commission=${commission:.2f})")
+    _notify(
+        pos["user_id"],
+        "CRITICAL",
+        f"Position closed: {pos['asset']} {outcome} Net PnL=${float(net_pnl):.2f} "
+        f"(commission=${float(commission):.2f})",
+    )
 
     # Atomic capital + CB update (G-033: single cursor, both writes back-to-back)
     _update_capital_and_cb(
@@ -227,8 +373,14 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     # CRITICAL: Publish trade outcome to Offline via Redis
     _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage)
 
-    logger.info("ON-B7: Position resolved — %s %s %s net_pnl=%.2f trade_id=%s",
-                pos["asset"], outcome, pos["user_id"], net_pnl, trade_id)
+    logger.info(
+        "ON-B7: Position resolved — %s %s %s net_pnl=%.2f trade_id=%s",
+        pos["asset"],
+        outcome,
+        pos["user_id"],
+        float(net_pnl),
+        trade_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -249,20 +401,21 @@ def resolve_commission(account_id: str, contracts: int, asset_id: str, tsm_confi
     tsm = tsm_configs.get(account_id, {})
 
     # Source 2: fee_schedule.fees_by_instrument (V3 priority)
-    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
             rt = fees_by_instrument[asset_id].get("round_turn", 0)
-            return rt * contracts
+            v = Decimal(str(rt)) * Decimal(contracts)
+            return float(v)
         default_rt = fee_schedule.get("default_round_turn", 0)
-        if default_rt > 0:
-            return default_rt * contracts
+        if default_rt and Decimal(str(default_rt)) > 0:
+            return float(Decimal(str(default_rt)) * Decimal(contracts))
 
     # Source 3: commission_per_contract (original spec)
     cpc = tsm.get("commission_per_contract", 0)
-    if cpc > 0:
-        return cpc * contracts * 2  # round trip
+    if cpc and Decimal(str(cpc)) > 0:
+        return float(Decimal(str(cpc)) * Decimal(contracts) * Decimal(2))
 
     # Source 4: Notify user
     logger.warning("ON-B7: Commission data missing for account %s — notifying user", account_id)
@@ -274,15 +427,19 @@ def get_expected_fee(tsm: dict, asset_id: str) -> float:
 
     Same logic as in B4 — factored here for shared use.
     """
-    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
-            return fees_by_instrument[asset_id].get("round_turn", 0.0)
-        return fee_schedule.get("default_round_turn", 0.0)
+            rt = fees_by_instrument[asset_id].get("round_turn", 0.0)
+            return float(Decimal(str(rt)))
+        drt = fee_schedule.get("default_round_turn", 0.0)
+        return float(Decimal(str(drt)))
 
     cpc = tsm.get("commission_per_contract", 0.0)
-    return cpc * 2 if cpc else 0.0
+    if cpc and Decimal(str(cpc)) > 0:
+        return float(Decimal(str(cpc)) * Decimal(2))
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +457,7 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     PG-09 can pair signals with realised P&L. ``LEGACY-<uuid>`` if the
     caller can't supply one (e.g. paper-trader shim, replay).
     """
-    aim_bd_str = json.dumps(aim_breakdown, default=str) if aim_breakdown else None
+    aim_bd_str = dumps_decimal(aim_breakdown) if aim_breakdown else None
     entry_ts = entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time
     model_m = _get_locked_m(asset)
     sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
@@ -324,8 +481,13 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
         )
 
 
-def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
-                           outcome: str, model_m: str = ""):
+def _update_capital_and_cb(
+    user_id: str,
+    account_id: str,
+    net_pnl: float | Decimal,
+    outcome: str,
+    model_m: str = "",
+):
     """G-033: Atomic capital silo (D16) + intraday CB (D23) update.
 
     Both reads and both writes execute in the same cursor context to prevent
@@ -355,20 +517,24 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
 
         # ── Compute new states ──
         # D16 capital
+        net_dec = net_pnl if isinstance(net_pnl, Decimal) else Decimal(str(net_pnl))
         if d16_row:
-            new_capital = (d16_row[3] or 0) + net_pnl
+            new_capital = Decimal(str(d16_row[3] or 0)) + net_dec
             d16_accounts = d16_row[4]
         else:
-            new_capital = net_pnl
+            new_capital = net_dec
             d16_accounts = None
 
         # D23 circuit breaker
-        l_t = (d23_row[0] or 0.0) + net_pnl if d23_row else net_pnl
+        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec
         n_t = (d23_row[1] or 0) + 1 if d23_row else 1
-        l_b = parse_json(d23_row[2], {}) if d23_row else {}
+        l_b = parse_json_decimal(d23_row[2], {}) if d23_row else {}
         n_b = parse_json(d23_row[3], {}) if d23_row else {}
         if model_m:
-            l_b[model_m] = l_b.get(model_m, 0.0) + net_pnl
+            prev = l_b.get(model_m, Decimal("0"))
+            if not isinstance(prev, Decimal):
+                prev = Decimal(str(prev))
+            l_b[model_m] = prev + net_dec
             n_b[model_m] = n_b.get(model_m, 0) + 1
 
         # ── Write both back-to-back ──
@@ -390,10 +556,15 @@ def _update_capital_and_cb(user_id: str, account_id: str, net_pnl: float,
             """INSERT INTO p3_d23_circuit_breaker_intraday
                (account_id, l_t, n_t, l_b, n_b, last_updated)
                VALUES (%s, %s, %s, %s, %s, now())""",
-            (account_id, l_t, n_t, json.dumps(l_b), json.dumps(n_b)),
+            (account_id, l_t, n_t, dumps_decimal(l_b), json.dumps(n_b)),
         )
 
-    logger.debug("Capital+CB updated: user=%s account=%s pnl=%.2f", user_id, account_id, net_pnl)
+    logger.debug(
+        "Capital+CB updated: user=%s account=%s pnl=%.2f",
+        user_id,
+        account_id,
+        float(net_pnl),
+    )
 
 
 def _publish_trade_outcome(trade_id, pos, outcome, net_pnl, exit_price, commission, slippage):

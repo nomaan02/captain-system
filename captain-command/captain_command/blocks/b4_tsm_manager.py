@@ -22,11 +22,13 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
 from shared.constants import now_et
+from shared.decimal_json import dumps_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -382,35 +384,45 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
 
     classification = tsm.get("classification", {})
     topstep_opt = tsm.get("topstep_optimisation", False)
-    topstep_state = json.dumps({
+    topstep_state = dumps_decimal({
         "topstep_params": tsm.get("topstep_params", {}),
         "payout_rules": tsm.get("payout_rules", {}),
         "fee_schedule": tsm.get("fee_schedule", {}),
         "scaling_plan": tsm.get("scaling_plan", []),
     })
 
+    sb = tsm.get("starting_balance", 0)
+    cb = tsm.get("current_balance", tsm.get("starting_balance", 0))
+
+    # Pass Decimals through psycopg2 so the global adapter in
+    # shared.questdb_client emits the cast('<value>' as DECIMAL) form.
+    # Pre-converting to str here would route through psycopg2's str
+    # adapter instead (emits a bare quoted literal), which crashes
+    # QuestDB for short DECIMAL values like '0', '1', '1.4'.
+    def _dec_or_none(v):
+        return Decimal(str(v)) if v is not None else None
+
     params = (
         account_id,
         tsm.get("user_id", ""),
         tsm.get("name", ""),
         json.dumps(classification),
-        tsm.get("starting_balance", 0),
-        tsm.get("current_balance", tsm.get("starting_balance", 0)),
-        tsm.get("max_drawdown_limit", 0),
-        tsm.get("max_daily_loss"),
-        0,  # daily_loss_used starts at 0
-        tsm.get("profit_target"),
+        Decimal(str(sb)),
+        Decimal(str(cb)),
+        Decimal(str(tsm.get("max_drawdown_limit", 0))),
+        _dec_or_none(tsm.get("max_daily_loss")),
+        Decimal("0"),
+        _dec_or_none(tsm.get("profit_target")),
         tsm.get("max_contracts", 0),
-        tsm.get("commission_per_contract", 0),
+        Decimal(str(tsm.get("commission_per_contract", 0))),
         tsm.get("overnight_allowed", False),
         json.dumps(tsm.get("trading_hours", "")) if isinstance(tsm.get("trading_hours"), dict) else tsm.get("trading_hours", ""),
         classification.get("risk_goal", ""),
         topstep_opt,
         tsm.get("scaling_plan_active", False),
         topstep_state,
-        json.dumps(tsm.get("fee_schedule", {})),
-        json.dumps(tsm.get("payout_rules", {})),
-        now_et().isoformat(),
+        dumps_decimal(tsm.get("fee_schedule", {})),
+        dumps_decimal(tsm.get("payout_rules", {})),
     )
 
     sql = """INSERT INTO p3_d08_tsm_state(
@@ -432,8 +444,10 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                  %s, %s,
                  %s, %s,
                  %s, %s, %s,
-                 %s
+                 now()
              )"""
+
+    import psycopg2
 
     for attempt in range(retries):
         try:
@@ -441,12 +455,26 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                 cur.execute(sql, params)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
-        except Exception as exc:
-            if "table busy" in str(exc) and attempt < retries - 1:
+        except psycopg2.Error as exc:
+            msg = str(exc)
+            if "table busy" in msg and attempt < retries - 1:
                 logger.warning("D08 table busy, retrying in %ds... (%d/%d)",
                                attempt + 1, attempt + 1, retries)
                 time.sleep(attempt + 1)
-            else:
-                logger.error("Failed to store TSM in D08: %s", exc, exc_info=True)
-                return False
+                continue
+            # QuestDB sometimes returns an empty pgerror string with the
+            # context only in diag.* — capture both so production logs
+            # are useful even when the top-level message is blank.
+            diag = getattr(exc, "diag", None)
+            logger.error(
+                "D08 INSERT failed for account=%s: %s [pgcode=%s, primary=%r, position=%s]",
+                account_id, msg, getattr(exc, "pgcode", None),
+                getattr(diag, "message_primary", None) if diag else None,
+                getattr(diag, "statement_position", None) if diag else None,
+                exc_info=True,
+            )
+            return False
+        except Exception as exc:
+            logger.error("D08 INSERT failed (non-pg) for account=%s: %s", account_id, exc, exc_info=True)
+            return False
     return False

@@ -3,6 +3,8 @@ from AlgorithmImports import *
 # endregion
 """Synthetic market data, features, and strategy fixtures for regression tests."""
 
+from decimal import Decimal
+
 
 def make_features(asset_id="ES", **overrides):
     """Synthetic feature dict for one asset."""
@@ -87,12 +89,17 @@ def make_kelly_params(asset_id="ES", kelly_full=0.10, shrinkage=0.85,
     }
 
 
-def make_assets_detail(asset_id="ES", point_value=50.0, tick_size=0.25):
+def make_assets_detail(asset_id="ES", point_value: Decimal | None = None,
+                       tick_size: Decimal | None = None):
     """Asset detail dict."""
+    if point_value is None:
+        point_value = Decimal("50")
+    if tick_size is None:
+        tick_size = Decimal("0.25")
     return {
         asset_id: {
             "point_value": point_value,
             "tick_size": tick_size,
-            "margin_per_contract": 500.0,
+            "margin_per_contract": Decimal("500"),
         }
     }

@@ -25,6 +25,8 @@ Writes: P3-D25 (circuit_breaker_params)
 """
 
 import logging
+from decimal import Decimal
+
 import numpy as np
 from collections import defaultdict
 
@@ -48,7 +50,12 @@ def _load_trades_by_account_model(account_id: str, model_m: int) -> list[dict]:
         )
         rows = cur.fetchall()
     return [
-        {"trade_id": r[0], "pnl": r[1], "contracts": r[2], "ts": r[3]}
+        {
+            "trade_id": r[0],
+            "pnl": float(r[1]) if r[1] is not None else 0.0,
+            "contracts": r[2],
+            "ts": r[3],
+        }
         for r in rows
     ]
 
@@ -200,7 +207,7 @@ def estimate_cb_params(account_id: str, model_m: int):
     # Only meaningful when beta_b < 0 (mean-reverting losses)
     beta_b = reg["beta_b"]
     if beta_b < 0:
-        l_star = -reg["r_bar"] / beta_b
+        l_star = -Decimal(str(reg["r_bar"])) / Decimal(str(beta_b))
     else:
         l_star = None
 

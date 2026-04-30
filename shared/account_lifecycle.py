@@ -23,8 +23,10 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from shared.constants import now_et
+from decimal import Decimal
 from enum import Enum
+
+from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +34,21 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-ACCOUNT_LOSS_FEE = 226.60
-EVAL_STARTING_BALANCE = 150_000.0
-EVAL_MLL = 4_500.0
-EVAL_PROFIT_TARGET = 9_000.0
+ACCOUNT_LOSS_FEE = Decimal("226.60")
+EVAL_STARTING_BALANCE = Decimal("150000")
+EVAL_MLL = Decimal("4500")
+EVAL_PROFIT_TARGET = Decimal("9000")
 EVAL_MAX_CONTRACTS = 15  # 150 micros
 
-XFA_MLL = 4_500.0
+XFA_MLL = Decimal("4500")
 XFA_MAX_PAYOUTS = 5
 
-LIVE_DAILY_DRAWDOWN = 4_500.0
-LIVE_LOW_BALANCE_THRESHOLD = 10_000.0
-LIVE_LOW_BALANCE_DAILY_DD = 2_000.0
-LIVE_TRADABLE_CAP = 30_000.0
+LIVE_DAILY_DRAWDOWN = Decimal("4500")
+LIVE_LOW_BALANCE_THRESHOLD = Decimal("10000")
+LIVE_LOW_BALANCE_DAILY_DD = Decimal("2000")
+LIVE_TRADABLE_CAP = Decimal("30000")
 LIVE_UNLOCK_LEVELS = 4
-LIVE_UNLOCK_PROFIT = 9_000.0
+LIVE_UNLOCK_PROFIT = Decimal("9000")
 
 
 class TopstepStage(str, Enum):
@@ -67,22 +69,30 @@ class TopstepEvalAccount:
     Single constraint: $4,500 trailing MLL.
     Pass when cumulative profit >= $9,000.
     """
-    starting_balance: float = EVAL_STARTING_BALANCE
-    max_drawdown_limit: float = EVAL_MLL
-    profit_target: float = EVAL_PROFIT_TARGET
+    starting_balance: Decimal = field(default_factory=lambda: EVAL_STARTING_BALANCE)
+    max_drawdown_limit: Decimal = field(default_factory=lambda: EVAL_MLL)
+    profit_target: Decimal = field(default_factory=lambda: EVAL_PROFIT_TARGET)
     max_contracts: int = EVAL_MAX_CONTRACTS
     max_micros: int = EVAL_MAX_CONTRACTS * 10
     scaling_plan_active: bool = False
     scaling_plan: list = field(default_factory=list)
     stage: TopstepStage = TopstepStage.EVAL
 
-    def check_mll_breach(self, peak_balance: float, current_balance: float) -> bool:
+    def check_mll_breach(self, peak_balance, current_balance) -> bool:
         """True if trailing drawdown exceeds MLL."""
-        return (peak_balance - current_balance) >= self.max_drawdown_limit
+        peak = Decimal(str(peak_balance))
+        cur = Decimal(str(current_balance))
+        return (peak - cur) >= self.max_drawdown_limit
 
-    def check_pass(self, current_balance: float) -> bool:
+    def check_pass(self, current_balance) -> bool:
         """True if profit target reached."""
-        return current_balance >= self.starting_balance + self.profit_target
+        cur = Decimal(str(current_balance))
+        sb = (
+            self.starting_balance
+            if isinstance(self.starting_balance, Decimal)
+            else Decimal(str(self.starting_balance))
+        )
+        return cur >= sb + self.profit_target
 
 
 @dataclass
@@ -92,8 +102,8 @@ class TopstepXFAAccount:
     $4,500 trailing MLL. Contract scaling plan.
     Max 5 payouts before transition to LIVE.
     """
-    starting_balance: float = EVAL_STARTING_BALANCE
-    max_drawdown_limit: float = XFA_MLL
+    starting_balance: Decimal = field(default_factory=lambda: EVAL_STARTING_BALANCE)
+    max_drawdown_limit: Decimal = field(default_factory=lambda: XFA_MLL)
     max_contracts: int = EVAL_MAX_CONTRACTS
     scaling_plan_active: bool = True
     scaling_plan: list = field(default_factory=lambda: [
@@ -104,22 +114,26 @@ class TopstepXFAAccount:
         {"balance_threshold": 154500, "max_contracts": 15, "max_micros": 150},
     ])
     max_total_payouts: int = XFA_MAX_PAYOUTS
-    consistency_rule_max_daily_profit: float = 4_500.0
-    payout_commission_rate: float = 0.10
+    consistency_rule_max_daily_profit: Decimal = Decimal("4500")
+    payout_commission_rate: Decimal = Decimal("0.10")
     stage: TopstepStage = TopstepStage.XFA
 
-    def check_mll_breach(self, peak_balance: float, current_balance: float) -> bool:
-        return (peak_balance - current_balance) >= self.max_drawdown_limit
+    def check_mll_breach(self, peak_balance, current_balance) -> bool:
+        peak = Decimal(str(peak_balance))
+        cur = Decimal(str(current_balance))
+        return (peak - cur) >= self.max_drawdown_limit
 
-    def get_scaling_tier_micros(self, current_balance: float) -> int:
+    def get_scaling_tier_micros(self, current_balance) -> int:
         """Return max micros for current balance tier."""
+        bal = Decimal(str(current_balance))
         if not self.scaling_plan:
             return self.max_contracts * 10
         sorted_plan = sorted(self.scaling_plan,
                              key=lambda t: t.get("balance_threshold", 0))
         result = sorted_plan[0].get("max_micros", 30)
         for tier in sorted_plan:
-            if current_balance >= tier.get("balance_threshold", 0):
+            thr = tier.get("balance_threshold", 0)
+            if bal >= Decimal(str(thr)):
                 result = tier.get("max_micros", result)
         return result
 
@@ -135,29 +149,30 @@ class TopstepLiveAccount:
 
     starting_balance is None for standalone — set by MultiStageTopstepAccount.
     """
-    starting_balance: float | None = None
-    max_drawdown_limit: float | None = None  # No trailing MLL
-    max_daily_drawdown: float = LIVE_DAILY_DRAWDOWN
-    low_balance_threshold: float = LIVE_LOW_BALANCE_THRESHOLD
-    low_balance_daily_drawdown: float = LIVE_LOW_BALANCE_DAILY_DD
+    starting_balance: Decimal | None = None
+    max_drawdown_limit: Decimal | None = None  # No trailing MLL
+    max_daily_drawdown: Decimal = field(default_factory=lambda: LIVE_DAILY_DRAWDOWN)
+    low_balance_threshold: Decimal = field(default_factory=lambda: LIVE_LOW_BALANCE_THRESHOLD)
+    low_balance_daily_drawdown: Decimal = field(default_factory=lambda: LIVE_LOW_BALANCE_DAILY_DD)
     max_contracts: int = EVAL_MAX_CONTRACTS
     scaling_plan_active: bool = False
-    tradable_cap: float = LIVE_TRADABLE_CAP
+    tradable_cap: Decimal = field(default_factory=lambda: LIVE_TRADABLE_CAP)
     unlock_levels: int = LIVE_UNLOCK_LEVELS
-    unlock_profit: float = LIVE_UNLOCK_PROFIT
+    unlock_profit: Decimal = field(default_factory=lambda: LIVE_UNLOCK_PROFIT)
     stage: TopstepStage = TopstepStage.LIVE
 
-    def get_effective_daily_drawdown(self, tradable_balance: float) -> float:
+    def get_effective_daily_drawdown(self, tradable_balance) -> Decimal:
         """Return daily drawdown limit based on current tradable balance."""
-        if tradable_balance <= self.low_balance_threshold:
+        tb = Decimal(str(tradable_balance))
+        if tb <= self.low_balance_threshold:
             return self.low_balance_daily_drawdown
         return self.max_daily_drawdown
 
-    def check_daily_drawdown_breach(self, daily_pnl: float,
-                                     tradable_balance: float) -> bool:
+    def check_daily_drawdown_breach(self, daily_pnl, tradable_balance) -> bool:
         """True if daily drawdown limit breached (triggers auto-liquidate)."""
+        dp = Decimal(str(daily_pnl))
         limit = self.get_effective_daily_drawdown(tradable_balance)
-        return daily_pnl <= -limit
+        return dp <= -limit
 
 
 # ---------------------------------------------------------------------------
@@ -172,13 +187,13 @@ class LifecycleEvent:
     from_stage: str
     to_stage: str
     trigger: str
-    balance_at_event: float
-    fee_charged: float = 0.0
-    payout_amount: float = 0.0
-    payout_net: float = 0.0
+    balance_at_event: Decimal
+    fee_charged: Decimal = field(default_factory=lambda: Decimal("0"))
+    payout_amount: Decimal = field(default_factory=lambda: Decimal("0"))
+    payout_net: Decimal = field(default_factory=lambda: Decimal("0"))
     payouts_taken: int = 0
-    tradable_balance: float = 0.0
-    reserve_balance: float = 0.0
+    tradable_balance: Decimal = field(default_factory=lambda: Decimal("0"))
+    reserve_balance: Decimal = field(default_factory=lambda: Decimal("0"))
     details: dict = field(default_factory=dict)
     ts: str = field(default_factory=lambda: now_et().isoformat())
 
@@ -192,34 +207,35 @@ class MultiStageTopstepAccount:
     LIVE: tradable = min(xfa_balance, $30K), reserve = remainder / 4 blocks.
     """
 
-    def __init__(self, starting_balance: float = EVAL_STARTING_BALANCE):
-        self.starting_balance = starting_balance
+    def __init__(self, starting_balance=EVAL_STARTING_BALANCE):
+        sb = Decimal(str(starting_balance))
+        self.starting_balance = sb
         self.current_stage = TopstepStage.EVAL
-        self.balance = starting_balance
-        self.peak_balance = starting_balance
-        self.daily_pnl = 0.0
-        self.daily_peak_pnl = 0.0
+        self.balance = sb
+        self.peak_balance = sb
+        self.daily_pnl = Decimal("0")
+        self.daily_peak_pnl = Decimal("0")
 
         # XFA tracking
         self.payouts_taken = 0
         self.winning_days = 0
 
         # Live tracking
-        self.tradable_balance = 0.0
-        self.reserve_balance = 0.0
-        self.reserve_per_block = 0.0
+        self.tradable_balance = Decimal("0")
+        self.reserve_balance = Decimal("0")
+        self.reserve_per_block = Decimal("0")
         self.unlocks_remaining = 0
-        self.cumulative_live_profit = 0.0
+        self.cumulative_live_profit = Decimal("0")
         self.halted_until_19est = False
 
         # Lifecycle history
         self.events: list[LifecycleEvent] = []
-        self.total_fees = 0.0
+        self.total_fees = Decimal("0")
         self.total_resets = 0
 
         # Stage configs (loaded lazily)
-        self._eval_config = TopstepEvalAccount(starting_balance=starting_balance)
-        self._xfa_config = TopstepXFAAccount(starting_balance=starting_balance)
+        self._eval_config = TopstepEvalAccount(starting_balance=sb)
+        self._xfa_config = TopstepXFAAccount(starting_balance=sb)
         self._live_config = TopstepLiveAccount()
 
     @property
@@ -242,30 +258,30 @@ class MultiStageTopstepAccount:
         Returns:
             dict with: allowed (bool), adjusted_pnl, reason, breach_type
         """
-        pnl = trade.get("pnl", 0.0)
+        pnl = Decimal(str(trade.get("pnl", 0)))
         contracts = trade.get("contracts", 1)
+        zero = Decimal("0")
 
         # Live: check if halted
         if self.current_stage == TopstepStage.LIVE and self.halted_until_19est:
-            return {"allowed": False, "adjusted_pnl": 0.0,
+            return {"allowed": False, "adjusted_pnl": zero,
                     "reason": "HALTED_DAILY_DD", "breach_type": None}
 
         # EVAL: check MLL before trade
         if self.current_stage == TopstepStage.EVAL:
             if self._eval_config.check_mll_breach(self.peak_balance, self.balance):
-                return {"allowed": False, "adjusted_pnl": 0.0,
+                return {"allowed": False, "adjusted_pnl": zero,
                         "reason": "MLL_BREACH", "breach_type": "MLL"}
 
         # XFA: check MLL + scaling
         elif self.current_stage == TopstepStage.XFA:
             if self._xfa_config.check_mll_breach(self.peak_balance, self.balance):
-                return {"allowed": False, "adjusted_pnl": 0.0,
+                return {"allowed": False, "adjusted_pnl": zero,
                         "reason": "MLL_BREACH", "breach_type": "MLL"}
-            # Apply scaling
             tier_micros = self._xfa_config.get_scaling_tier_micros(self.balance)
             trade_micros = contracts * 10
             if trade_micros > tier_micros:
-                scale_factor = tier_micros / trade_micros
+                scale_factor = Decimal(tier_micros) / Decimal(trade_micros)
                 pnl = pnl * scale_factor
 
         # LIVE: check daily drawdown
@@ -274,7 +290,7 @@ class MultiStageTopstepAccount:
             if self._live_config.check_daily_drawdown_breach(
                     self.daily_pnl, effective_balance):
                 self.halted_until_19est = True
-                return {"allowed": False, "adjusted_pnl": 0.0,
+                return {"allowed": False, "adjusted_pnl": zero,
                         "reason": "DAILY_DD_BREACH", "breach_type": "DAILY_DD"}
 
         # Trade allowed — apply P&L
@@ -374,13 +390,15 @@ class MultiStageTopstepAccount:
         elif new_stage == TopstepStage.LIVE:
             # XFA → LIVE: calculate tradable + reserve
             self.tradable_balance = min(self.balance, LIVE_TRADABLE_CAP)
-            remainder = max(self.balance - LIVE_TRADABLE_CAP, 0.0)
+            remainder = max(self.balance - LIVE_TRADABLE_CAP, Decimal("0"))
             self.reserve_balance = remainder
-            self.reserve_per_block = (remainder / LIVE_UNLOCK_LEVELS
-                                      if remainder > 0 else 0.0)
+            self.reserve_per_block = (
+                remainder / Decimal(LIVE_UNLOCK_LEVELS)
+                if remainder > 0 else Decimal("0")
+            )
             self.unlocks_remaining = (LIVE_UNLOCK_LEVELS
                                       if remainder > 0 else 0)
-            self.cumulative_live_profit = 0.0
+            self.cumulative_live_profit = Decimal("0")
             self.halted_until_19est = False
             self.peak_balance = self.tradable_balance
 
@@ -401,7 +419,7 @@ class MultiStageTopstepAccount:
         self.events.append(event)
 
         logger.info("Stage transition: %s → %s on day %s (trigger: %s, "
-                     "balance: %.2f)", old_stage.value, new_stage.value,
+                     "balance: %s)", old_stage.value, new_stage.value,
                      day, trigger, self.balance)
         return event
 
@@ -431,7 +449,7 @@ class MultiStageTopstepAccount:
         self.events.append(event)
 
         logger.warning("Account failure: %s on day %s (stage: %s, "
-                        "balance: %.2f). Fee: $%.2f. Reverting to EVAL.",
+                        "balance: %s). Fee: $%s. Reverting to EVAL.",
                         trigger, day, old_stage.value, self.balance, fee)
 
         # Reset to fresh EVAL
@@ -440,11 +458,11 @@ class MultiStageTopstepAccount:
         self.peak_balance = EVAL_STARTING_BALANCE
         self.payouts_taken = 0
         self.winning_days = 0
-        self.tradable_balance = 0.0
-        self.reserve_balance = 0.0
-        self.reserve_per_block = 0.0
+        self.tradable_balance = Decimal("0")
+        self.reserve_balance = Decimal("0")
+        self.reserve_per_block = Decimal("0")
         self.unlocks_remaining = 0
-        self.cumulative_live_profit = 0.0
+        self.cumulative_live_profit = Decimal("0")
         self.halted_until_19est = False
         self._eval_config = TopstepEvalAccount(
             starting_balance=EVAL_STARTING_BALANCE)
@@ -455,7 +473,7 @@ class MultiStageTopstepAccount:
 
     # ----- Payouts -----
 
-    def process_payout(self, amount: float, day: str) -> dict:
+    def process_payout(self, amount, day: str) -> dict:
         """Process a payout withdrawal.
 
         XFA: 10% commission, increments payout counter.
@@ -465,13 +483,14 @@ class MultiStageTopstepAccount:
         Returns:
             dict with: success, net_amount, commission, transition
         """
+        amt = Decimal(str(amount))
         if self.current_stage == TopstepStage.EVAL:
             return {"success": False, "reason": "NO_PAYOUTS_IN_EVAL"}
 
         if self.current_stage == TopstepStage.XFA:
-            commission = amount * self._xfa_config.payout_commission_rate
-            net = amount - commission
-            self.balance -= amount
+            commission = amt * self._xfa_config.payout_commission_rate
+            net = amt - commission
+            self.balance -= amt
             self.payouts_taken += 1
 
             event = LifecycleEvent(
@@ -480,7 +499,7 @@ class MultiStageTopstepAccount:
                 from_stage="XFA", to_stage="XFA",
                 trigger="PAYOUT_REQUESTED",
                 balance_at_event=self.balance,
-                payout_amount=amount, payout_net=net,
+                payout_amount=amt, payout_net=net,
                 payouts_taken=self.payouts_taken,
                 details={"day": day, "commission": commission},
             )
@@ -498,9 +517,9 @@ class MultiStageTopstepAccount:
             return result
 
         elif self.current_stage == TopstepStage.LIVE:
-            net = amount  # 0% commission
-            self.tradable_balance -= amount
-            self.balance -= amount
+            net = amt
+            self.tradable_balance -= amt
+            self.balance -= amt
 
             event = LifecycleEvent(
                 event_id=f"LCE-{uuid.uuid4().hex[:12].upper()}",
@@ -508,7 +527,7 @@ class MultiStageTopstepAccount:
                 from_stage="LIVE", to_stage="LIVE",
                 trigger="PAYOUT_REQUESTED",
                 balance_at_event=self.balance,
-                payout_amount=amount, payout_net=net,
+                payout_amount=amt, payout_net=net,
                 payouts_taken=self.payouts_taken,
                 tradable_balance=self.tradable_balance,
                 reserve_balance=self.reserve_balance,
@@ -516,7 +535,7 @@ class MultiStageTopstepAccount:
             )
             self.events.append(event)
             return {"success": True, "net_amount": net,
-                    "commission": 0.0, "transition": None}
+                    "commission": Decimal("0"), "transition": None}
 
         return {"success": False, "reason": "UNKNOWN_STAGE"}
 
@@ -558,8 +577,8 @@ class MultiStageTopstepAccount:
         )
         self.events.append(event)
 
-        logger.info("Live capital unlock: %d blocks ($%.2f) unlocked. "
-                     "Tradable: $%.2f, Reserve: $%.2f",
+        logger.info("Live capital unlock: %d blocks ($%s) unlocked. "
+                     "Tradable: $%s, Reserve: $%s",
                      actual_unlocks, unlock_amount,
                      self.tradable_balance, self.reserve_balance)
         return event
@@ -568,8 +587,8 @@ class MultiStageTopstepAccount:
 
     def _reset_daily(self):
         """Reset daily counters for next trading day."""
-        self.daily_pnl = 0.0
-        self.daily_peak_pnl = 0.0
+        self.daily_pnl = Decimal("0")
+        self.daily_peak_pnl = Decimal("0")
         self.halted_until_19est = False
 
     def get_state_snapshot(self) -> dict:

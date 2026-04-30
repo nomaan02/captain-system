@@ -24,9 +24,12 @@ import argparse
 import json
 import sys
 import os
+from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, "/app")
+
+from shared.decimal_json import dumps_decimal
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +74,7 @@ TIER1_AIMS = [4, 6, 8, 11, 12, 15]
 # Defaults match Nomaan's primary instance; override via .env on other machines.
 ACCOUNT_ID = os.environ.get("BOOTSTRAP_ACCOUNT_ID", "20319811")
 USER_ID = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
-STARTING_CAPITAL = float(os.environ.get("BOOTSTRAP_STARTING_CAPITAL", "150000.0"))
+STARTING_CAPITAL = Decimal(str(os.environ.get("BOOTSTRAP_STARTING_CAPITAL", "150000.0")))
 MAX_SIMULTANEOUS_POSITIONS = int(os.environ.get("BOOTSTRAP_MAX_POSITIONS", "5"))
 MAX_CONTRACTS = int(os.environ.get("BOOTSTRAP_MAX_CONTRACTS", "15"))
 
@@ -153,9 +156,9 @@ def phase1_update_d00(dry_run: bool = False):
         updates = {
             "captain_status": "ACTIVE",
             "locked_strategy": locked_strategy,
-            "point_value": spec["point_value"],
-            "tick_size": spec["tick_size"],
-            "margin_per_contract": spec["margin"],
+            "point_value": Decimal(str(spec["point_value"])),
+            "tick_size": Decimal(str(spec["tick_size"])),
+            "margin_per_contract": Decimal(str(spec["margin"])),
             "session_hours": session_hours,
             "session_schedule": session_schedule,
             "exchange_timezone": spec["tz"],
@@ -218,8 +221,8 @@ def phase2_update_capital_silo(dry_run: bool = False):
             (USER_ID,),
         )
         row = cur.fetchone()
-        if row is not None and row[0] and row[0] > 0:
-            print(f"    [SKIP] {USER_ID}: silo already bootstrapped (capital=${row[0]:,.0f})")
+        if row is not None and row[0] is not None and row[0] > 0:
+            print(f"    [SKIP] {USER_ID}: silo already bootstrapped (capital=${float(row[0]):,.0f})")
             return
 
     with get_cursor() as cur:
@@ -240,10 +243,13 @@ def phase2_update_capital_silo(dry_run: bool = False):
                 USER_ID,
                 STARTING_CAPITAL, STARTING_CAPITAL, accounts_json,
                 MAX_SIMULTANEOUS_POSITIONS,
-                json.dumps([{"date": "2026-03-27", "event": "initial_bootstrap", "capital": STARTING_CAPITAL}]),
+                dumps_decimal(
+                    [{"date": "2026-03-27", "event": "initial_bootstrap",
+                      "capital": STARTING_CAPITAL}]
+                ),
             ),
         )
-    print(f"    [OK] {USER_ID}: capital=${STARTING_CAPITAL:,.0f}, "
+    print(f"    [OK] {USER_ID}: capital=${float(STARTING_CAPITAL):,.0f}, "
           f"accounts=[{ACCOUNT_ID}], max_pos={MAX_SIMULTANEOUS_POSITIONS}")
 
 

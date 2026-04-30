@@ -10,8 +10,65 @@ import logging
 import os
 import threading
 import time
+from decimal import Decimal
+
 import psycopg2
+import psycopg2.extensions
 from contextlib import contextmanager
+
+# QuestDB maps psycopg2's NUMERIC wire type to DOUBLE, then rejects
+# DOUBLE→DECIMAL casts on assignment.  Quoted-string DECIMAL literals
+# also crash the QuestDB server (HTTP 500, empty error, position=0)
+# for short values like '0', '1', '1.4' — the parser hits an unhandled
+# code path on values shorter than ~5 chars.  See:
+#   docs2/audits/questdb-re-seed/2026-04-29_d08_tsm_insert_debug_handoff.md
+#
+# Wrapping every value in `cast(... as DECIMAL)` bypasses the short-string
+# crash, but `DECIMAL` (no params) defaults to DECIMAL(18, 3) inside the
+# cast expression — which then rejects values with scale > 3 (e.g. ZB
+# tick_size 0.03125, ZN 0.015625, ZT 0.0078125, FX 5e-7, OHLC prices like
+# 6256.006214) with `inconvertible value: ... [STRING -> DECIMAL(18,3)]`.
+#
+# Solution: introspect each Decimal's representation and emit
+# `cast('<value>' as DECIMAL(<precision>, <scale>))` with the minimal
+# (p, s) that fits the value losslessly. QuestDB widens or narrows on
+# assignment, so the same adapter works for every DECIMAL(p,s) column.
+def _decimal_to_cast_sql(d: Decimal) -> str:
+    """Render a Decimal as `cast('<value>' as DECIMAL(<p>, <s>))`.
+
+    The precision/scale are derived from the Decimal's own digits so the
+    cast expression always fits the value.  QuestDB then widens or
+    narrows at column-assignment time as needed.
+    """
+    s = format(d, "f")  # expand any scientific notation: 5E-7 -> '0.0000005'
+    sign = ""
+    if s.startswith("-"):
+        sign, s = "-", s[1:]
+    if "." in s:
+        int_part, frac_part = s.split(".", 1)
+        scale = len(frac_part)
+    else:
+        int_part = s
+        scale = 0
+    int_digits = max(len(int_part.lstrip("0")), 1)
+    precision = int_digits + scale
+    if precision > 38:  # QuestDB DECIMAL precision cap
+        precision = 38
+        if scale > precision:
+            scale = precision
+    return f"cast('{sign}{s}' as DECIMAL({precision}, {scale}))"
+
+
+psycopg2.extensions.register_adapter(
+    Decimal,
+    lambda d: psycopg2.extensions.AsIs(_decimal_to_cast_sql(d)),
+)
+
+# QuestDB's PG wire doesn't handle psycopg2's binary boolean format.
+# Send as SQL keyword literals instead.
+psycopg2.extensions.register_adapter(
+    bool, lambda b: psycopg2.extensions.AsIs("true" if b else "false")
+)
 
 logger = logging.getLogger(__name__)
 

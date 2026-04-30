@@ -33,10 +33,11 @@ Writes: nothing (filter only — D23 updated by B7 on trade outcomes)
 import json
 import logging
 import math
+from decimal import Decimal
 from typing import Optional
 
 from shared.questdb_client import get_cursor
-from shared.json_helpers import parse_json
+from shared.json_helpers import parse_json, parse_json_decimal
 from shared.sizing_helpers import resolve_sizing_sl
 
 
@@ -78,7 +79,7 @@ def run_circuit_breaker_screen(
     session_id: int,
     proposed_contracts: dict | None = None,
     sl_distance: float = 4.0,
-    point_value: float = 50.0,
+    point_value: float | Decimal = 50.0,
     fee_per_trade: float = 0.0,
     model_m: str | None = None,
     locked_strategies: dict | None = None,
@@ -208,7 +209,7 @@ def _check_all_layers(
     session_id: int,
     contracts: int = 0,
     sl_distance: float = 4.0,
-    point_value: float = 50.0,
+    point_value: float | Decimal = 50.0,
     fee_per_trade: float = 0.0,
     model_m: str | None = None,
     open_positions: list | None = None,
@@ -228,7 +229,11 @@ def _check_all_layers(
         return reason
 
     # Compute worst-case risk for this trade: rho_j = contracts * (SL * pv + fee)
-    rho_j = contracts * (sl_distance * point_value + fee_per_trade)
+    # D00 point_value is DECIMAL — use directly when already Decimal (Phase C).
+    _pv = point_value if isinstance(point_value, Decimal) else Decimal(str(point_value))
+    rho_j = Decimal(contracts) * (
+        Decimal(str(sl_distance)) * _pv + Decimal(str(fee_per_trade))
+    )
 
     # Layer 1: Preemptive hard halt — abs(L_t) + rho_j >= c * e * A
     reason = _layer1_preemptive_halt(intraday, tsm, rho_j)
@@ -300,7 +305,7 @@ def _layer0_scaling_cap(tsm: dict, proposed_contracts: int, open_positions: list
     return None
 
 
-def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: float) -> str | None:
+def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
     """Layer 1: Preemptive hard halt (account survival).
 
     Formula: abs(L_t) + rho_j >= L_halt
@@ -314,40 +319,45 @@ def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: float) -> str | No
     the halt threshold, not just trades where L_t has already breached it.
     When H = 0, all trading stops. No exceptions.
     """
-    A = tsm.get("current_balance", 0)
+    A = Decimal(str(tsm.get("current_balance", 0)))
 
     if A <= 0:
-        return None  # Cannot compute — skip (safety layers still apply)
+        return None
 
-    # Prefer SOD-locked L_halt (frozen at reconciliation time)
-    topstep_state = parse_json(tsm.get("topstep_state"), {})
+    rho = rho_j if isinstance(rho_j, Decimal) else Decimal(str(rho_j))
+
+    topstep_state = parse_json_decimal(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    l_halt = computed_sod.get("L_halt")
-    if l_halt is None or l_halt <= 0:
-        # Fallback: SOD hasn't run yet (cold start, day-1)
+    l_halt_raw = computed_sod.get("L_halt")
+    if l_halt_raw is None or (isinstance(l_halt_raw, Decimal) and l_halt_raw <= 0) or (
+            not isinstance(l_halt_raw, Decimal) and (l_halt_raw or 0) <= 0):
         topstep_params = parse_json(tsm.get("topstep_params"), {})
-        c = topstep_params.get("c", 0.5)
-        e = topstep_params.get("e", 0.01)
+        c = Decimal(str(topstep_params.get("c", 0.5)))
+        e = Decimal(str(topstep_params.get("e", 0.01)))
         l_halt = c * e * A
         logger.warning(
-            "ON-B5C: L1 falling back to live L_halt=%.2f for %s (SOD not run)",
+            "ON-B5C: L1 falling back to live L_halt=%s for %s (SOD not run)",
             l_halt,
             tsm.get("account_id"),
         )
-    l_t = intraday.get("l_t", 0.0)
+    else:
+        l_halt = l_halt_raw if isinstance(l_halt_raw, Decimal) else Decimal(str(l_halt_raw))
 
-    projected = abs(l_t) + rho_j
+    l_t_raw = intraday.get("l_t", 0)
+    l_t = l_t_raw if isinstance(l_t_raw, Decimal) else Decimal(str(l_t_raw))
+
+    projected = abs(l_t) + rho
 
     if projected >= l_halt:
         return (
-            f"L1: preemptive halt — |L_t|={abs(l_t):.0f} + rho_j={rho_j:.0f} "
+            f"L1: preemptive halt — |L_t|={abs(l_t):.0f} + rho_j={rho:.0f} "
             f"= {projected:.0f} >= L_halt={l_halt:.0f}"
         )
 
     return None
 
 
-def _layer2_budget(intraday: dict, tsm: dict, rho_j: float) -> str | None:
+def _layer2_budget(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
     """Layer 2: Remaining dollar budget — IF remaining < rho_j -> BLOCKED.
 
     Spec: remaining_budget = E - |L_t|; IF remaining < rho_j -> BLOCK
@@ -360,32 +370,37 @@ def _layer2_budget(intraday: dict, tsm: dict, rho_j: float) -> str | None:
 
     Blocks when worst-case signal risk exceeds remaining day budget.
     """
-    A = tsm.get("current_balance", 0)
+    A = Decimal(str(tsm.get("current_balance", 0)))
 
     if A <= 0:
         return None
 
-    # Prefer SOD-locked E_daily_exposure (frozen at reconciliation time)
-    topstep_state = parse_json(tsm.get("topstep_state"), {})
+    rho = rho_j if isinstance(rho_j, Decimal) else Decimal(str(rho_j))
+
+    topstep_state = parse_json_decimal(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    E = computed_sod.get("E_daily_exposure")
-    if E is None or E <= 0:
-        # Fallback: SOD hasn't run yet (cold start, day-1)
+    E_raw = computed_sod.get("E_daily_exposure")
+    if E_raw is None or (isinstance(E_raw, Decimal) and E_raw <= 0) or (
+            not isinstance(E_raw, Decimal) and (E_raw or 0) <= 0):
         topstep_params = parse_json(tsm.get("topstep_params"), {})
-        e = topstep_params.get("e", 0.01)
+        e = Decimal(str(topstep_params.get("e", 0.01)))
         E = e * A
         logger.warning(
-            "ON-B5C: L2 falling back to live E_daily_exposure=%.2f for %s (SOD not run)",
+            "ON-B5C: L2 falling back to live E_daily_exposure=%s for %s (SOD not run)",
             E,
             tsm.get("account_id"),
         )
-    l_t = intraday.get("l_t", 0.0)
+    else:
+        E = E_raw if isinstance(E_raw, Decimal) else Decimal(str(E_raw))
+
+    l_t_raw = intraday.get("l_t", 0)
+    l_t = l_t_raw if isinstance(l_t_raw, Decimal) else Decimal(str(l_t_raw))
     remaining = E - abs(l_t)
 
-    if remaining < rho_j:
+    if remaining < rho:
         return (
             f"L2: dollar budget exhausted — remaining={remaining:.0f} "
-            f"< rho_j={rho_j:.0f} (E={E:.0f}, |L_t|={abs(l_t):.0f})"
+            f"< rho_j={rho:.0f} (E={E:.0f}, |L_t|={abs(l_t):.0f})"
         )
 
     return None
@@ -406,26 +421,23 @@ def _layer3_basket_expectancy(
     beta_b estimates (n >= 100, p < 0.05).
     """
     if cb_param is None:
-        return None  # No CB params available — cold start, skip
+        return None
 
-    r_bar = cb_param.get("r_bar", 0.0)
-    beta_b = cb_param.get("beta_b", 0.0)
+    r_bar = Decimal(str(cb_param.get("r_bar", 0.0)))
+    beta_b = Decimal(str(cb_param.get("beta_b", 0.0)))
     p_value = cb_param.get("p_value", 1.0)
     n_obs = cb_param.get("n_observations", 0)
 
-    # Cold start: spec says "beta_b=0, layers 3-4 disabled" — skip when
-    # no trade observations exist yet (r_bar and beta_b are both zero).
     if n_obs == 0:
         return None
 
-    # Significance gate: only use beta_b if p < 0.05 AND n >= 100
     if p_value > 0.05 or n_obs < 100:
-        beta_b = 0.0  # Cold start / insignificant — basket defaults to "always open"
+        beta_b = Decimal("0")
 
-    # Get per-basket cumulative P&L
     l_b_dict = intraday.get("l_b", {})
     basket_key = str(model_m) if model_m is not None else None
-    l_b = l_b_dict.get(basket_key, 0.0) if basket_key else 0.0
+    lb_raw = l_b_dict.get(basket_key, 0.0) if basket_key else 0.0
+    l_b = lb_raw if isinstance(lb_raw, Decimal) else Decimal(str(lb_raw))
 
     mu_b = r_bar + beta_b * l_b
 
@@ -563,10 +575,17 @@ def _load_intraday_state(accounts: list[str]) -> dict:
 
     result = {}
     for r in rows:
+        lt_raw = r[1]
+        if lt_raw is None:
+            lt_dec = Decimal("0")
+        elif isinstance(lt_raw, Decimal):
+            lt_dec = lt_raw
+        else:
+            lt_dec = Decimal(str(lt_raw))
         result[r[0]] = {
-            "l_t": r[1] or 0.0,
+            "l_t": lt_dec,
             "n_t": r[2] or 0,
-            "l_b": parse_json(r[3], {}),
+            "l_b": parse_json_decimal(r[3], {}),
             "n_b": parse_json(r[4], {}),
         }
     return result
@@ -583,7 +602,13 @@ def _get_rolling_trade_returns(lookback_days: int = 60) -> list[float]:
                 (lookback_days,),
             )
             rows = cur.fetchall()
-        return [r[0] for r in rows if r[0] is not None]
+        out: list[float] = []
+        for r in rows:
+            if r[0] is None:
+                continue
+            v = r[0]
+            out.append(float(v))
+        return out
     except Exception:
         # Table may not exist on fresh deployment (cold start) — return empty
         return []
@@ -596,17 +621,16 @@ def _resolve_fee(tsm: dict, asset_id: str, fallback_fee: float) -> float:
     Fallback: commission_per_contract * 2 (round-trip)
     Last resort: fallback_fee parameter.
     """
-    fee_schedule = parse_json(tsm.get("fee_schedule"), {})
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), {})
 
     fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
     instrument_fee = fees_by_instrument.get(asset_id, {})
     if isinstance(instrument_fee, dict) and "round_turn" in instrument_fee:
-        return float(instrument_fee["round_turn"])
+        return float(Decimal(str(instrument_fee["round_turn"])))
 
-    # Fallback: commission_per_contract * 2
     cpc = tsm.get("commission_per_contract")
-    if cpc is not None and cpc > 0:
-        return float(cpc) * 2.0
+    if cpc is not None and Decimal(str(cpc)) > 0:
+        return float(Decimal(str(cpc)) * Decimal(2))
 
     return fallback_fee
 

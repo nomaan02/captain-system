@@ -25,6 +25,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Any
+from decimal import Decimal
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -303,8 +304,10 @@ def register_asset_in_d00(
                     "roll_confirmed": False,
                     "topstep_contract_id": _CONTRACT_CONFIG.get("contracts", {}).get(asset, {}).get("contract_id"),
                 }),
-                meta["tz"], meta["point_value"], meta["tick_size"],
-                meta["margin"], json.dumps(session_hours), json.dumps(meta["sessions"]),
+                meta["tz"],
+                Decimal(str(meta["point_value"])),
+                Decimal(str(meta["tick_size"])),
+                Decimal(str(meta["margin"])), json.dumps(session_hours), json.dumps(meta["sessions"]),
                 f"/captain/data/p1_outputs/{asset}/",
                 f"/captain/data/p2_outputs/{asset}/",
                 json.dumps({}), "CLEAN",

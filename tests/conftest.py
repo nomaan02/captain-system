@@ -16,6 +16,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Host-test stubs: optional WebSocket deps that ship only inside the
+# captain-offline / captain-online containers. Stub them so block modules
+# that do `from shared.topstep_stream import quote_cache` (transitively
+# importing pysignalr) can be loaded for unit tests on a bare host.
+# ---------------------------------------------------------------------------
+
+def _stub_module(name: str) -> None:
+    if name not in sys.modules:
+        sys.modules[name] = MagicMock()
+
+
+try:  # pragma: no cover — hand-rolled detection
+    import pysignalr  # type: ignore  # noqa: F401
+except Exception:
+    _stub_module("pysignalr")
+    _stub_module("pysignalr.client")
+    _stub_module("pysignalr.messages")
+    _stub_module("pysignalr.transport")
+    _stub_module("pysignalr.transport.websocket_transport")
+
 # Add captain-system paths so block imports work without Docker
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))

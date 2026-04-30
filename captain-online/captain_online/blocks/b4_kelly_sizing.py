@@ -32,6 +32,7 @@ import json
 import logging
 import math
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from shared.statistics import get_ewma_for_regime
@@ -40,6 +41,40 @@ from shared.constants import now_et
 from shared.sizing_helpers import resolve_sizing_sl
 
 logger = logging.getLogger(__name__)
+
+
+def _silo_money(x: object) -> Decimal:
+    """D16 capital amounts from DB or test fixtures (Decimal or legacy float)."""
+    if x is None:
+        return Decimal("0")
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
+
+
+def _to_float(x: object) -> float:
+    """Coerce a possibly-Decimal D08 monetary field to float for sizing math.
+
+    Phase A migrated D08 monetary columns (max_drawdown_limit, current_drawdown,
+    daily_loss_used, max_daily_loss, current_balance, margin_per_contract, ...)
+    to DECIMAL(18, 2). Kelly sizing math in this module is float-typed
+    (strategy_sl, point_value, expected_fee, account_kelly), so attempting
+    Decimal/float arithmetic raised TypeError post-migration. The fix is to
+    coerce at the boundary — sizing is approximate (rounded to int via
+    math.floor), so float precision is more than adequate.
+
+    None / missing values become 0.0 so caller arithmetic stays defined.
+    """
+    if x is None:
+        return 0.0
+    if isinstance(x, Decimal):
+        return float(x)
+    if isinstance(x, (int, float)):
+        return float(x)
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def run_kelly_sizing(
@@ -69,15 +104,16 @@ def run_kelly_sizing(
                 user_id, len(accounts), len(active_assets))
 
     # Step 0: Silo-level drawdown check
-    starting_capital = user_silo.get("starting_capital", 0)
-    total_capital = user_silo.get("total_capital", 0)
+    starting_capital = _silo_money(user_silo.get("starting_capital", 0))
+    total_capital = _silo_money(user_silo.get("total_capital", 0))
     max_silo_dd = _load_system_param("max_silo_drawdown_threshold", 0.30)
+    max_silo_dd_d = Decimal(str(max_silo_dd))
 
     if starting_capital > 0:
-        silo_drawdown_pct = 1 - (total_capital / starting_capital)
-        if silo_drawdown_pct > max_silo_dd:
+        silo_drawdown_pct = Decimal("1") - (total_capital / starting_capital)
+        if silo_drawdown_pct > max_silo_dd_d:
             logger.warning("ON-B4: SILO DRAWDOWN %.1f%% > %.1f%% — user %s BLOCKED",
-                           silo_drawdown_pct * 100, max_silo_dd * 100, user_id)
+                           float(silo_drawdown_pct * 100), float(max_silo_dd_d * 100), user_id)
             # NOTIFY: CRITICAL alert for silo drawdown (P3-PG-24 lines 734-736)
             try:
                 from shared.redis_client import get_redis_client, CH_ALERTS
@@ -86,8 +122,8 @@ def run_kelly_sizing(
                     "type": "SILO_DRAWDOWN",
                     "user_id": user_id,
                     "priority": "CRITICAL",
-                    "message": f"CRITICAL: Silo drawdown at {silo_drawdown_pct:.1%}. All trading halted for user {user_id}.",
-                    "silo_drawdown_pct": silo_drawdown_pct,
+                    "message": f"CRITICAL: Silo drawdown at {float(silo_drawdown_pct):.1%}. All trading halted for user {user_id}.",
+                    "silo_drawdown_pct": float(silo_drawdown_pct),
                     "timestamp": now_et().isoformat(),
                 }))
             except Exception as e:
@@ -162,7 +198,7 @@ def run_kelly_sizing(
         # Step 6: Per-account sizing
         asset_detail = assets_detail.get(u, {})
         strategy = locked_strategies.get(u, {})
-        point_value = asset_detail.get("point_value", 50.0)
+        point_value = float(asset_detail.get("point_value", 50.0))
         # Phase 2 (F-04): unified SL distance via shared helper. Replaces the
         # legacy `strategy.threshold` direct read so B4 and B5C agree on rho_j.
         # Primary path = sl_multiple × historical OR range avg from P3-D29.
@@ -200,7 +236,8 @@ def run_kelly_sizing(
             scaling_cap = _compute_scaling_cap(tsm, current_open_micros)
 
             # Step 6c: Compute final contracts
-            account_capital = tsm.get("current_balance", 0)
+            # Phase A: D08.current_balance is DECIMAL — coerce to float for sizing math.
+            account_capital = _to_float(tsm.get("current_balance", 0))
 
             # Risk per contract: spec PG-24 L7 = strategy_sl * point_value + expected_fee
             expected_fee = _get_expected_fee(tsm, u)
@@ -224,16 +261,18 @@ def run_kelly_sizing(
                         "TRADE" if final > 0 else "SKIP")
 
             # Step 6d: Recommendation
+            # Phase A: D08 monetary fields are Decimal — coerce for arithmetic with floats.
             remaining_mdd = None
             if category in ("PROP_EVAL", "PROP_FUNDED", "PROP_SCALING"):
-                mdd_limit = tsm.get("max_drawdown_limit")
-                current_dd = tsm.get("current_drawdown", 0)
-                remaining_mdd = (mdd_limit - current_dd) if mdd_limit is not None else None
+                if tsm.get("max_drawdown_limit") is not None:
+                    mdd_limit = _to_float(tsm.get("max_drawdown_limit"))
+                    current_dd = _to_float(tsm.get("current_drawdown", 0))
+                    remaining_mdd = mdd_limit - current_dd
 
             if final == 0:
-                max_daily_loss = tsm.get("max_daily_loss")
-                daily_used = tsm.get("daily_loss_used", 0)
-                if max_daily_loss and daily_used >= max_daily_loss:
+                max_daily_loss = _to_float(tsm.get("max_daily_loss"))
+                daily_used = _to_float(tsm.get("daily_loss_used", 0))
+                if tsm.get("max_daily_loss") is not None and daily_used >= max_daily_loss:
                     account_recommendation[u][ac_id] = "BLOCKED"
                     account_skip_reason[u][ac_id] = "Daily loss limit reached"
                 elif remaining_mdd is not None and remaining_mdd < strategy_sl * point_value:
@@ -252,7 +291,7 @@ def run_kelly_sizing(
             for ac in accounts
         )
         max_risk_pct = user_silo.get("max_portfolio_risk_pct", 0.10)
-        max_risk = max_risk_pct * total_capital if total_capital > 0 else float("inf")
+        max_risk = float(max_risk_pct) * float(total_capital) if total_capital > 0 else float("inf")
 
         if total_risk > max_risk and total_risk > 0:
             scale_factor = max_risk / total_risk
@@ -322,9 +361,13 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
     plus MLL (daily loss limit) and max_contracts hard cap.
     """
     if category in ("PROP_EVAL", "PROP_FUNDED", "PROP_SCALING"):
-        mdd_limit = tsm.get("max_drawdown_limit")
-        current_dd = tsm.get("current_drawdown", 0)
-        remaining_mdd = (mdd_limit - current_dd) if mdd_limit is not None else 0
+        # D08 monetary fields are DECIMAL(18,2) post-Phase A migration.
+        # Coerce to float at the boundary — sizing math below is float-typed
+        # (strategy_sl, point_value) and rounded to int via math.floor.
+        mdd_limit = _to_float(tsm.get("max_drawdown_limit"))
+        current_dd = _to_float(tsm.get("current_drawdown", 0))
+        has_mdd = tsm.get("max_drawdown_limit") is not None
+        remaining_mdd = (mdd_limit - current_dd) if has_mdd else 0.0
 
         # Budget divisor
         eval_end = tsm.get("evaluation_end_date")
@@ -345,18 +388,18 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
                 budget_divisor,
             )
 
-        daily_budget = remaining_mdd / budget_divisor if budget_divisor > 0 else 0
+        daily_budget = remaining_mdd / budget_divisor if budget_divisor > 0 else 0.0
         risk_per_contract = strategy_sl * point_value
         max_by_mdd = math.floor(daily_budget / risk_per_contract) if risk_per_contract > 0 else 0
 
-        max_daily_loss = tsm.get("max_daily_loss")
-        daily_used = tsm.get("daily_loss_used", 0)
-        if max_daily_loss and risk_per_contract > 0:
+        max_daily_loss = _to_float(tsm.get("max_daily_loss"))
+        daily_used = _to_float(tsm.get("daily_loss_used", 0))
+        if tsm.get("max_daily_loss") is not None and risk_per_contract > 0:
             remaining_mll = max_daily_loss - daily_used
             max_by_mll = math.floor(remaining_mll / risk_per_contract)
         else:
             max_by_mll = 999
-            if not max_daily_loss:
+            if tsm.get("max_daily_loss") is None:
                 logger.info(
                     "ON-B4: max_daily_loss absent for account %s — "
                     "max_by_mll=999 (no MLL on this combine; MDD-only risk limit applies)",
@@ -369,18 +412,18 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
         cap = min(max_by_mdd, max_by_mll, max_contracts)
         scaling_plan = tsm.get("scaling_plan")
         if scaling_plan and isinstance(scaling_plan, list):
-            balance = tsm.get("current_balance", 0)
+            balance = _to_float(tsm.get("current_balance", 0))
             for tier in reversed(scaling_plan):
-                if balance >= tier.get("balance_threshold", float("inf")):
+                if balance >= float(tier.get("balance_threshold", float("inf"))):
                     cap = min(cap, tier.get("max_contracts", 999))
                     break
 
         return max(cap, 0)
 
     elif category in ("BROKER_RETAIL", "BROKER_INSTITUTIONAL"):
-        margin = tsm.get("margin_per_contract") or 0
-        buffer = tsm.get("margin_buffer_pct") or 1.5
-        balance = tsm.get("current_balance", 0)
+        margin = _to_float(tsm.get("margin_per_contract") or 0)
+        buffer = _to_float(tsm.get("margin_buffer_pct") or 1.5)
+        balance = _to_float(tsm.get("current_balance", 0))
         if margin > 0:
             cap = math.floor(balance / (margin * buffer))
         else:
@@ -403,7 +446,9 @@ def _compute_topstep_daily_cap(tsm: dict, strategy_sl: float = 4.0, point_value:
         return 999
     topstep_state = parse_json(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    E = computed_sod.get("E_daily_exposure", 0)
+    # `E` may be a Decimal-as-string after Phase A's dumps_decimal/loads_decimal
+    # round-trip on the topstep_state JSON. Coerce to float for sizing math.
+    E = _to_float(computed_sod.get("E_daily_exposure", 0))
     if E <= 0:
         # Fallback to static cap
         topstep_params = parse_json(tsm.get("topstep_params"), {})

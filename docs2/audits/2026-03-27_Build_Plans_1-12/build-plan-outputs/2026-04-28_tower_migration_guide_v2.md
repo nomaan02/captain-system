@@ -37,9 +37,9 @@ end
 
 After this, `dco ps`, `dco logs -f captain-online`, `dco exec -T captain-offline ...` all work. The full form is shown the first time each command appears so you can copy verbatim if you skip this alias.
 
-### 0.2 Container exec helper
+### 0.2 Container exec helpers
 
-Almost every script in this guide runs inside `captain-offline` with `PYTHONPATH=/app`. Define:
+Most scripts in this guide run inside `captain-offline` with `PYTHONPATH=/app`. Define:
 
 ```fish
 function cap-run
@@ -50,6 +50,24 @@ end
 ```
 
 Now `cap-run init_questdb.py` is equivalent to the long form.
+
+**TopstepX-touching scripts** (`verify_topstep_integration.py`, `test_bracket_order.py`) must run in `captain-command` instead — `captain-offline` does not ship `requests` because it never talks to the broker. The `./scripts` folder is also bind-mounted into `captain-command` at `/captain/scripts:ro` (see `docker-compose.local.yml`). Define a second helper:
+
+```fish
+function cmd-run
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T -e PYTHONPATH=/app captain-command python /captain/scripts/$script $rest
+end
+```
+
+Rule of thumb:
+
+| Script | Use |
+|---|---|
+| `init_questdb.py`, `seed_*.py`, `verify_questdb*.py`, `verify_schema_drift.py`, `health_smoke_test.py`, `compact_questdb_tables.py`, `backfill_*.py` | `cap-run` (captain-offline) |
+| `verify_topstep_integration.py`, `test_bracket_order.py` | `cmd-run` (captain-command) |
+| `dry_run_command.py`, `test_order_roundtrip.py` (live in `captain-command/`, not `scripts/`) | `dco exec -T captain-command python3 /app/<script>.py` |
 
 ### 0.3 Why `/captain/scripts/...` and not `/app/scripts/...`?
 

@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 from psycopg2 import OperationalError
 from shared.questdb_client import get_cursor
+from tests._qdb_helpers import wait_for_row
 
 pytestmark = pytest.mark.real_questdb
 
@@ -42,11 +43,12 @@ def test_b1_p2_d07_round_trip():
                        'REGIME_NEUTRAL', 100, 0.62, %s, %s)""",
             (now_ts, now_ts),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             "SELECT asset, model_type FROM p2_d07_regime_models "
-            "WHERE asset = 'ES' LATEST ON last_updated PARTITION BY asset"
+            "WHERE asset = 'ES' LATEST ON last_updated PARTITION BY asset",
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == "ES"
     assert row[1] == "BINARY_ONLY"
 
@@ -80,12 +82,13 @@ def test_b2_d03_model_m_round_trip():
                        'SYNTHETIC', 7, now())""",
             (trade_id,),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             "SELECT model_m FROM p3_d03_trade_outcome_log "
             "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
             (trade_id,),
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == 7
 
 
@@ -101,14 +104,19 @@ def test_b2_d03_model_m_backwards_compat():
                        'SYNTHETIC', now())""",
             (trade_id,),
         )
-        cur.execute(
-            "SELECT model_m FROM p3_d03_trade_outcome_log "
+        # Wait for the row to exist; model_m itself will be NULL (legacy).
+        # We poll on trade_id rather than on model_m so the absence of
+        # the value doesn't keep us looping until the timeout.
+        row = wait_for_row(
+            cur,
+            "SELECT trade_id, model_m FROM p3_d03_trade_outcome_log "
             "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
             (trade_id,),
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
+    assert row[0] == trade_id
     # model_m is nullable — NULL is the correct value for legacy rows
-    assert row[0] is None
+    assert row[1] is None
 
 
 def test_b3_d22b_table_exists():
@@ -136,11 +144,14 @@ def test_b3_d22b_round_trip():
                (asset, last_p1p2_rerun_ts, rerun_trigger, last_updated)
                VALUES ('ES', now(), 'TEST_RUN_2', now())"""
         )
-        cur.execute(
+        # QuestDB requires WHERE to precede LATEST ON (not after it).
+        # Earlier ordering produced: "unexpected where clause after 'latest on'".
+        row = wait_for_row(
+            cur,
             "SELECT rerun_trigger FROM p3_d22b_asset_rerun_status "
-            "LATEST ON last_updated PARTITION BY asset WHERE asset = 'ES'"
+            "WHERE asset = 'ES' LATEST ON last_updated PARTITION BY asset",
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == "TEST_RUN_2"
 
 

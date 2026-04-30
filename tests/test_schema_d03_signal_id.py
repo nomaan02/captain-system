@@ -90,6 +90,7 @@ def test_d03_signal_id_column_exists_in_live_schema():
 @real_questdb
 def test_d03_signal_id_round_trip():
     from shared.questdb_client import get_cursor
+    from tests._qdb_helpers import wait_for_row
     trade_id = f"TEST-SIGID-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     sig_id = f"SIG-{uuid.uuid4()}"
     with get_cursor() as cur:
@@ -101,12 +102,13 @@ def test_d03_signal_id_round_trip():
                        'SYNTHETIC', now())""",
             (trade_id, sig_id),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             "SELECT signal_id FROM p3_d03_trade_outcome_log "
             "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
             (trade_id,),
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == sig_id
 
 
@@ -115,6 +117,7 @@ def test_d03_signal_id_nullable_for_legacy_rows():
     """Belt-and-braces: legacy writers that don't supply signal_id must still
     be insertable (column is nullable)."""
     from shared.questdb_client import get_cursor
+    from tests._qdb_helpers import wait_for_row
     trade_id = f"LEGACY-NULL-SIG-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     with get_cursor() as cur:
         cur.execute(
@@ -125,19 +128,24 @@ def test_d03_signal_id_nullable_for_legacy_rows():
                        'SYNTHETIC', now())""",
             (trade_id,),
         )
-        cur.execute(
-            "SELECT signal_id FROM p3_d03_trade_outcome_log "
+        # Poll on trade_id (always set) so an absent NULL signal_id doesn't
+        # keep us spinning until timeout.
+        row = wait_for_row(
+            cur,
+            "SELECT trade_id, signal_id FROM p3_d03_trade_outcome_log "
             "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
             (trade_id,),
         )
-        row = cur.fetchone()
-    assert row[0] is None or row[0] == ""
+    assert row is not None, "row not visible after WAL wait"
+    assert row[0] == trade_id
+    assert row[1] is None or row[1] == ""
 
 
 @real_questdb
 def test_legacy_backfill_assigns_legacy_prefix():
     """Backfill: rows missing signal_id receive ``LEGACY-<uuid>`` IDs."""
     from shared.questdb_client import get_cursor
+    from tests._qdb_helpers import wait_for_row
     from scripts.backfill_d03_signal_ids import backfill
 
     seeded_ids: list[str] = []
@@ -153,18 +161,31 @@ def test_legacy_backfill_assigns_legacy_prefix():
                 (tid,),
             )
 
+    # Make sure all seeded rows are visible to the backfill SELECT before
+    # we run it — otherwise the backfill sees zero target rows.
+    with get_cursor() as cur:
+        for tid in seeded_ids:
+            row = wait_for_row(
+                cur,
+                "SELECT trade_id FROM p3_d03_trade_outcome_log "
+                "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
+                (tid,),
+            )
+            assert row is not None, f"seeded row not visible for {tid}"
+
     backfill(dry_run=False)
 
     with get_cursor() as cur:
         for tid in seeded_ids:
-            cur.execute(
+            row = wait_for_row(
+                cur,
                 "SELECT signal_id FROM p3_d03_trade_outcome_log "
-                "WHERE trade_id = %s LATEST ON ts PARTITION BY trade_id",
+                "WHERE trade_id = %s AND signal_id IS NOT NULL "
+                "LATEST ON ts PARTITION BY trade_id",
                 (tid,),
             )
-            row = cur.fetchone()
-            assert row is not None, f"row missing for {tid}"
-            assert row[0] is not None and row[0].startswith("LEGACY-"), (
+            assert row is not None, f"row missing or signal_id NULL for {tid}"
+            assert row[0].startswith("LEGACY-"), (
                 f"expected LEGACY- prefix on backfilled row {tid}, got {row[0]!r}"
             )
 
@@ -186,6 +207,7 @@ def test_legacy_backfill_assigns_legacy_prefix():
 def test_d11_pair_series_round_trip():
     """D11 sharpe_baseline / sharpe_updated / pair_series writeable."""
     from shared.questdb_client import get_cursor
+    from tests._qdb_helpers import wait_for_row
     rid = f"TEST-D11-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     pair = '[{"signal_id": "SIG-1", "pnl": 12.5}]'
     with get_cursor() as cur:
@@ -198,13 +220,14 @@ def test_d11_pair_series_round_trip():
                        'ADOPT', %s, now())""",
             (rid, pair),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             "SELECT sharpe_baseline, sharpe_updated, pair_series "
             "FROM p3_d11_pseudotrader_results "
             "WHERE result_id = %s LATEST ON ts PARTITION BY result_id",
             (rid,),
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == 0.5
     assert row[1] == 1.5
     assert row[2] == pair
@@ -213,6 +236,7 @@ def test_d11_pair_series_round_trip():
 @real_questdb
 def test_d06_phase7_columns_round_trip():
     from shared.questdb_client import get_cursor
+    from tests._qdb_helpers import wait_for_row
     iid = f"TEST-D06-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     with get_cursor() as cur:
         cur.execute(
@@ -225,13 +249,14 @@ def test_d06_phase7_columns_round_trip():
                        'PENDING', 'NEW', 'OPEN', 0.4, 0.6, 7, 14, now())""",
             (iid,),
         )
-        cur.execute(
+        row = wait_for_row(
+            cur,
             "SELECT pbo, dsr, transition_days, tracking_days "
             "FROM p3_d06_injection_history "
             "WHERE injection_id = %s LATEST ON ts PARTITION BY injection_id",
             (iid,),
         )
-        row = cur.fetchone()
+    assert row is not None, "row not visible after WAL wait"
     assert row[0] == 0.4
     assert row[1] == 0.6
     assert row[2] == 7

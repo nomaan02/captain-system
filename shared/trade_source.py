@@ -26,6 +26,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -161,11 +162,15 @@ def _load_synthetic(asset: str,
 
         # r_mi is return in OR-range multiples.
         # pnl = r_mi * or_range_points * point_value * contracts
-        pnl = r_mi * or_range * pv
+        pnl = (
+            Decimal(str(r_mi))
+            * Decimal(str(or_range))
+            * Decimal(str(pv))
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         trades.append({
             "day": trade_date,
-            "pnl": round(pnl, 2),
+            "pnl": pnl,
             "contracts": 1,
             "ts": f"{trade_date}T10:00:00",
             "model": raw.get("m", 0),
@@ -250,7 +255,7 @@ def _load_from_d03(asset: str,
 
         trades.append({
             "day": day,
-            "pnl": float(pnl) if pnl else 0.0,
+            "pnl": _safe_decimal(pnl),
             "contracts": int(contracts) if contracts else 1,
             "ts": ts,
             "model": int(model_m) if model_m is not None else 4,
@@ -306,15 +311,15 @@ def seed_d03_from_synthetic(asset: str = "ES",
                     f"LEGACY-{_uuid.uuid4()}",
                     user_id, account_id, asset.upper(),
                     t["direction"],
-                    0.0, 0.0, 0.0,  # prices not available from P1 data
+                    Decimal("0"), Decimal("0"), Decimal("0"),
                     t["contracts"],
-                    t["pnl"], 0.0, t["pnl"], 0.0,  # gross=net for synthetic
+                    t["pnl"], Decimal("0"), t["pnl"], Decimal("0"),
                     "SYNTHETIC",
                     t["ts"],
                     str(t.get("regime", "")),
-                    1.0, None, 1,  # aim_modifier=1, session=NY
+                    Decimal("1"), None, 1,
                     "SYNTHETIC",
-                    t.get("model_m"),
+                    t.get("model"),
                 ),
             )
 
@@ -346,16 +351,26 @@ class RealisedOutcome:
     """
     signal_id: str
     trade_id: str
-    pnl: float
-    gross_pnl: float
-    commission: float
+    pnl: Decimal
+    gross_pnl: Decimal
+    commission: Decimal
     contracts: int
-    entry_price: float | None
-    exit_price: float | None
+    entry_price: Decimal | None
+    exit_price: Decimal | None
     entry_time: _dt | None
     exit_time: _dt | None
     direction: int
     regime_at_entry: str | None
+
+    def __post_init__(self) -> None:
+        for name in ("pnl", "gross_pnl", "commission"):
+            v = getattr(self, name)
+            if not isinstance(v, Decimal):
+                object.__setattr__(self, name, Decimal(str(v)))
+        for name in ("entry_price", "exit_price"):
+            v = getattr(self, name)
+            if v is not None and not isinstance(v, Decimal):
+                object.__setattr__(self, name, Decimal(str(v)))
 
 
 def actual_trade_outcome(
@@ -426,12 +441,12 @@ def _row_to_outcome(row: tuple) -> RealisedOutcome:
     return RealisedOutcome(
         signal_id=signal_id,
         trade_id=trade_id,
-        pnl=float(pnl) if pnl is not None else 0.0,
-        gross_pnl=float(gross_pnl) if gross_pnl is not None else 0.0,
-        commission=float(commission) if commission is not None else 0.0,
+        pnl=_safe_decimal(pnl),
+        gross_pnl=_safe_decimal(gross_pnl),
+        commission=_safe_decimal(commission),
         contracts=int(contracts) if contracts is not None else 0,
-        entry_price=float(entry_price) if entry_price is not None else None,
-        exit_price=float(exit_price) if exit_price is not None else None,
+        entry_price=_decimal_or_none(entry_price),
+        exit_price=_decimal_or_none(exit_price),
         entry_time=entry_time,
         exit_time=exit_time,
         direction=int(direction) if direction is not None else 0,
@@ -443,9 +458,9 @@ def _aggregate_outcomes(rows: list[tuple]) -> RealisedOutcome:
     """Combine multiple D03 rows into one composite outcome (PG-09 daily)."""
     first = _row_to_outcome(rows[0])
     last_outcome = _row_to_outcome(rows[-1])
-    total_pnl = sum(_safe_float(r[2]) for r in rows)
-    total_gross = sum(_safe_float(r[3]) for r in rows)
-    total_commission = sum(_safe_float(r[4]) for r in rows)
+    total_pnl = sum(_safe_decimal(r[2]) for r in rows)
+    total_gross = sum(_safe_decimal(r[3]) for r in rows)
+    total_commission = sum(_safe_decimal(r[4]) for r in rows)
     total_contracts = sum(int(r[5] or 0) for r in rows)
     return RealisedOutcome(
         signal_id=first.signal_id,
@@ -463,8 +478,23 @@ def _aggregate_outcomes(rows: list[tuple]) -> RealisedOutcome:
     )
 
 
-def _safe_float(v: object) -> float:
+def _safe_decimal(v: object) -> Decimal:
+    if v is None:
+        return Decimal("0")
+    if isinstance(v, Decimal):
+        return v
     try:
-        return float(v) if v is not None else 0.0
-    except (TypeError, ValueError):
-        return 0.0
+        return Decimal(str(v))
+    except Exception:
+        return Decimal("0")
+
+
+def _decimal_or_none(v: object) -> Decimal | None:
+    if v is None:
+        return None
+    if isinstance(v, Decimal):
+        return v
+    try:
+        return Decimal(str(v))
+    except Exception:
+        return None

@@ -30,6 +30,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from decimal import Decimal
 
 from shared.constants import now_et
 from shared.redis_client import (
@@ -43,6 +44,15 @@ from shared.journal import write_checkpoint
 from shared.process_logger import ProcessLogger
 
 logger = logging.getLogger(__name__)
+
+
+def _stream_numeric_float(v) -> float:
+    """Normalize Redis stream / D03 monetary values for float-only algorithms."""
+    if v is None:
+        return 0.0
+    if isinstance(v, Decimal):
+        return float(v)
+    return float(v)
 
 # Pseudotrader gate: skip replay when max absolute param change < epsilon
 PSEUDOTRADER_EPSILON = 1e-4
@@ -233,7 +243,7 @@ class OfflineOrchestrator:
         Triggers: DMA, BOCPD, CUSUM, Level escalation, Kelly, TSM sim, CB params.
         """
         asset_id = outcome.get("asset", "")
-        pnl = outcome.get("pnl", 0)
+        pnl = _stream_numeric_float(outcome.get("pnl", 0))
         logger.info("Trade outcome received: %s pnl=%.2f", asset_id, pnl)
         self.plog.info(
             f"Trade outcome received: {asset_id} {'+'if pnl>=0 else ''}"
@@ -270,7 +280,7 @@ class OfflineOrchestrator:
                 run_bocpd_update,
                 persist_combined_detector_state,
             )
-            pnl_pc = outcome.get("pnl", 0) / max(outcome.get("contracts", 1), 1)
+            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
             if cp_prob and cp_prob > 0.5:
@@ -351,7 +361,7 @@ class OfflineOrchestrator:
         instance's risk management to adapt to its own account state.
         """
         asset_id = outcome.get("asset", "")
-        pnl = outcome.get("pnl", 0)
+        pnl = _stream_numeric_float(outcome.get("pnl", 0))
         logger.info("Theoretical signal outcome: %s pnl=%.2f (Category A learning)",
                      asset_id, pnl)
 
@@ -382,7 +392,7 @@ class OfflineOrchestrator:
                 run_bocpd_update,
                 persist_combined_detector_state,
             )
-            pnl_pc = pnl / max(outcome.get("contracts", 1), 1)
+            pnl_pc = pnl / max(int(outcome.get("contracts", 1) or 1), 1)
             bocpd_det = self._detectors.get(asset_id, (None, None))[0]
             cp_prob, bocpd_det = run_bocpd_update(asset_id, pnl_pc, bocpd_det)
 
@@ -739,7 +749,11 @@ class OfflineOrchestrator:
                     )
                     rows = cur.fetchall()
 
-                returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
+                returns = [
+                    float(r[0]) / max(int(r[1]), 1)
+                    for r in rows
+                    if r[1] and int(r[1]) > 0
+                ]
                 if len(returns) < 20:
                     continue
 
@@ -900,7 +914,11 @@ class OfflineOrchestrator:
             )
             rows = cur.fetchall()
 
-        returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
+        returns = [
+            float(r[0]) / max(int(r[1]), 1)
+            for r in rows
+            if r[1] and int(r[1]) > 0
+        ]
         if len(returns) < 60:
             logger.warning("AIM-14 for %s: insufficient data (%d < 60)", asset_id, len(returns))
             return
@@ -957,7 +975,7 @@ class OfflineOrchestrator:
                 )
                 rows = cur.fetchall()
 
-            trade_returns = [r[0] for r in rows if r[0] is not None]
+            trade_returns = [float(r[0]) for r in rows if r[0] is not None]
             if len(trade_returns) < 10:
                 return  # insufficient trade history for simulation
 
@@ -1164,7 +1182,9 @@ class OfflineOrchestrator:
                     rows = cur.fetchall()
                 # Per-contract daily returns for recent OOS window
                 returns = [
-                    r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0
+                    float(r[0]) / max(int(r[1]), 1)
+                    for r in rows
+                    if r[1] and int(r[1]) > 0
                 ]
                 if len(returns) >= 30:
                     run_sensitivity_scan(asset_id, returns)
@@ -1201,7 +1221,11 @@ class OfflineOrchestrator:
                         (asset_id,),
                     )
                     rows = cur.fetchall()
-                returns = [r[0] / max(r[1], 1) for r in rows if r[1] and r[1] > 0]
+                returns = [
+                    float(r[0]) / max(int(r[1]), 1)
+                    for r in rows
+                    if r[1] and int(r[1]) > 0
+                ]
                 if len(returns) >= 20:
                     new_limits = calibrate_and_persist(asset_id, returns)
                     # Refresh in-memory detector. self._detectors[asset_id] is
