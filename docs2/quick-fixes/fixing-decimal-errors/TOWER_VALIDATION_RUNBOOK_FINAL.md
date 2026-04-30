@@ -207,30 +207,32 @@ dco restart captain-online
 
 After `dco up -d --build`, wait 60 seconds for the orchestrators to come up and run their first session evaluation. Then check the logs for any `TypeError` or Decimal/float issues.
 
+**Note:** Use `grep -iE` (POSIX). Towers may not have `ripgrep` (`rg`) installed by default. If you prefer `rg`, install it: `sudo apt install ripgrep`.
+
 ```fish
 # Check captain-online for the original Bug C signature
-dco logs --tail=500 captain-online 2>&1 | rg -i "TypeError.*decimal|Position monitor error|monitor_positions" | head -20
+dco logs --tail=500 captain-online 2>&1 | grep -iE "TypeError.*decimal|Position monitor error|monitor_positions" | head -20
 ```
 
 **Pass:** No matches.
 
 ```fish
 # Check captain-command for the original Bug A round 2 signature
-dco logs --tail=500 captain-command 2>&1 | rg -i "TypeError.*decimal|reconciliation.*FAIL|RECONCILIATION_FAILURE" | head -20
+dco logs --tail=500 captain-command 2>&1 | grep -iE "TypeError.*decimal|reconciliation.*FAIL|RECONCILIATION_FAILURE" | head -20
 ```
 
 **Pass:** No matches.
 
 ```fish
 # Check captain-offline for any Decimal/float issues
-dco logs --tail=500 captain-offline 2>&1 | rg -i "TypeError.*decimal" | head -20
+dco logs --tail=500 captain-offline 2>&1 | grep -iE "TypeError.*decimal" | head -20
 ```
 
 **Pass:** No matches.
 
 ```fish
 # Check for the previous "B6 silent skip" pattern
-dco logs --tail=500 captain-online 2>&1 | rg "ON-B6-SUMMARY|B6 signal FAILED|_build_per_account" | head -20
+dco logs --tail=500 captain-online 2>&1 | grep -E "ON-B6-SUMMARY|B6 signal FAILED|_build_per_account" | head -20
 ```
 
 **Pass:** Either no matches OR the matches show successful `ON-B6-SUMMARY` lines (e.g. `recommended=N built=M`). NO `B6 signal FAILED` errors.
@@ -307,7 +309,7 @@ git rev-parse HEAD
 
 ## Section 8 — Production smoke after first signal of the day
 
-After the first signal fires (visible in GUI or `dco logs --tail=20 captain-online | rg ON-B6-SUMMARY`), verify the full chain executed cleanly:
+After the first signal fires (visible in GUI or `dco logs --tail=20 captain-online | grep ON-B6-SUMMARY`), verify the full chain executed cleanly:
 
 ```fish
 # Check signal was published to Redis
@@ -318,7 +320,7 @@ docker exec captain-system-redis-1 redis-cli -a $REDIS_PASSWORD --no-auth-warnin
 
 ```fish
 # Check command processed it
-dco logs --tail=200 captain-command 2>&1 | rg -i "signal batch received|AUTO-EXECUTE|TopstepX" | head -10
+dco logs --tail=200 captain-command 2>&1 | grep -iE "signal batch received|AUTO-EXECUTE|TopstepX" | head -10
 ```
 
 **Pass:** See `Signal batch received` followed by `AUTO-EXECUTE` (if `AUTO_EXECUTE=true`) and `TopstepX BRACKET order PLACED` or `TopstepX order PLACED`.
@@ -326,14 +328,14 @@ dco logs --tail=200 captain-command 2>&1 | rg -i "signal batch received|AUTO-EXE
 ```fish
 # Check position monitor is running cleanly
 sleep 30
-dco logs --tail=100 captain-online 2>&1 | rg -i "monitor_positions|Position resolved|Position monitor" | head -20
+dco logs --tail=100 captain-online 2>&1 | grep -iE "monitor_positions|Position resolved|Position monitor" | head -20
 ```
 
 **Pass:** Either no log lines (no positions yet) OR clean position monitoring messages with no TypeError.
 
 ```fish
 # Verify a trade outcome reaches offline learning (if a position closed)
-dco logs --tail=200 captain-offline 2>&1 | rg -i "trade outcome received|kelly update|dma update" | head -10
+dco logs --tail=200 captain-offline 2>&1 | grep -iE "trade outcome received|kelly update|dma update" | head -10
 ```
 
 **Pass:** `Trade outcome received: <asset> pnl=$<value>` followed by `Kelly update`, `DMA update`, etc. — no TypeError.
