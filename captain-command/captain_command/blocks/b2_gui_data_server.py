@@ -863,14 +863,21 @@ def _get_recent_notifications(user_id: str, limit: int = 100) -> list[dict]:
 
 
 def _get_network_concentration() -> dict:
-    """Aggregate exposure across all users from P3-D17."""
+    """Aggregate exposure across all users from D03 open positions.
+
+    D03 has no `status` column — open positions are identified by
+    `outcome IS NULL` (same convention used by `_get_open_positions` at
+    line 374). Previous query used `WHERE status = 'OPEN'` which raised
+    `psycopg2.DatabaseError: Invalid column: status` and returned an
+    empty exposure list to the GUI's network-concentration panel.
+    """
     try:
         with get_cursor() as cur:
             cur.execute(
                 """SELECT asset, direction, sum(contracts) as total_contracts,
                           count(DISTINCT user_id) as user_count
                    FROM p3_d03_trade_outcome_log
-                   WHERE status = 'OPEN'
+                   WHERE outcome IS NULL
                    GROUP BY asset, direction"""
             )
             return {

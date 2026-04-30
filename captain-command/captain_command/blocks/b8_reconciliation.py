@@ -229,7 +229,7 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         ts_state = parse_json_decimal(ac.get("topstep_state", "{}") or "{}", {})
         ts_params = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
         payout_rules = parse_json_decimal(ac.get("payout_rules", "{}") or "{}", {})
-        fee_schedule = parse_json_decimal(ac.get("fee_schedule", "{}") or "{}")
+        fee_schedule = parse_json_decimal(ac.get("fee_schedule", "{}") or "{}", {})
 
         A = Decimal(str(ac.get("current_balance", 0)))
         starting = Decimal(str(ac.get("starting_balance", 150000)))

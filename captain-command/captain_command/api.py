@@ -1176,9 +1176,14 @@ def api_pseudotrader_health():
             row = cur.fetchone()
             checks["d12_last_updated"] = row[0] if row else None
 
-            # D08 active accounts
+            # D08 active accounts. D08 has no status column — every row is by
+            # definition an active TSM config. Use LATEST ON to dedupe per
+            # account_id (append-only table) and surface name + balance for
+            # the dashboard health panel.
             cur.execute(
-                "SELECT account_id, status FROM p3_d08_tsm_state WHERE status = 'ACTIVE'"
+                """SELECT account_id, name, current_balance
+                   FROM p3_d08_tsm_state
+                   LATEST ON last_updated PARTITION BY account_id"""
             )
             cols = [desc[0] for desc in cur.description]
             checks["active_accounts"] = [
