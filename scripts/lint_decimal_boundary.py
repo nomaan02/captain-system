@@ -109,16 +109,27 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
     return findings
 
 
+# Directory names skipped at every depth. Covers all common Python venv
+# layouts (`.venv` on most setups, `venv` on Isaac's tower, `env`/`.env`
+# on legacy installs), build/cache artefacts, vendored MCP / git worktrees,
+# and `site-packages` regardless of which venv name nests it.
+_SKIP_DIRNAMES = frozenset({
+    ".git", ".venv", "venv", "env", ".env", ".tox",
+    "__pycache__", "node_modules", ".pytest_cache", ".cache",
+    "build", "dist", "htmlcov", "site-packages",
+    "questdb", "redis", "claude-mem",
+    ".audit-worktrees", "voicetree-10-4",
+})
+
+
 def iter_python_files(root: Path):
     skip = {str(root / s) for s in SKIP_GLOBS}
     for dirpath, dirnames, filenames in os.walk(root):
-        # Skip caches / vendored / venv / git / git worktrees
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in {".git", ".venv", "__pycache__", "node_modules",
-                          ".pytest_cache", "questdb", "redis", "claude-mem",
-                          ".audit-worktrees", "voicetree-10-4"}
-        ]
+        # Skip caches / vendored / venv / git / git worktrees at every depth.
+        # `site-packages` is included so the lint never wanders into installed
+        # third-party packages (numpy/websockets/uvicorn etc) regardless of
+        # which venv directory name nests them.
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRNAMES]
         for fn in filenames:
             if not fn.endswith(".py"):
                 continue
