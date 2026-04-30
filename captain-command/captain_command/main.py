@@ -70,11 +70,80 @@ def load_tsm_files():
     return results
 
 
+def classify_topstep_account_stage(account_name: str) -> str | None:
+    """Map a TopstepX account name to the matching TSM stage.
+
+    TopstepX uses the following documented account naming conventions
+    (last verified 2026-04 against the TopstepX dashboard):
+
+        PRAC-V2-XXXXXX-XXXXXXXX            -> STAGE_1 (practice / paper)
+        <BAL>KTC-V2-XXXXXX-XXXXXXXX        -> STAGE_1 (Trading Combine eval)
+                                              e.g. 50KTC-V2-..., 150KTC-V2-...
+        TC-V2-...                          -> STAGE_1 (legacy TC pattern)
+        XFA-V2-XXXXXX-XXXXXXXX             -> XFA (Express Funded Account)
+        XFA-<BAL>K-V2-...                  -> XFA (alternative XFA prefix)
+        LIVE-V2-XXXXXX-XXXXXXXX            -> LIVE (Live Funded Account)
+        <BAL>KFUND-V2-...                  -> LIVE (Funded variant)
+
+    Returns
+    -------
+    str | None
+        One of "STAGE_1", "XFA", "LIVE", or ``None`` if the pattern is
+        unrecognised. **Callers MUST treat None as a hard failure and
+        refuse to auto-link** rather than defaulting to a stage — picking
+        the wrong stage assigns incompatible rules (e.g. defaulting to
+        LIVE on an eval account would remove the trailing MLL guard and
+        replace it with auto-liquidate behaviour against rules that
+        do not apply).
+
+    BEHAVIOUR CHANGE 2026-05-01
+    ---------------------------
+    Previous implementation defaulted unknown patterns to LIVE, which
+    silently mis-classified Trading Combine accounts (e.g.
+    150KTC-V2-551001-86041837) as Live Funded. LIVE rules differ
+    materially: no trailing MLL, $4,500 daily DD with auto-liquidate +
+    halt-until-19EST, and different commission tiers. Mis-classification
+    would have either:
+      * Allowed an eval account to trade past the $4,500 trailing MLL
+        until the broker rejected the order, OR
+      * Triggered Captain's auto-liquidate logic against rules that do
+        not exist on the eval account.
+
+    This function now FAILS CLOSED for unknown patterns to make the
+    failure loud rather than silent.
+    """
+    if not account_name:
+        return None
+
+    name = account_name.upper()
+
+    # XFA must be checked BEFORE TC so e.g. "XFA-150K-V2-..." doesn't
+    # accidentally match the TC branch via "TC" substring.
+    if "XFA" in name:
+        return "XFA"
+
+    if name.startswith("PRAC"):
+        return "STAGE_1"
+
+    # Trading Combine eval (current canonical pattern is <BAL>KTC-V2-...).
+    # The "TC-V2" anchor avoids false positives on substrings like "TCM".
+    if "TC-V2" in name or name.startswith("TC-"):
+        return "STAGE_1"
+
+    # Live Funded — explicit naming variants.
+    if name.startswith("LIVE") or "FUND" in name:
+        return "LIVE"
+
+    return None
+
+
 def _link_tsm_to_account(tsm_results: list[dict], account: dict):
     """Auto-link a discovered TopstepX account to the best matching TSM file.
 
-    Matches on provider=TopstepX, starting_balance, and account stage
-    (PRAC → EVAL, XFA → XFA, else → LIVE). Skips if already linked.
+    Matches on provider=TopstepX and account stage classified via
+    ``classify_topstep_account_stage``. Skips if D08 row already exists
+    for this account_id. Refuses to link unknown account name patterns
+    (logs CRITICAL + alert) rather than defaulting to LIVE.
     """
     from captain_command.blocks.b4_tsm_manager import _store_tsm_in_d08
     from shared.questdb_client import get_cursor
@@ -97,13 +166,38 @@ def _link_tsm_to_account(tsm_results: list[dict], account: dict):
     except Exception:
         pass  # continue to link attempt
 
-    # Determine stage from account name prefix
-    if account_name.startswith("PRAC"):
-        target_stage = "STAGE_1"
-    elif "XFA" in account_name:
-        target_stage = "XFA"
-    else:
-        target_stage = "LIVE"
+    # Classify stage from account name pattern (fails closed on unknown patterns)
+    target_stage = classify_topstep_account_stage(account_name)
+    if target_stage is None:
+        logger.critical(
+            "CMD: cannot auto-classify TSM stage for account name %r "
+            "(account_id=%s). Refusing to auto-link to avoid assigning "
+            "wrong rules. Either:\n"
+            "  1. Add the new naming pattern to "
+            "classify_topstep_account_stage() in captain_command/main.py, OR\n"
+            "  2. Manually write the D08 row using one of the JSONs in "
+            "config/tsm/providers/ for this account_id.",
+            account_name, account_id,
+        )
+        try:
+            from shared.redis_client import get_redis_client, CH_ALERTS
+            import json as _json
+            get_redis_client().publish(CH_ALERTS, _json.dumps({
+                "priority": "CRITICAL",
+                "event_type": "TSM_AUTO_LINK_REFUSED",
+                "message": (
+                    f"Cannot classify account name pattern: {account_name}. "
+                    f"Account {account_id} has NO TSM linked — Captain will "
+                    "skip this account in B4/B5C. Update the classifier or "
+                    "manually write the D08 row before next session."
+                ),
+                "source": "CMD_TSM_AUTO_LINK",
+                "account_id": account_id,
+                "account_name": account_name,
+            }))
+        except Exception as alert_exc:
+            logger.error("Failed to publish TSM_AUTO_LINK_REFUSED alert: %s", alert_exc)
+        return
 
     # Find best matching TSM
     best = None
