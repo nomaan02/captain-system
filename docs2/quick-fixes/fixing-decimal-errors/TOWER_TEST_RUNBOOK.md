@@ -108,9 +108,17 @@ source .venv/bin/activate.fish
 set -gx PYTHONPATH $PWD $PWD/captain-online $PWD/captain-offline $PWD/captain-command
 set -gx QUESTDB_HOST 127.0.0.1
 set -gx QUESTDB_PORT 8812
+set -gx QUESTDB_USER admin
+set -gx QUESTDB_PASSWORD quest
 set -gx REDIS_HOST 127.0.0.1
 set -gx REDIS_PORT 6379
 ```
+
+**Why `QUESTDB_PASSWORD`:** the QuestDB Docker image ships with default
+credentials `admin/quest`. Without setting these, the host venv hits
+`psycopg2.OperationalError: fe_sendauth: no password supplied` on every
+live-DB test. If your tower customised the credentials in `.env`, use
+those instead — verify with `dco logs questdb 2>&1 | head -5`.
 
 **Sanity check:**
 ```fish
@@ -163,14 +171,28 @@ python -B -m pytest tests/ -q \
     --ignore=tests/test_pseudotrader_account.py \
     --ignore=tests/test_offline_feedback.py \
     --ignore=tests/test_stress.py \
-    --ignore=tests/test_account_lifecycle.py
+    --ignore=tests/test_account_lifecycle.py \
+    --ignore=tests/test_l3_immediate_dispatch.py \
+    --ignore=tests/test_online_session_close_publish.py
 ```
 
-**Expected (last line):** `~506 passed, ~23 failed, ~18 skipped`
+**Expected (last line):** `~530 passed, 0 failed, ~13 skipped` (when
+`QUESTDB_PASSWORD` is set per Section 2.1; otherwise expect ~15 live-DB
+tests to fail with `fe_sendauth`).
 
-The ~23 "failed" are pre-existing tests that need a **live QuestDB** (psycopg2 `OperationalError: connection refused`). They are not related to this work and were failing on the laptop before the changes too. As long as the count is ≤ 23 and the failure messages are all `psycopg2.OperationalError`, the gate is green.
+**Why the two `test_l3_*` / `test_online_session_close_*` ignores:** both
+suites import `shared/journal.py` which writes to a hardcoded
+`/captain/state/journal.db` path that only exists inside the Docker
+containers (the `/captain` volume mount). Running from the host venv
+unconditionally raises `PermissionError: '/captain'`. These tests are
+permanently broken on host venvs and are excluded so they don't muddy
+the gate. They run cleanly inside the captain-online container if you
+need them.
 
-**True regression:** Any non-`OperationalError` failure → stop and report.
+**True regression:** Any failure that isn't `OperationalError`
+(`fe_sendauth` or `connection refused`) on a `test_schema_*` /
+`test_d0*_decimal_roundtrip` / `test_d23_d25_decimal_roundtrip` test →
+stop and report.
 
 ---
 
@@ -326,10 +348,15 @@ If you see `CRITICAL reconciliation failure for account X: <error>`, that means 
 |---------|--------|
 | `git pull` rejects with "diverged" | `git status` to inspect. If the local commits are old/untracked artefacts, stash or discard them. Never force-push to main from a tower. |
 | Tests fail with `ModuleNotFoundError: shared` | Re-run `set -gx PYTHONPATH ...` from Section 2.1. |
+| Tests fail with `psycopg2.OperationalError: fe_sendauth: no password supplied` | Set `set -gx QUESTDB_PASSWORD quest` (or your tower's actual password from `.env`). See Section 2.1. |
+| Tests fail with `PermissionError: '/captain'` | The test imports `shared/journal.py` which writes inside the container only. Add it to the `--ignore` list, or run inside the container with `dco exec` instead. |
+| `dco exec ... pytest ...` says `No module named pytest` | The captain images are runtime-only — pytest isn't installed. Stay on the host venv (Section 2) or `pip install pytest pytest-asyncio` ad-hoc inside the container. |
 | `dco up -d --build` hangs on `captain-online` | Check `dco logs captain-online`. Likely Python import error from a half-applied patch — re-checkout main and rebuild. |
 | `cap-run init_questdb.py` says `[FAIL]` | See `docs2/audits/2026-03-27_Build_Plans_1-12/build-plan-outputs/2026-04-28_tower_migration_guide_v2.md` §7.3. |
-| Lint test fails locally on tower | Should never happen — the lint passed at commit time. If it does, `python scripts/lint_decimal_boundary.py` to see file:line. |
-| `dry_run_phase_a.py` crashes at B6 | Phase 1 patch not loaded. `git rev-parse HEAD` should equal `dbe550b...` or later. |
+| Lint test fails locally on tower with hits in `venv/lib/.../site-packages/...` | Pull commit `b648675` or later — the lint script's directory-skip list covers all common venv layouts (`.venv`, `venv`, `env`, `.tox`) and `site-packages` at any depth. |
+| Lint test fails on actual repo files | `python scripts/lint_decimal_boundary.py` to see file:line. Replace with `shared.decimal_boundary` helper or add `# decimal-boundary: ok` for legitimate non-monetary defaults. |
+| `test_tsm_config_type_purity` / `test_user_silo_type_purity` fails with `unexpected token [FROM]` | Pull commit `415cbda` or later — old fixture used unsupported `DELETE FROM` on QuestDB's append-only tables. |
+| `dry_run_phase_a.py` crashes at B6 | Phase 1 patch not loaded. `git rev-parse HEAD` should equal `1910f71` or later. |
 
 ---
 
