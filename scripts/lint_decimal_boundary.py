@@ -83,6 +83,17 @@ INGESTION_PATH_RE = re.compile(
     r"ewma_states\[.*\]\s*=)"
 )
 
+# Bug C extension: position-monitor inner-loop functions where Decimal
+# (from Redis state) commonly mixes with float (from live quote stream).
+# Any new arithmetic in these functions should use _money_d / as_money
+# coercion, not raw operator math.
+POSITION_MONITOR_FUNCTIONS = {
+    "monitor_positions",         # b7_position_monitor
+    "monitor_shadow_positions",  # b7_shadow_monitor
+    "_handle_taken_skipped",     # online orchestrator
+    "_publish_trade_outcome",    # b7_position_monitor
+}
+
 
 def _line_in_scope(line: str) -> bool:
     """A line is in scope if it mentions a known monetary column name OR
