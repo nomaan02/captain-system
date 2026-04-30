@@ -33,6 +33,7 @@ from shared.questdb_client import get_cursor
 from shared.contract_resolver import get_tick_size
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
+from shared.decimal_boundary import as_money, as_money_or_none, to_float
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ def run_signal_output(
     assets_detail = assets_detail or {}
     user_id = user_silo.get("user_id", "unknown")
     accounts = parse_json(user_silo.get("accounts", "[]"), [])
-    total_capital = user_silo.get("total_capital", 0)
+    total_capital = as_money(user_silo.get("total_capital"))
 
     # Load quality thresholds for confidence classification
     quality_ceiling = _load_system_param("quality_ceiling", 0.010)
@@ -307,7 +308,14 @@ def _build_per_account(
     account_skip_reason: dict,
     tsm_configs: dict,
 ) -> dict:
-    """Build per-account trade breakdown."""
+    """Build per-account trade breakdown.
+
+    Decimal end-to-end for monetary fields (remaining_mdd, remaining_mll).
+    Percentage (risk_budget_pct) computed in float at the explicit
+    `to_float` boundary because the GUI displays it rounded to 1 decimal
+    place. Re-coerces D08 fields via the shared boundary helpers so the
+    function is robust against producer regressions.
+    """
     result = {}
     for ac_id in accounts:
         tsm = tsm_configs.get(ac_id, {})
@@ -317,10 +325,18 @@ def _build_per_account(
         rec = account_recommendation.get(asset_id, {}).get(ac_id, "SKIP")
         reason = account_skip_reason.get(asset_id, {}).get(ac_id)
 
-        mdd_limit = tsm.get("max_drawdown_limit")
-        current_dd = tsm.get("current_drawdown", 0)
-        mll = tsm.get("max_daily_loss")
-        daily_used = tsm.get("daily_loss_used", 0)
+        mdd_limit = as_money_or_none(tsm.get("max_drawdown_limit"))
+        current_dd = as_money(tsm.get("current_drawdown"))
+        mll = as_money_or_none(tsm.get("max_daily_loss"))
+        daily_used = as_money(tsm.get("daily_loss_used"))
+
+        remaining_mdd = (mdd_limit - current_dd) if mdd_limit is not None else None
+        remaining_mll = (mll - daily_used) if mll is not None else None
+        risk_budget_pct = (
+            to_float(daily_used / mll) * 100.0
+            if mll is not None and mll > 0
+            else None
+        )
 
         result[ac_id] = {
             "contracts": contracts,
@@ -329,10 +345,10 @@ def _build_per_account(
             "account_name": tsm.get("name", ac_id),
             "category": classification.get("category"),
             "risk_goal": tsm.get("risk_goal"),
-            "remaining_mdd": (mdd_limit - current_dd) if mdd_limit is not None else None,
-            "remaining_mll": (mll - daily_used) if mll is not None else None,
+            "remaining_mdd": remaining_mdd,
+            "remaining_mll": remaining_mll,
             "pass_probability": tsm.get("pass_probability"),
-            "risk_budget_pct": (daily_used / mll * 100) if mll and mll > 0 else None,
+            "risk_budget_pct": risk_budget_pct,
             "api_validated": tsm.get("api_validated", False),
         }
 
@@ -433,7 +449,11 @@ def _log_signal_output(user_id: str, session_id: int, signals: list, below_thres
 
 
 def _get_daily_pnl(user_id: str) -> float:
-    """Get today's cumulative P&L for user from P3-D03."""
+    """Get today's cumulative P&L for user from P3-D03.
+
+    Returns float for downstream percentage / display math; the explicit
+    Decimal->float boundary lives in shared.decimal_boundary.to_float.
+    """
     try:
         from shared.questdb_client import get_cursor
         with get_cursor() as cur:
@@ -446,10 +466,7 @@ def _get_daily_pnl(user_id: str) -> float:
             row = cur.fetchone()
         if not row or row[0] is None:
             return 0.0
-        v = row[0]
-        if isinstance(v, Decimal):
-            return float(v)
-        return float(v)
+        return to_float(row[0])
     except Exception:
         return 0.0
 

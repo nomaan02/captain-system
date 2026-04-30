@@ -36,7 +36,8 @@ from shared.constants import SYSTEM_TIMEZONE, SESSION_IDS, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import get_topstep_client, TopstepXClientError
 from shared.topstep_stream import quote_cache
-from shared.json_helpers import parse_json
+from shared.json_helpers import parse_json, parse_json_decimal
+from shared.decimal_boundary import as_money, as_money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +78,18 @@ def _load_active_assets(session_id: int) -> list[dict]:
         if not session_match(asset_id, session_id, session_hours):
             continue
 
+        # D00 monetary fields stay Decimal end-to-end; sizing math at use
+        # sites coerces via shared.decimal_boundary.to_float as needed.
+        # Falsy-zero defaults (`r[4] or 50.0`) would collapse Decimal('0.00')
+        # to a float — antipattern guarded by tests/test_active_assets_type_purity.
         assets.append({
             "asset_id": asset_id,
             "captain_status": captain_status,
             "session_hours": session_hours,
             "session_schedule": parse_json(r[3], {}),
-            "point_value": r[4] or 50.0,
-            "tick_size": r[5] or 0.25,
-            "margin_per_contract": r[6] or 0.0,
+            "point_value": as_money(r[4]),
+            "tick_size": as_money(r[5]),
+            "margin_per_contract": as_money(r[6]),
             "data_sources": parse_json(r[7], {}),
             "data_quality_flag": r[8] or "CLEAN",
             "roll_calendar": parse_json(r[9], None),
@@ -250,36 +255,45 @@ def _load_tsm_configs() -> dict:
         if account_id in seen:
             continue
         seen.add(account_id)
+        # Monetary fields use the shared boundary helpers so the dict is
+        # type-pure: Decimal for non-nullable, Decimal|None for nullable.
+        # The previous `r[N] or 0.0` antipattern collapsed Decimal('0.00')
+        # to float and produced a type-mixed dict that tripped TypeError in
+        # b6_signal_output._build_per_account at NY open 2026-04-30.
+        # JSON STRING columns containing dollar amounts (topstep_state,
+        # fee_schedule, payout_rules, topstep_params per Phase A migration
+        # plan §A.2) round-trip through parse_json_decimal so embedded
+        # Decimals are preserved.
         result[account_id] = {
             "account_id": account_id,
             "user_id": r[1],
             "name": r[2],
             "classification": parse_json(r[3], {}),
-            "starting_balance": r[4] or 0.0,
-            "current_balance": r[5] or 0.0,
-            "current_drawdown": r[6] or 0.0,
-            "daily_loss_used": r[7] or 0.0,
-            "profit_target": r[8],
-            "max_drawdown_limit": r[9],
-            "max_daily_loss": r[10],
+            "starting_balance": as_money(r[4]),
+            "current_balance": as_money(r[5]),
+            "current_drawdown": as_money(r[6]),
+            "daily_loss_used": as_money(r[7]),
+            "profit_target": as_money_or_none(r[8]),
+            "max_drawdown_limit": as_money_or_none(r[9]),
+            "max_daily_loss": as_money_or_none(r[10]),
             "max_contracts": r[11],
             "scaling_plan": parse_json(r[12], None),
-            "commission_per_contract": r[13] or 0.0,
+            "commission_per_contract": as_money(r[13]),
             "instrument_permissions": parse_json(r[14], []),
             "overnight_allowed": r[15] if r[15] is not None else True,
             "trading_hours": r[16],
-            "margin_per_contract": r[17] or 0.0,
-            "margin_buffer_pct": r[18] or 1.5,
+            "margin_per_contract": as_money(r[17]),
+            "margin_buffer_pct": r[18] if r[18] is not None else 1.5,
             "pass_probability": r[19],
             "risk_goal": r[20] or "GROW_CAPITAL",
             "evaluation_end_date": r[21],
             "topstep_optimisation": r[22] if r[22] is not None else False,
-            "fee_schedule": parse_json(r[23], None),
-            "payout_rules": parse_json(r[24], None),
+            "fee_schedule": parse_json_decimal(r[23], None),
+            "payout_rules": parse_json_decimal(r[24], None),
             "scaling_plan_active": r[25] if r[25] is not None else False,
             "scaling_tier_micros": r[26] or 0,
-            "topstep_params": parse_json(r[27], {}),
-            "topstep_state": parse_json(r[28], {}),
+            "topstep_params": parse_json_decimal(r[27], {}),
+            "topstep_state": parse_json_decimal(r[28], {}),
         }
     return result
 

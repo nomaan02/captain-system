@@ -854,8 +854,17 @@ class OnlineOrchestrator:
         return users if users else [{"user_id": os.environ.get("BOOTSTRAP_USER_ID", "primary_user"), "role": "ADMIN"}]
 
     def _load_user_silo(self, user_id: str) -> dict | None:
-        """Load user capital silo from P3-D16."""
+        """Load user capital silo from P3-D16.
+
+        Monetary fields (starting_capital, total_capital) come back as
+        Decimal via shared.decimal_boundary.as_money so the dict is
+        type-pure for downstream consumers (B4 sizing, B6 signal output).
+        Risk percentages (max_portfolio_risk_pct, correlation_threshold,
+        user_kelly_ceiling) stay float — they are dimensionless ratios,
+        not money.
+        """
         from shared.questdb_client import get_cursor
+        from shared.decimal_boundary import as_money
         with get_cursor() as cur:
             cur.execute(
                 """SELECT user_id, starting_capital, total_capital, accounts,
@@ -873,13 +882,13 @@ class OnlineOrchestrator:
 
         return {
             "user_id": row[0],
-            "starting_capital": row[1] or 0,
-            "total_capital": row[2] or 0,
+            "starting_capital": as_money(row[1]),
+            "total_capital": as_money(row[2]),
             "accounts": row[3] or "[]",
             "max_simultaneous_positions": row[4],
-            "max_portfolio_risk_pct": row[5] or 0.10,
-            "correlation_threshold": row[6] or 0.7,
-            "user_kelly_ceiling": row[7] or 1.0,
+            "max_portfolio_risk_pct": row[5] if row[5] is not None else 0.10,
+            "correlation_threshold": row[6] if row[6] is not None else 0.7,
+            "user_kelly_ceiling": row[7] if row[7] is not None else 1.0,
         }
 
     def _command_listener(self):
