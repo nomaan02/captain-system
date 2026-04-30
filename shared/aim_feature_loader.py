@@ -23,17 +23,13 @@ from decimal import Decimal
 from shared.aim_compute import z_score
 from shared.questdb_client import get_cursor
 from shared import vix_provider
+from shared.decimal_boundary import as_money_or_none as _d_price
 
 logger = logging.getLogger(__name__)
 
-
-def _d_price(x: object) -> Decimal | None:
-    """Coerce QuestDB DECIMAL / numeric OHLC cells to Decimal for arithmetic."""
-    if x is None:
-        return None
-    if isinstance(x, Decimal):
-        return x
-    return Decimal(str(x))
+# `_d_price` is an alias for shared.decimal_boundary.as_money_or_none —
+# OHLC cells (D30 DECIMAL columns) preserve None semantics for missing
+# bars, so the nullable variant is the correct mapping.
 
 
 def load_replay_features(target_date: date, assets: list[str]):

@@ -30,8 +30,9 @@ from typing import Any, Callable
 from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
 from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, now_et
-from shared.json_helpers import parse_json_decimal
+from shared.json_helpers import parse_json, parse_json_decimal
 from shared.decimal_json import dumps_decimal
+from shared.decimal_boundary import as_money, as_money_or_none, to_float
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
@@ -103,15 +104,19 @@ def _reconcile_api_account(ac_id: str, user_id: str, ac: dict,
             logger.warning("No broker status for account %s", ac_id)
             return
 
-        broker_balance = broker_status.get("balance")
-        system_balance = ac.get("current_balance")
+        # Phase 2 boundary discipline: broker API returns float, Phase A
+        # migration made system_balance Decimal — coerce both at the boundary
+        # so the comparison and the GUI/log formatters never touch mixed
+        # Decimal/float arithmetic.
+        broker_balance = as_money_or_none(broker_status.get("balance"))
+        system_balance = as_money_or_none(ac.get("current_balance"))
 
         if broker_balance is None or system_balance is None:
             return
 
         mismatch = abs(broker_balance - system_balance)
 
-        if mismatch > 1.0:
+        if mismatch > Decimal("1.00"):
             # Auto-correct from broker (trusted source)
             _update_account_balance(ac_id, broker_balance)
 
@@ -120,21 +125,48 @@ def _reconcile_api_account(ac_id: str, user_id: str, ac: dict,
                 "priority": "MEDIUM",
                 "message": (
                     f"Account {ac_id} balance reconciled: "
-                    f"system ${system_balance:,.2f} → broker ${broker_balance:,.2f} "
-                    f"(diff: ${mismatch:,.2f})"
+                    f"system ${to_float(system_balance):,.2f} → "
+                    f"broker ${to_float(broker_balance):,.2f} "
+                    f"(diff: ${to_float(mismatch):,.2f})"
                 ),
                 "source": "RECONCILIATION",
                 "timestamp": now_et().isoformat(),
             })
 
             logger.info("Balance corrected for %s: %.2f → %.2f (diff: %.2f)",
-                        ac_id, system_balance, broker_balance, mismatch)
+                        ac_id, to_float(system_balance),
+                        to_float(broker_balance), to_float(mismatch))
 
-        _log_reconciliation(ac_id, user_id, "API", system_balance,
-                           broker_balance, mismatch)
+        _log_reconciliation(ac_id, user_id, "API",
+                            to_float(system_balance),
+                            to_float(broker_balance),
+                            to_float(mismatch))
 
     except Exception as exc:
-        logger.error("API reconciliation failed for %s: %s", ac_id, exc, exc_info=True)
+        # Phase 2 lockdown: was previously the silent except path that hid
+        # the Decimal/float TypeError for weeks. Now logs CRITICAL with full
+        # traceback and pushes a GUI alert so reconciliation failures surface
+        # immediately instead of silently returning.
+        logger.critical(
+            "CMD-B8: CRITICAL reconciliation failure for account %s: %s",
+            ac_id, exc, exc_info=True,
+        )
+        try:
+            gui_push_fn(user_id, {
+                "type": "notification",
+                "priority": "CRITICAL",
+                "message": (
+                    f"Reconciliation FAILED for account {ac_id}: {exc}. "
+                    "Manual broker-balance check required before next session."
+                ),
+                "source": "RECONCILIATION_FAILURE",
+                "timestamp": now_et().isoformat(),
+            })
+        except Exception as alert_exc:
+            logger.error(
+                "CMD-B8: failed to push reconciliation-failure alert: %s",
+                alert_exc,
+            )
 
 
 # ---------------------------------------------------------------------------

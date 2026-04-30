@@ -478,23 +478,9 @@ def _aggregate_outcomes(rows: list[tuple]) -> RealisedOutcome:
     )
 
 
-def _safe_decimal(v: object) -> Decimal:
-    if v is None:
-        return Decimal("0")
-    if isinstance(v, Decimal):
-        return v
-    try:
-        return Decimal(str(v))
-    except Exception:
-        return Decimal("0")
+from shared.decimal_boundary import as_money as _safe_decimal, as_money_or_none as _decimal_or_none
 
-
-def _decimal_or_none(v: object) -> Decimal | None:
-    if v is None:
-        return None
-    if isinstance(v, Decimal):
-        return v
-    try:
-        return Decimal(str(v))
-    except Exception:
-        return None
+# `_safe_decimal` and `_decimal_or_none` are aliases for the shared
+# boundary helpers, kept under their existing names for backward
+# compatibility with this module's call sites. Phase 2 consolidation
+# eliminated six private `_money*` helpers across the tree.

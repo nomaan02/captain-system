@@ -36,45 +36,18 @@ from decimal import Decimal
 from typing import Optional
 
 from shared.statistics import get_ewma_for_regime
-from shared.json_helpers import parse_json
+from shared.json_helpers import parse_json, parse_json_decimal
 from shared.constants import now_et
 from shared.sizing_helpers import resolve_sizing_sl
+from shared.decimal_boundary import as_money as _silo_money, to_float as _to_float
 
 logger = logging.getLogger(__name__)
 
-
-def _silo_money(x: object) -> Decimal:
-    """D16 capital amounts from DB or test fixtures (Decimal or legacy float)."""
-    if x is None:
-        return Decimal("0")
-    if isinstance(x, Decimal):
-        return x
-    return Decimal(str(x))
-
-
-def _to_float(x: object) -> float:
-    """Coerce a possibly-Decimal D08 monetary field to float for sizing math.
-
-    Phase A migrated D08 monetary columns (max_drawdown_limit, current_drawdown,
-    daily_loss_used, max_daily_loss, current_balance, margin_per_contract, ...)
-    to DECIMAL(18, 2). Kelly sizing math in this module is float-typed
-    (strategy_sl, point_value, expected_fee, account_kelly), so attempting
-    Decimal/float arithmetic raised TypeError post-migration. The fix is to
-    coerce at the boundary — sizing is approximate (rounded to int via
-    math.floor), so float precision is more than adequate.
-
-    None / missing values become 0.0 so caller arithmetic stays defined.
-    """
-    if x is None:
-        return 0.0
-    if isinstance(x, Decimal):
-        return float(x)
-    if isinstance(x, (int, float)):
-        return float(x)
-    try:
-        return float(x)
-    except (TypeError, ValueError):
-        return 0.0
+# `_silo_money` and `_to_float` are aliases for shared.decimal_boundary
+# helpers, kept under their original names so call-sites in this module
+# stay short. The Phase 1 consolidation moved the canonical implementation
+# to shared/decimal_boundary.py — six private `_money*` helpers across the
+# tree collapse into one source of truth.
 
 
 def run_kelly_sizing(
@@ -480,20 +453,25 @@ def _get_expected_fee(tsm: dict, asset_id: str) -> float:
 
     Per Nomaan_Edits_Fees.md Change 2:
     Read from fee_schedule.fees_by_instrument first, fall back to commission_per_contract.
+
+    Phase A migration stores monetary values inside fee_schedule JSON via
+    dumps_decimal, so this site uses parse_json_decimal to round-trip back
+    to Decimal. The escape to float happens at the explicit `_to_float`
+    boundary because Kelly sizing math is float-typed.
     """
-    fee_schedule = parse_json(tsm.get("fee_schedule"), None)
+    fee_schedule = parse_json_decimal(tsm.get("fee_schedule"), None)
     if fee_schedule:
         fees_by_instrument = fee_schedule.get("fees_by_instrument", {})
         if asset_id in fees_by_instrument:
-            return fees_by_instrument[asset_id].get("round_turn", 0.0)
-        # Fallback to default in fee_schedule
-        default_fee = fee_schedule.get("default_round_turn", 0.0)
+            rt = _silo_money(fees_by_instrument[asset_id].get("round_turn"))
+            return _to_float(rt)
+        default_fee = _silo_money(fee_schedule.get("default_round_turn"))
         if default_fee > 0:
-            return default_fee
+            return _to_float(default_fee)
 
     # Fallback to commission_per_contract (× 2 for round trip)
-    cpc = tsm.get("commission_per_contract", 0.0)
-    return cpc * 2 if cpc else 0.0
+    cpc = _silo_money(tsm.get("commission_per_contract"))
+    return _to_float(cpc * Decimal(2)) if cpc > 0 else 0.0
 
 
 def _load_system_param(key: str, default):

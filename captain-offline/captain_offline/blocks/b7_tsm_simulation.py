@@ -29,6 +29,7 @@ import logging
 from shared.constants import now_et
 from shared.questdb_client import get_cursor
 from shared.redis_client import get_redis_client, CH_ALERTS
+from shared.decimal_boundary import as_money_or_none, to_float
 
 logger = logging.getLogger(__name__)
 
@@ -230,11 +231,18 @@ def run_tsm_simulation(
 
     # No fixed seed — MC simulation must produce different paths each run
 
-    starting_balance = tsm_config.get("starting_balance", 150000)
-    current_balance = tsm_config.get("current_balance", starting_balance)
-    mdd_limit = tsm_config.get("max_drawdown_limit")
-    mll_limit = tsm_config.get("max_daily_loss")
-    profit_target = tsm_config.get("profit_target")
+    # Phase A migration made D08 monetary fields Decimal. Monte Carlo
+    # `_simulate_one_path` uses float arithmetic (sim_balance += ret); the
+    # explicit boundary lives here at function entry rather than per-loop.
+    # Conservative defaults match the previous (pre-Phase-A) literals.
+    starting_balance = to_float(tsm_config.get("starting_balance"), default=150000.0)
+    current_balance = to_float(tsm_config.get("current_balance"), default=starting_balance)
+    mdd_raw = as_money_or_none(tsm_config.get("max_drawdown_limit"))
+    mll_raw = as_money_or_none(tsm_config.get("max_daily_loss"))
+    profit_raw = as_money_or_none(tsm_config.get("profit_target"))
+    mdd_limit = to_float(mdd_raw) if mdd_raw is not None else None
+    mll_limit = to_float(mll_raw) if mll_raw is not None else None
+    profit_target = to_float(profit_raw) if profit_raw is not None else None
     risk_goal = tsm_config.get("risk_goal", "PASS_EVAL")
 
     # Remaining days (default 60 if no deadline)

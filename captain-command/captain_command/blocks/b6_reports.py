@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, timedelta
 from shared.questdb_client import get_cursor
 from shared.decimal_json import loads_decimal
+from shared.decimal_boundary import as_money, to_float
 from shared.journal import write_checkpoint
 from shared.constants import now_et
 
@@ -562,9 +563,13 @@ def _rpt12_alpha_decomposition(user_id: str, params: dict) -> str:
             )
             ewma_map = {}
             for r in cur.fetchall():
-                wr = r[1] or 0.5
-                aw = r[2] or 0.0
-                al = abs(r[3] or 0.0)
+                # win_rate is dimensionless (probability); avg_win/avg_loss are
+                # per-contract dollars (Phase A made avg_win/avg_loss DECIMAL on
+                # some installs). Coerce both arms to float at the boundary so
+                # baseline_edge stays a plain float for downstream % math.
+                wr = to_float(r[1], default=0.5)
+                aw = to_float(r[2])
+                al = abs(to_float(r[3]))
                 ewma_map[r[0]] = {
                     "win_rate": wr,
                     "baseline_edge": wr * aw - (1 - wr) * al,

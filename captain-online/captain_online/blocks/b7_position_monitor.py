@@ -42,15 +42,12 @@ from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
 from shared.json_helpers import parse_json, parse_json_decimal
 from shared.decimal_json import dumps_decimal
+from shared.decimal_boundary import as_money as _money_d
 
 logger = logging.getLogger(__name__)
 
-
-def _money_d(x: object) -> Decimal:
-    """Coerce a numeric or str value to Decimal for P&L / price arithmetic."""
-    if isinstance(x, Decimal):
-        return x
-    return Decimal(str(x))
+# `_money_d` is an alias for shared.decimal_boundary.as_money — kept under
+# the original short name for compactness in the hot tick-by-tick PnL path.
 
 
 # ---------------------------------------------------------------------------
