@@ -108,26 +108,44 @@ source .venv/bin/activate.fish
 set -gx PYTHONPATH $PWD $PWD/captain-online $PWD/captain-offline $PWD/captain-command
 set -gx QUESTDB_HOST 127.0.0.1
 set -gx QUESTDB_PORT 8812
-set -gx QUESTDB_USER admin
-set -gx QUESTDB_PASSWORD quest
 set -gx REDIS_HOST 127.0.0.1
 set -gx REDIS_PORT 6379
+
+# QuestDB credentials — source from THIS tower's .env so the host venv
+# uses the same auth as the running containers. Each tower customises
+# these (Tower A and Tower B may have different secrets, and neither
+# matches the upstream `admin`/`quest` defaults).
+set -gx QUESTDB_USER (grep '^QUESTDB_USER=' .env | cut -d= -f2)
+set -gx QUESTDB_PASSWORD (grep '^QUESTDB_PASSWORD=' .env | cut -d= -f2)
 ```
 
-**Why `QUESTDB_PASSWORD`:** the QuestDB Docker image ships with default
-credentials `admin/quest`. Without setting these, the host venv hits
-`psycopg2.OperationalError: fe_sendauth: no password supplied` on every
-live-DB test. If your tower customised the credentials in `.env`, use
-those instead — verify with `dco logs questdb 2>&1 | head -5`.
+**Why source from `.env`:** without `QUESTDB_USER` / `QUESTDB_PASSWORD`
+the host venv falls back to whatever defaults `shared/questdb_client.py`
+uses, which may not match the actual container auth. Symptoms:
+
+- `fe_sendauth: no password supplied` — variable not set at all
+- `invalid username/password` — variable set but doesn't match the
+  running QuestDB instance (typical mistake: hardcoded `admin`/`quest`
+  defaults vs the tower's customised credentials)
 
 **Sanity check:**
 ```fish
 python -c "import shared; from shared.decimal_boundary import as_money, to_float; print('imports ok')"
+python -c "from shared.questdb_client import get_cursor;\
+    cur = get_cursor().__enter__(); cur.execute('SELECT 1');\
+    print('questdb ok:', cur.fetchone())"
 ```
 
-**Expected:** `imports ok`
+**Expected:**
+```
+imports ok
+questdb ok: (1,)
+```
 
-**Fail:** `ModuleNotFoundError: No module named 'shared'` → re-run the `set -gx PYTHONPATH ...` line.
+**Fail diagnostics:**
+- `ModuleNotFoundError: No module named 'shared'` → re-run the `set -gx PYTHONPATH ...` line.
+- `psycopg2.OperationalError: invalid username/password` → `.env` values mismatch the actual running QuestDB container. Check `cat .env | grep QUESTDB` and compare with `dco logs questdb 2>&1 | head -5`.
+- `psycopg2.OperationalError: connection refused` → QuestDB container is not up. `dco ps` then `dco up -d --build` if needed.
 
 ### 2.2 Phase 1+2+3+4 regression suite (the meat)
 
