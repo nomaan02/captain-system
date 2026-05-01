@@ -42,7 +42,7 @@ from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
 from shared.json_helpers import parse_json, parse_json_decimal
 from shared.decimal_json import dumps_decimal
-from shared.decimal_boundary import as_money as _money_d
+from shared.decimal_boundary import as_money as _money_d, as_money_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -494,6 +494,22 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     entry_ts = entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time
     model_m = _get_locked_m(asset)
     sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
+
+    # Boundary: coerce every monetary field to Decimal so the global
+    # psycopg2 adapter (shared.questdb_client) wraps each as
+    # `cast('<v>' as DECIMAL(p,s))`. Without this, upstream type leaks
+    # (str from JSON round-trip in pos["entry_price"], float from
+    # `float(current_price)` in monitor_positions for exit_price) bypass
+    # the adapter and QuestDB rejects the bare STRING/DOUBLE assignment
+    # to DECIMAL(14,6) / DECIMAL(18,4) columns. ``as_money_or_none``
+    # preserves NULL semantics where the column is nullable.
+    entry_price = as_money_or_none(entry_price)
+    signal_entry_price = as_money_or_none(signal_entry_price)
+    exit_price = as_money_or_none(exit_price)
+    gross_pnl = as_money_or_none(gross_pnl)
+    commission = as_money_or_none(commission)
+    net_pnl = as_money_or_none(net_pnl)
+    slippage = as_money_or_none(slippage)
 
     with get_cursor() as cur:
         exit_ts = now_et().isoformat()
