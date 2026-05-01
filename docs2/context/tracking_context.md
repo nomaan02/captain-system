@@ -11,15 +11,14 @@
 
 ## Active Issue
 
-**Pre-NY-open consolidation, ~1h to go.** System is GO for NY today on both towers —
-adapter registered (acct 21855714 Tower A LIVE, acct 20258288 Tower B LIVE, both
-`canTrade=True`), dry-runs pass for sessions 1+2 with sane sizing, `b9_diagnostic`
-no longer crashes on NULL pnl. Two precautionary downstream-block None-safety patches
-landed (`hmm_inference_block:94`, `b7_position_monitor:706`) plus extended decimal
-lint to catch the no-op-ternary shape — committed but **towers should NOT rebuild
-captain-online before NY close** (precautionary only; dry-runs proved current image
-is safe). APAC silent-overnight + B7→D03 writeback gap + 12-file captain-offline
-audit are post-market backlog. Live monitors armed for first NY breakout.
+**Pre-NY-open, ~1h to go (NY OR window 13:30–13:35 UTC = 14:30–14:35 BST).**
+Pipeline is GO on both towers — adapter registered (acct 21855714 LIVE Tower A,
+acct 20258288 LIVE Tower B, both `canTrade=True`), dry-runs pass for sessions 1+2
+with sane sizing. Both remotes at HEAD `aeecf71` (b9 NULL-pnl fix + 2 precautionary
+None-safety patches + lint extension). Towers running `2476d76` image; should
+`git pull` to `aeecf71` but **NOT rebuild captain-online before NY close**
+(precautionary only). Live monitors armed; GUI loaded with WS open. Awaiting
+first NY breakout for E2E validation. Bug-status dashboard in latest record below.
 
 ---
 
@@ -255,6 +254,86 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 ---
 
 ## Records
+
+### 2026-05-01 13:35 BST — Bug-status dashboard for NY-open handoff
+
+**Status:** Verifying · pipeline GO · live monitors armed · ~55m to NY OR
+
+This entry is a single-read dashboard of every bug touched this session — what's
+fixed, what's deployed, what's deferred. The next agent should read this first.
+
+**FIXED + DEPLOYED to both towers (HEAD ≥ `2476d76`):**
+
+| ID | Bug | Fix | File |
+|----|-----|-----|------|
+| F1 | `compute_d4` `TypeError: float() argument ... NoneType` on every weekly/monthly diagnostic — both ternary branches identical, no None-guard | route through `to_float`; `continue` on None | `captain-offline/.../b9_diagnostic.py:451-454` |
+| F2 | Tower 1 missing `multi-user` remote — Step 0 SHA-parity check unusable | idempotent `git remote add multi-user …` documented in rule §5 | `.cursor/rules/captain-deploy-and-tower-discipline.mdc` |
+| F3 | `redis-cli -a "$REDIS_PASSWORD"` AUTH-fail — fish shell doesn't inherit env | `set -gx REDIS_PASSWORD (grep …)` or `(docker exec … echo $REDIS_PASSWORD)` documented in rule §5 | (rule + lessons-learned) |
+
+**FIXED but PATCH NOT YET LIVE on towers (HEAD `aeecf71`, towers should pull but NOT rebuild before NY close):**
+
+| ID | Bug | Fix | File |
+|----|-----|-----|------|
+| F4 | `hmm_inference_block.py:94` — `prior_dict.get("last_session_slot_pnl", 0.0)` returns None if value explicitly set to None (vs key-absent); `float(None)` would crash HMM inference in B3 aggregation path | defensive raw-then-coerce | `captain-online/.../hmm_inference_block.py:94-95` |
+| F5 | `b7_position_monitor.py:706` — D17 commission fallback `if row: float(row[0])` only checks row absence, not row[0] None | added `and row[0] is not None` | `captain-online/.../b7_position_monitor.py:705-706` |
+| F6 | Decimal-boundary CI lint missed the `float(x) if not isinstance(x, T) else float(x)` no-op-ternary shape (the b9 bug pattern) | new `NOOP_TERNARY_RE` regex; catches `float()` and `Decimal()` variants with whitespace tolerance | `scripts/lint_decimal_boundary.py:58-72` |
+
+**OPEN ISSUES — being monitored, not yet fixed:**
+
+| ID | Bug | Status | When to revisit |
+|----|-----|--------|-----------------|
+| O1 | GUI signal cards never appeared yesterday during PRAC NY session despite trades placing on broker. Root cause attributed to `_build_per_account` Decimal/float crash now fixed in `1910f71`. Awaiting first live NY signal today for E2E validation. | Monitoring at NY OR window | NY OR window 13:30–13:35 UTC today |
+| O2 | APAC silent overnight Apr 30 — B6 never invoked for `session_id=3`. P3-D17 has zero `signal_output_3_*` rows in 48h on either tower. Container recreates wiped relevant logs. Cannot reconstruct retroactively. | Deferred (user instruction: NY priority) | Tonight's APAC at 22:00 UTC — observe live |
+
+**BACKLOG — ticketed, post-market priority order:**
+
+| ID | Issue | Where | Risk |
+|----|-------|-------|------|
+| B1 | `B7→D03` trade-outcome writeback severed. F3 query confirms zero real Captain-placed trades in D03 in 48h on either tower (only synthetic `LEGACY-`, `BACKFILL-TEST-`, `SUM-` rows). | `b7_position_monitor` → `captain:trade_outcomes` → offline → D03 | Trades execute but post-trade learning starves |
+| B2 | Captain-offline 12-file `float()` audit for None-safety: `b1_dma_update`, `b1_aim_lifecycle`, `b2_bocpd`, `b2_cusum`, `b3_pseudotrader`, `b4_injection`, `b5_sensitivity`, `b6_auto_expansion`, `b8_cb_params`, `b8_kelly_update`, `bootstrap`, `orchestrator` | (12 files) | Could crash post-trade learning loop on edge cases |
+| B3 | `dry_run_command.py` false-negative — spawns new Python process via `docker exec`, inspects empty in-memory `_active_connections` instead of orchestrator's actual state | `captain-command/dry_run_command.py` | Misleads operators into believing adapter not registered |
+| B4 | `B5C SOD not run` warnings persisted despite yesterday's `61f0ab2 fix(command): SOD reconciliation signature` claim. Fallback to live values is correct so non-blocking. | `captain-online/.../b5c_circuit_breaker.py` | Operational noise + L1/L2 fallback path |
+| B5 | `b6_reports.py:272-273` — `float(aim_data.get("modifier", 1.0))` and `float(aim_data.get("dma_weight", 0))` unguarded against value-is-None | `captain-command/.../b6_reports.py` | Report-generation crash (operator-action only, not trading-path) |
+| B6 | Container auto-restart this morning — captain-online + captain-command both restarted ~09:30-10:17 UTC today (no user action recalled). Cause unknown. Logs from prior life are gone. | `dco logs` history / journalctl | Could mask transient crashes |
+| B7 | TSM live.json validation warning every startup (`Missing required field: starting_balance, max_drawdown_limit`). Documented as benign at `PRE_MARKET_VALIDATION.md:657` (live.json is for Live Funded accounts, current 150KTC auto-links to eval.json). | `b4_tsm_manager.load_all_tsm_files` | Operational noise |
+
+**KEY COMMITS THIS SESSION:**
+
+| SHA | Title | Files |
+|-----|-------|-------|
+| `0cfb4e8` | docs(context): tracking trail + /record skill + tower discipline rule | 3 (new) |
+| `2476d76` | fix(b9_diagnostic): handle NULL pnl in compute_d4; doc tower lessons | 3 |
+| `22d753b` | docs(context): NY-open clearance record — pipeline GO | 1 |
+| `aeecf71` | fix(decimal): downstream None-safety patches + extend lint for no-op ternary | 4 |
+
+**ENVIRONMENT SNAPSHOT (at handoff time):**
+
+| Item | Value |
+|------|-------|
+| Local repo HEAD | `aeecf71` |
+| `origin/main` | `aeecf71` (synced) |
+| `multi-user/main` | `aeecf71` (synced) |
+| Tower A image build SHA | `2476d76` (b9 fix) — needs pull but **no rebuild** before NY close |
+| Tower B image build SHA | `2476d76` — same |
+| AUTO_EXECUTE | `true` on both towers (LIVE 150KTC accounts) |
+| Live monitors | 3 fish tabs/tower: online/command/redis-stream |
+| GUI | Loaded in browser, WebSocket OPEN on both towers |
+
+**Next steps (sequential, immediate):**
+1. Tower operators: `cd ~/captain-system; git pull origin main --ff-only`. Verify `git rev-parse HEAD = aeecf71…`. **Do not rebuild containers.**
+2. NY OR window 13:30–13:35 UTC: monitor 3 tabs + GUI on each tower per record `2026-05-01 13:10 BST` step ladder.
+3. On first ON-B6-SUMMARY: paste tab-1/tab-2 lines + GUI screenshot status; `/record` the outcome (success or failure).
+4. Post-NY-close: rebuild captain-online to load F4+F5 patches (`dco up -d --build captain-online`); re-run dry-runs to confirm; then start backlog B1→B7 in priority order.
+
+**Useful refs:**
+- `docs2/context/tracking_context.md` — this file (rolling trail)
+- `.cursor/rules/captain-deploy-and-tower-discipline.mdc` — dual-remote push, tower scripts, lessons-learned protocol
+- `.cursor/skills/record/SKILL.md` — `/record` skill
+- `docs2/quick-fixes/fixing-decimal-errors/EXECUTION_SUMMARY.md` — Apr 30 commit map
+- `docs2/quick-fixes/fixing-decimal-errors/TOWER_VALIDATION_RUNBOOK_FINAL.md` — full tower runbook
+- `docs2/quick-fixes/pnl_miscalculations/PRE_MARKET_VALIDATION.md` — Tier 1/2/3 dry-run guide
+
+---
 
 ### 2026-05-01 13:30 BST — Downstream-blocks decimal/None audit + 2 precautionary patches
 
