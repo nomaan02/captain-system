@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, "/app")
 
 from shared.decimal_json import dumps_decimal
+from shared.constants import now_et
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +202,19 @@ def phase1_update_d00(dry_run: bool = False):
 def phase2_update_capital_silo(dry_run: bool = False):
     """INSERT new D16 row linking account to user with capital.
 
-    Idempotent: skips if a silo already exists for USER_ID.
+    Idempotency policy (revised 2026-05-01 — was too aggressive previously):
+      * If silo exists AND accounts list already contains BOOTSTRAP_ACCOUNT_ID
+        -> SKIP (truly already bootstrapped for this account)
+      * If silo exists but accounts list does NOT contain the new
+        BOOTSTRAP_ACCOUNT_ID (e.g. user switched from PRAC to a Trading
+        Combine eval account) -> INSERT new D16 row with the new ACCOUNT_ID
+        as the sole entry. Total_capital is RESET to STARTING_CAPITAL
+        because the new account starts fresh on the broker side.
+      * No existing silo -> INSERT new D16 row.
+
+    The previous behaviour (skip whenever `starting_capital > 0`) silently
+    left the OLD account ID in D16, breaking B4 sizing on the new account
+    until manually corrected. Fixed in commit a3c6063 follow-up.
     """
     print("\n  PHASE 2: D16 capital silo linkage")
     print("  " + "─" * 50)
@@ -214,16 +227,65 @@ def phase2_update_capital_silo(dry_run: bool = False):
         return
 
     from shared.questdb_client import get_cursor
+    existing_accounts: list[str] = []
+    existing_capital_history: str | None = None
     with get_cursor() as cur:
         cur.execute(
-            "SELECT starting_capital FROM p3_d16_user_capital_silos "
+            "SELECT starting_capital, accounts, capital_history "
+            "FROM p3_d16_user_capital_silos "
             "WHERE user_id = %s LATEST ON last_updated PARTITION BY user_id",
             (USER_ID,),
         )
         row = cur.fetchone()
         if row is not None and row[0] is not None and row[0] > 0:
-            print(f"    [SKIP] {USER_ID}: silo already bootstrapped (capital=${float(row[0]):,.0f})")
-            return
+            try:
+                existing_accounts = json.loads(row[1]) if row[1] else []
+            except (json.JSONDecodeError, TypeError):
+                existing_accounts = []
+            existing_capital_history = row[2]
+
+            if str(ACCOUNT_ID) in [str(a) for a in existing_accounts]:
+                print(
+                    f"    [SKIP] {USER_ID}: silo already bootstrapped "
+                    f"(capital=${float(row[0]):,.0f}, "
+                    f"accounts={existing_accounts})"
+                )
+                return
+
+            # Silo exists but the new account ID is NOT in the accounts list.
+            # User has switched accounts (e.g. PRAC -> Trading Combine eval).
+            # INSERT a new D16 row pointing at the new account.
+            print(
+                f"    [UPDATE] {USER_ID}: switching accounts "
+                f"{existing_accounts} -> [{ACCOUNT_ID}] "
+                f"(capital reset to ${float(STARTING_CAPITAL):,.0f})"
+            )
+
+    # Build capital_history: preserve existing events + append switch marker
+    history_events: list[dict] = []
+    if existing_capital_history:
+        try:
+            history_events = json.loads(existing_capital_history)
+            if not isinstance(history_events, list):
+                history_events = []
+        except (json.JSONDecodeError, TypeError):
+            history_events = []
+
+    now_iso = now_et().isoformat()
+    if existing_accounts:
+        history_events.append({
+            "date": now_iso,
+            "event": "account_switch",
+            "from_accounts": existing_accounts,
+            "to_account": ACCOUNT_ID,
+            "capital": STARTING_CAPITAL,
+        })
+    else:
+        history_events.append({
+            "date": now_iso,
+            "event": "initial_bootstrap",
+            "capital": STARTING_CAPITAL,
+        })
 
     with get_cursor() as cur:
         cur.execute(
@@ -243,10 +305,7 @@ def phase2_update_capital_silo(dry_run: bool = False):
                 USER_ID,
                 STARTING_CAPITAL, STARTING_CAPITAL, accounts_json,
                 MAX_SIMULTANEOUS_POSITIONS,
-                dumps_decimal(
-                    [{"date": "2026-03-27", "event": "initial_bootstrap",
-                      "capital": STARTING_CAPITAL}]
-                ),
+                dumps_decimal(history_events),
             ),
         )
     print(f"    [OK] {USER_ID}: capital=${float(STARTING_CAPITAL):,.0f}, "
