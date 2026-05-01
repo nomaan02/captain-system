@@ -32,6 +32,13 @@ services:
     volumes:
       - ./scripts:/captain/scripts:ro
       - ./captain-offline/captain_offline:/app/captain_offline:ro
+      # Phase 7 pseudotrader (b3_pseudotrader.py:767 -> shared.online_replay)
+      # imports captain_online.blocks.* at runtime to replay candidate
+      # parameter updates against real Online code. Without this mount,
+      # the import fails and every DMA / Kelly / EWMA / BOCPD update is
+      # rejected by the fail-safe gate, starving the learning loop.
+      # Read-only — captain-offline only invokes Online's pure functions.
+      - ./captain-online/captain_online:/app/captain_online:ro
       - ${HOME}/captain-backups:/captain/backups
     deploy:
       resources:
