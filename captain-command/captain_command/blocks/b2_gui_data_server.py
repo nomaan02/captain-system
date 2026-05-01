@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 
 _CONTRACT_ID = os.environ.get("TOPSTEP_CONTRACT_ID", "CON.F.US.EP.M26")
 
+# Redis hash key for live open positions — same constant as in
+# captain-online/blocks/orchestrator.py and captain-online/main.py.
+# B7 monitors open positions in-memory and mirrors them to this hash;
+# resolution removes the entry. Reading this hash gives the GUI a live
+# view during the monitoring window (D03 only has rows after close).
+_REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
+
 # Lock protecting mutable module-level state so concurrent GUI clients
 # receive atomically-consistent financial snapshots (§7 B2).
 _state_lock = threading.Lock()
@@ -364,7 +371,21 @@ def _gui_money_json(v: Any) -> Any:
 
 
 def _get_open_positions(user_id: str) -> list[dict]:
-    """Fetch open positions from P3-D03 (outcome is NULL = still open)."""
+    """Fetch open positions for the GUI.
+
+    Primary source: the live Redis hash ``captain:open_positions`` written
+    by Online B7 / orchestrator. This is the only source that contains
+    positions during the monitoring window — D03 only receives rows after
+    B7 resolves a position on TP/SL/TIME exit.
+
+    Fallback: query D03 for ``outcome IS NULL`` rows (legacy schema where
+    paper-trader scripts may have inserted "open" rows). On a healthy live
+    run this returns the empty list.
+    """
+    redis_positions = _get_open_positions_from_redis(user_id)
+    if redis_positions:
+        return redis_positions
+
     try:
         with get_cursor() as cur:
             cur.execute(
@@ -387,6 +408,64 @@ def _get_open_positions(user_id: str) -> list[dict]:
     except Exception as exc:
         logger.error("Open positions query failed: %s", exc, exc_info=True)
     return []
+
+
+def _get_open_positions_from_redis(user_id: str) -> list[dict]:
+    """Read live open positions from the shared ``captain:open_positions`` hash.
+
+    The hash is keyed by ``signal_id`` and each value is a JSON dict (Decimal-
+    serialised via ``dumps_decimal``) written by Online B7 / orchestrator.
+    Filters by ``user_id`` so multi-user installs only see their own.
+    """
+    try:
+        client = get_redis_client()
+        stored = client.hgetall(_REDIS_KEY_OPEN_POSITIONS)
+    except Exception as exc:
+        logger.warning("Redis open_positions hgetall failed: %s", exc)
+        return []
+
+    if not stored:
+        return []
+
+    out: list[dict] = []
+    for signal_id, raw in stored.items():
+        try:
+            pos = loads_decimal(raw) if isinstance(raw, str) else raw
+        except Exception as exc:
+            logger.warning("Skipping corrupt open_position %s: %s", signal_id, exc)
+            continue
+        if not isinstance(pos, dict):
+            continue
+        if pos.get("user_id") != user_id:
+            continue
+
+        direction = pos.get("direction")
+        if direction in (1, "BUY", "LONG"):
+            direction_out: int | str = 1
+        elif direction in (-1, "SELL", "SHORT"):
+            direction_out = -1
+        else:
+            direction_out = direction
+
+        out.append({
+            "signal_id": signal_id,
+            "asset": pos.get("asset"),
+            "asset_id": pos.get("asset"),
+            "direction": direction_out,
+            "entry_price": _gui_money_json(pos.get("entry_price")),
+            "signal_entry_price": _gui_money_json(pos.get("signal_entry_price")),
+            "actual_entry_price": _gui_money_json(pos.get("actual_entry_price")),
+            "contracts": pos.get("contracts"),
+            "tp_level": _gui_money_json(pos.get("tp_level")),
+            "sl_level": _gui_money_json(pos.get("sl_level")),
+            "account_id": pos.get("account"),
+            "entry_time": pos.get("entry_time"),
+            "current_pnl": _gui_money_json(pos.get("current_pnl")),
+            "session": pos.get("session"),
+            "regime_state": pos.get("regime_state"),
+            "bracket": pos.get("bracket", False),
+        })
+    return out
 
 
 def _serialize_trade_ts(val) -> str | None:

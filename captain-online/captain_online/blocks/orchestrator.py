@@ -966,6 +966,12 @@ class OnlineOrchestrator:
                 "aim_breakdown": data.get("aim_breakdown"),
                 "tsm_id": data.get("tsm_id"),
                 "entry_time": datetime.now(_ET),
+                # Phase 3a: bracket=True means the exchange owns the OCO SL/TP
+                # legs. B7 uses this to fetch the actual exit fill price from
+                # the broker on resolution rather than relying on its polled
+                # lastPrice (which can drift from the stop fill on fast moves).
+                "bracket": bool(data.get("bracket", False)),
+                "entry_order_id": data.get("entry_order_id"),
             }
             with self._position_lock:
                 self.open_positions.append(position)

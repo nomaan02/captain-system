@@ -53,6 +53,7 @@ from captain_command.blocks.b1_core_routing import (
     route_command,
     route_notification as core_route_notification,
     handle_status_message,
+    _log_trade_confirmation,
 )
 from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
@@ -583,6 +584,29 @@ class CommandOrchestrator:
                 f"fill={result.get('fill_price')})",
                 source="b3_api",
             )
+            # Phase 5: log TRADE_TAKEN to p3_session_event_log so the
+            # backend `_get_pending_signals` query correctly excludes
+            # auto-executed signals on subsequent dashboard refreshes.
+            # Without this, only the manual /api/commands route logs the
+            # event; auto-execute used to leave the signal floating in
+            # the "pending but already taken" limbo state.
+            try:
+                _log_trade_confirmation(
+                    sanitised_order.get("signal_id"),
+                    sanitised_order.get("user_id", "unknown"),
+                    "TAKEN",
+                    {
+                        "asset": sanitised_order.get("asset"),
+                        "account_id": account_id,
+                        "contracts": sanitised_order.get("size"),
+                        "actual_entry_price": result.get("fill_price"),
+                    },
+                )
+            except Exception as log_exc:
+                logger.error(
+                    "Auto-execute TRADE_TAKEN log failed for %s: %s",
+                    sanitised_order.get("signal_id"), log_exc,
+                )
             gui_push(sanitised_order.get("user_id", "unknown"), {
                 "type": "command_ack",
                 "command": "AUTO_EXECUTED",
@@ -610,6 +634,11 @@ class CommandOrchestrator:
                 "combined_modifier": sanitised_order.get("combined_modifier"),
                 "aim_breakdown": sanitised_order.get("aim_breakdown"),
                 "tsm_id": sanitised_order.get("tsm_id"),
+                # Phase 3a: forward atomic-bracket flag and entry order id so
+                # B7 can later query the exchange for the actual SL/TP fill
+                # price (rather than relying on the polled lastPrice as exit).
+                "bracket": bool(result.get("bracket", False)),
+                "entry_order_id": result.get("entry_order_id") or result.get("order_id"),
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)

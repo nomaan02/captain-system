@@ -38,8 +38,18 @@ const TradeLog = ({ className = "" }) => {
           <tbody>
             {closedTrades.length > 0 ? (
               closedTrades.map((trade, idx) => {
-                const pnl = trade.pnl ?? trade.current_pnl ?? 0;
-                const isWin = pnl >= 0;
+                const pnl = Number(trade.pnl ?? trade.current_pnl ?? 0);
+                // Respect the broker outcome label: a stop-out is always a
+                // loss, a take-profit is always a win, regardless of any
+                // PnL drift from polled-quote-vs-fill timing. TIME_EXIT
+                // and any other outcome fall back to the PnL sign.
+                const outcome = trade.outcome;
+                const isWin =
+                  outcome === "TP_HIT"
+                    ? true
+                    : outcome === "SL_HIT"
+                      ? false
+                      : pnl >= 0;
                 const bgClass = isWin ? "bg-[rgba(16,185,129,0.05)]" : "bg-[rgba(239,68,68,0.05)]";
                 const pnlColor = isWin ? "text-[#00ad74]" : "text-[#ef4444]";
                 const dirLetter = trade.direction === "LONG" ? "L" : "S";
@@ -68,7 +78,7 @@ const TradeLog = ({ className = "" }) => {
         <div className="self-stretch h-6 border-[#2e4e5a] border-solid border-t box-border flex items-start pt-[3px] px-2 pb-[5px] shrink-0 text-left text-[11px] text-[#fff]">
           <div data-testid="tradelog-total" className="relative leading-4">
             <span>{`Total: `}</span>
-            <span className="text-[#00ad74]">{formatCurrency(closedTrades.reduce((sum, t) => sum + (t.pnl ?? t.current_pnl ?? 0), 0), { showSign: true })}</span>
+            <span className="text-[#00ad74]">{formatCurrency(closedTrades.reduce((sum, t) => sum + Number(t.pnl ?? t.current_pnl ?? 0), 0), { showSign: true })}</span>
             <span>{` | ${closedTrades.length} trades`}</span>
           </div>
         </div>

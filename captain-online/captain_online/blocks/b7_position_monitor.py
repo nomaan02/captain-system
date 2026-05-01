@@ -279,16 +279,31 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
                     f"Regime shift detected for {pos['asset']} — review position")
 
         # Position resolution — TP/SL hit (Decimal comparison; pass float
-        # exit_price to resolve_position which already coerces internally)
+        # exit_price to resolve_position which already coerces internally).
+        #
+        # Phase 3b: when the position was placed as an atomic bracket order
+        # (`bracket=True`), the exchange owns the OCO SL/TP legs and has
+        # already filled the exit at the actual stop/limit price. Polled
+        # `lastPrice` can drift several ticks from that fill on fast moves
+        # (e.g., a marginal stop-out can show a positive PnL because the
+        # quote bounced before the next 10s poll). Prefer the broker's
+        # actual fill via `_resolve_exchange_exit_price`; fall back to the
+        # polled price if the lookup fails so resolution still proceeds.
         if tp is not None:
             if (direction == 1 and current_price >= tp) or (direction == -1 and current_price <= tp):
-                resolve_position(pos, "TP_HIT", float(current_price), tsm_configs)
+                exit_px = _resolve_exchange_exit_price(pos)
+                if exit_px is None:
+                    exit_px = float(current_price)
+                resolve_position(pos, "TP_HIT", exit_px, tsm_configs)
                 resolved.append(pos)
                 continue
 
         if sl is not None:
             if (direction == 1 and current_price <= sl) or (direction == -1 and current_price >= sl):
-                resolve_position(pos, "SL_HIT", float(current_price), tsm_configs)
+                exit_px = _resolve_exchange_exit_price(pos)
+                if exit_px is None:
+                    exit_px = float(current_price)
+                resolve_position(pos, "SL_HIT", exit_px, tsm_configs)
                 resolved.append(pos)
                 continue
 
@@ -738,6 +753,172 @@ def _get_api_commission(account_id: str, asset_id: str = "", tsm: dict | None = 
 
 def _resolve_actual_entry_price(pos: dict) -> float | None:
     return pos.get("actual_entry_price")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Bracket-order exit fill resolution
+# ---------------------------------------------------------------------------
+#
+# When an atomic bracket order is placed, the exchange owns the OCO SL/TP
+# legs. B7's quote-poll detection (`monitor_positions`) decides WHEN to
+# resolve, but the polled `lastPrice` can drift several ticks from the
+# actual stop fill on fast moves — turning a real loss into a recorded
+# win, or vice versa.
+#
+# `_resolve_exchange_exit_price` queries the broker for the actual exit
+# trade (opposite-side fill on the same contract after entry_time) and
+# returns its `price`. Falls back to None on any failure; callers must
+# preserve the polled price as a fallback so resolution still proceeds.
+# ---------------------------------------------------------------------------
+
+# account-name -> integer Topstep account_id, populated lazily.
+_ACCOUNT_ID_CACHE: dict[str, int] = {}
+
+
+def _resolve_topstep_account_id(account_name: str | None) -> int | None:
+    """Resolve a Topstep integer account_id from the position's account name.
+
+    Cached for the process lifetime. Returns None on failure (the caller
+    falls back to the polled price).
+    """
+    if not account_name:
+        return None
+    cached = _ACCOUNT_ID_CACHE.get(account_name)
+    if cached is not None:
+        return cached
+    try:
+        from shared.topstep_client import get_topstep_client
+        client = get_topstep_client()
+        acct = client.get_account_by_name(account_name)
+        if acct and acct.get("id") is not None:
+            aid = int(acct["id"])
+            _ACCOUNT_ID_CACHE[account_name] = aid
+            return aid
+    except Exception as exc:
+        logger.warning(
+            "ON-B7: account_id lookup for %s failed: %s", account_name, exc,
+        )
+    return None
+
+
+def _resolve_exchange_exit_price(pos: dict) -> float | None:
+    """Query the broker for the actual exit fill price of a bracket position.
+
+    Strategy: pull trades for this account starting at `entry_time` (with a
+    1-minute lookback for clock-skew safety), then locate the matching exit
+    leg — same `contractId`, opposite `side` to the entry direction, after
+    entry creation, with non-null `profitAndLoss` (full round-trip closed).
+
+    Returns None when:
+      * the position is not flagged as a bracket order
+      * the account_id or contract_id cannot be resolved
+      * the broker query fails
+      * no matching exit trade is found yet (likely raced ahead of the fill)
+
+    The caller must fall back to the polled `current_price` in that case
+    so position resolution still proceeds; never block on this lookup.
+    """
+    if not pos.get("bracket"):
+        return None
+
+    asset = pos.get("asset")
+    if not asset:
+        return None
+    contract_id = resolve_contract_id(asset)
+    if not contract_id:
+        logger.warning(
+            "ON-B7: cannot resolve contract_id for %s — falling back to "
+            "polled price for exit",
+            asset,
+        )
+        return None
+
+    account_id_int = _resolve_topstep_account_id(pos.get("account"))
+    if account_id_int is None:
+        logger.warning(
+            "ON-B7: cannot resolve int account_id for %s — falling back to "
+            "polled price for exit (account=%s)",
+            asset, pos.get("account"),
+        )
+        return None
+
+    entry_time = pos.get("entry_time")
+    if isinstance(entry_time, datetime):
+        entry_dt = entry_time
+    elif isinstance(entry_time, str):
+        try:
+            entry_dt = datetime.fromisoformat(entry_time)
+        except ValueError:
+            entry_dt = datetime.now(ZoneInfo("America/New_York")) - timedelta(hours=1)
+    else:
+        entry_dt = datetime.now(ZoneInfo("America/New_York")) - timedelta(hours=1)
+
+    # Pad start by 1 minute to absorb clock skew between this process and
+    # the broker. The exit must still be AFTER entry, which we re-check
+    # below with `creationTimestamp`.
+    start_ts = (entry_dt - timedelta(minutes=1)).isoformat()
+    direction = int(pos.get("direction", 1) or 1)
+    # Long entry side=0 (buy), exit side=1 (sell). Short is the reverse.
+    exit_side_expected = 1 if direction == 1 else 0
+
+    try:
+        from shared.topstep_client import get_topstep_client
+        client = get_topstep_client()
+        trades = client.search_trades(account_id_int, start_timestamp=start_ts)
+    except Exception as exc:
+        logger.warning(
+            "ON-B7: search_trades failed for %s: %s — falling back to "
+            "polled price for exit",
+            asset, exc,
+        )
+        return None
+
+    if not trades:
+        return None
+
+    candidates = []
+    for tr in trades:
+        try:
+            if tr.get("contractId") != contract_id:
+                continue
+            if tr.get("voided"):
+                continue
+            if tr.get("side") != exit_side_expected:
+                continue
+            # Exit legs always carry a realised P&L; entry legs are null.
+            if tr.get("profitAndLoss") is None:
+                continue
+            ts_str = tr.get("creationTimestamp")
+            if ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if entry_dt.tzinfo is None:
+                    entry_cmp = entry_dt.replace(tzinfo=ZoneInfo("America/New_York"))
+                else:
+                    entry_cmp = entry_dt
+                if ts < entry_cmp:
+                    continue
+            price = tr.get("price")
+            if price is None:
+                continue
+            candidates.append((ts_str or "", float(price)))
+        except (TypeError, ValueError):
+            continue
+
+    if not candidates:
+        return None
+
+    # Most recent matching exit wins (positions can be partial-closed and
+    # re-opened in pathological cases; we want the latest exit).
+    candidates.sort(key=lambda c: c[0])
+    fill_price = candidates[-1][1]
+    logger.info(
+        "ON-B7: bracket exit fill resolved for %s: $%.4f (vs polled price)",
+        asset, fill_price,
+    )
+    return fill_price
 
 def _check_vix_spike(pos: dict):
     """Check if VIX z-score > 2.0 against 60-day trailing mean/stdev (spec §2 B7)."""

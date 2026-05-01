@@ -15,6 +15,61 @@ const normalizePositions = (positions) =>
 const normalizeSignals = (signals) =>
   signals.map((s) => ({ ...s, direction: normalizeDirection(s.direction) }));
 
+/**
+ * Merge an incoming snapshot list of pending signals with the existing list,
+ * keyed by signal_id. Snapshot fields take precedence on overlap (newer
+ * server-side data), but signals already in state that the snapshot omits
+ * are preserved unless they have already been resolved via applyTradeClosed
+ * (i.e., they appear in closedTrades). This makes setSnapshot non-destructive
+ * during the auto-execute / monitoring window when backend exclusion logic
+ * may temporarily diverge from frontend state.
+ */
+const mergePendingSignals = (existing, incoming, closedTrades) => {
+  const closedIds = new Set(
+    (closedTrades || [])
+      .map((t) => t?.signal_id)
+      .filter((id) => id != null && id !== ""),
+  );
+
+  const filteredExisting = (existing || []).filter(
+    (s) => s?.signal_id == null || !closedIds.has(s.signal_id),
+  );
+
+  if (incoming == null) {
+    return filteredExisting;
+  }
+
+  const normalisedIncoming = normalizeSignals(incoming).filter(
+    (s) => s?.signal_id == null || !closedIds.has(s.signal_id),
+  );
+
+  const incomingById = new Map();
+  for (const s of normalisedIncoming) {
+    if (s?.signal_id != null) incomingById.set(s.signal_id, s);
+  }
+
+  const seen = new Set();
+  const merged = [];
+
+  for (const s of filteredExisting) {
+    if (s?.signal_id != null && incomingById.has(s.signal_id)) {
+      merged.push({ ...s, ...incomingById.get(s.signal_id) });
+      seen.add(s.signal_id);
+    } else {
+      merged.push(s);
+      if (s?.signal_id != null) seen.add(s.signal_id);
+    }
+  }
+
+  for (const s of normalisedIncoming) {
+    if (s?.signal_id == null || !seen.has(s.signal_id)) {
+      merged.push(s);
+    }
+  }
+
+  return merged;
+};
+
 const LS_CLOSED_KEY = "captain:closedTrades";
 
 function loadClosedFromStorage() {
@@ -84,9 +139,17 @@ const useDashboardStore = create((set, get) => ({
           : snapshot.trade_history !== undefined && snapshot.trade_history !== null
             ? normalizePositions(snapshot.trade_history)
             : state.closedTrades,
-      pendingSignals: snapshot.pending_signals
-        ? normalizeSignals(snapshot.pending_signals)
-        : state.pendingSignals,
+      // Merge by signal_id rather than wholesale replace. The 60s WS dashboard
+      // refresh and the 10s REST poll-fallback both call setSnapshot; without
+      // merging, a snapshot whose backend query lags or returns fewer rows
+      // (e.g., during the auto-execute window) would wipe live signal cards
+      // mid-trade. Closed trades remove themselves via applyTradeClosed; the
+      // only authoritative removal paths are applyTradeClosed and clearSignals.
+      pendingSignals: mergePendingSignals(
+        state.pendingSignals,
+        snapshot.pending_signals,
+        state.closedTrades,
+      ),
       aimStates: snapshot.aim_states ?? state.aimStates,
       tsmStatus: snapshot.tsm_status ?? state.tsmStatus,
       decayAlerts: snapshot.decay_alerts ?? state.decayAlerts,

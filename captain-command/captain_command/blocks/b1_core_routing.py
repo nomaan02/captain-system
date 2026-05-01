@@ -221,6 +221,10 @@ def route_command(data: dict, gui_push_fn: Callable):
             "combined_modifier": data.get("combined_modifier"),
             "aim_breakdown": data.get("aim_breakdown"),
             "tsm_id": data.get("tsm_id"),
+            # Phase 3a: forward bracket flag and entry order id when present
+            # so Online B7 can resolve the actual exchange fill on close.
+            "bracket": bool(data.get("bracket", False)),
+            "entry_order_id": data.get("entry_order_id"),
         })
 
         gui_push_fn(user_id, {
