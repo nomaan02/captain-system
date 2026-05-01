@@ -1,0 +1,209 @@
+---
+description: >-
+  Captain System deployment and tower-script discipline. Always-applied rules
+  for: dual-remote push (origin + multi-user), Linux fish-shell compatibility
+  for any script intended to run on a tower, dependency/prerequisite preamble
+  on every tower script, use of cap-run/online-run/cmd-run helper functions,
+  and the lessons-learned protocol when a tower command fails.
+alwaysApply: true
+---
+
+# Captain System — Deploy & Tower Script Discipline
+
+These rules apply to **every** code/doc change in this repository. They exist
+because Captain System runs on two physical towers (Tower A and Tower B) that
+each pull from a remote and rebuild Docker; an unverified push or a malformed
+script can take a tower offline minutes before market open.
+
+---
+
+## 1. Dual-remote push is mandatory
+
+Every commit that lands on `main` MUST be pushed to **both** remotes:
+
+- `origin` → `git@github.com:nomaan02/captain-system.git`
+- `multi-user` → `git@github.com:nomaan02/captain-multi-user.git`
+
+```bash
+git push origin HEAD
+git push multi-user HEAD
+```
+
+The push is not "done" until both succeed. If `multi-user` rejects with
+`non-fast-forward`, fetch and reconcile — never `--force` either remote unless
+the user explicitly authorises it.
+
+After pushing, immediately verify both remote heads match the local HEAD:
+
+```bash
+git fetch origin && git fetch multi-user
+test (git rev-parse HEAD) = (git rev-parse origin/main); and \
+test (git rev-parse HEAD) = (git rev-parse multi-user/main); \
+    and echo "OK: both remotes synced" or echo "MISMATCH"
+```
+
+This is non-negotiable. A tower pulling only one remote that lags behind the
+other will run inconsistent code at session open.
+
+---
+
+## 2. Tower scripts are fish-shell, Linux, idempotent, and dependency-safe
+
+Any script the agent gives the user to run on Tower A or Tower B MUST satisfy
+all of:
+
+1. **Fish-shell compatible.** No bash-isms (`[[`, `$(...)` for command
+   substitution → use `(...)`, no `&&` chains in fish — use `; and`/`; or`,
+   no `function name() { … }` — use `function name; …; end`).
+2. **Linux-native paths.** No Windows / WSL host mounts, no `/c/Users/...`,
+   no `\` separators.
+3. **Idempotent.** Running it twice in a row must not break state. Use
+   `mkdir -p`, `git pull --ff-only`, `apt install -y`, `type -q name; or …`,
+   `set -gx VAR (read existing; or default)`.
+4. **Dependency preamble at the top.** Every script begins with a guarded
+   prerequisite block that is safe to run on a fresh tower:
+
+   ```fish
+   # Helpers (idempotent)
+   type -q dco; or function dco
+       docker compose -f docker-compose.yml -f docker-compose.local.yml $argv
+   end
+   type -q cap-run; or function cap-run
+       set -l script $argv[1]
+       set -l rest $argv[2..-1]
+       docker compose -f docker-compose.yml -f docker-compose.local.yml \
+           exec -T -e PYTHONPATH=/app captain-offline \
+           python /captain/scripts/$script $rest
+   end
+   type -q online-run; or function online-run
+       set -l script $argv[1]
+       set -l rest $argv[2..-1]
+       docker compose -f docker-compose.yml -f docker-compose.local.yml \
+           exec -T -e PYTHONPATH=/app captain-online \
+           python3 /app/$script $rest
+   end
+   type -q cmd-run; or function cmd-run
+       set -l script $argv[1]
+       set -l rest $argv[2..-1]
+       docker compose -f docker-compose.yml -f docker-compose.local.yml \
+           exec -T -e PYTHONPATH=/app captain-command \
+           python3 /app/$script $rest
+   end
+
+   # Tower-side packages (apt or snap)
+   command -v jq        > /dev/null 2>&1; or sudo apt install -y jq
+   command -v redis-cli > /dev/null 2>&1; or sudo apt install -y redis-tools
+   ```
+
+5. **Use the helper functions.** `cap-run`, `online-run`, `cmd-run`, and
+   `dco` exist precisely so the user does not have to retype the docker
+   compose flags. Inline `docker compose -f ... -f ... exec -T …` is forbidden
+   in tower instructions; emit `cap-run scriptname.py` instead.
+6. **POSIX greps, not ripgrep.** Towers may not have `rg` installed. Use
+   `grep -iE` (or `grep -E`) by default. If `rg` is genuinely required, gate
+   it: `command -v rg > /dev/null 2>&1; or sudo apt install -y ripgrep`.
+7. **No interactive prompts.** Every `apt`, `read`, or installer must be
+   non-interactive (`-y`, `DEBIAN_FRONTEND=noninteractive`, etc.) so the
+   block is copy-paste safe.
+
+---
+
+## 3. Helper-function source of truth
+
+When emitting tower instructions, always include the exact helper definitions
+above. The user has authoritative versions in their fish config; the
+preamble's `type -q name; or function …` pattern is a no-op when they're
+already defined and a safety net when they aren't.
+
+The four helpers and their semantics:
+
+| Helper      | Container         | What it runs                                                        |
+|-------------|-------------------|---------------------------------------------------------------------|
+| `dco`       | host docker CLI   | `docker compose -f docker-compose.yml -f docker-compose.local.yml`  |
+| `cap-run`   | `captain-offline` | `python /captain/scripts/<script>` with `PYTHONPATH=/app`           |
+| `online-run`| `captain-online`  | `python3 /app/<script>` with `PYTHONPATH=/app`                      |
+| `cmd-run`   | `captain-command` | `python3 /app/<script>` with `PYTHONPATH=/app`                      |
+
+Note the path differences: `cap-run` reaches `/captain/scripts/` (the
+host-mounted scripts directory), while `online-run` and `cmd-run` reach
+`/app/` (the container's working directory). This is deliberate — the offline
+container has the scripts dir bind-mounted; the other two run scripts that
+were copied in at build time.
+
+---
+
+## 4. Lessons-learned protocol when a tower script fails
+
+When the user reports an error from a tower-side command, the agent MUST:
+
+1. **Acknowledge and diagnose** the failure mode (missing dependency, fish-vs-
+   bash incompatibility, container path drift, env var unset, etc.).
+2. **Provide a corrected command** that fixes the root cause.
+3. **Update this rule file (`.cursor/rules/captain-deploy-and-tower-discipline.mdc`)
+   in a new section under `## 5. Known failure modes & corrected commands`**,
+   so the same mistake never happens again. Each entry must have:
+   - The original (broken) command
+   - The exact error the user saw
+   - The corrected command
+   - The reason the original failed (one sentence)
+4. **Commit and push** the rule update to both remotes.
+
+This is the only mechanism that prevents the same paper-cut from recurring
+across agent sessions.
+
+---
+
+## 5. Known failure modes & corrected commands
+
+> Append new entries to the top of this section. Each new entry pushes the
+> previous ones down. Keep entries short — link out to runbooks in
+> `docs2/quick-fixes/` for full context.
+
+<!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
+
+### Template for a new entry
+
+```markdown
+### YYYY-MM-DD — <one-line summary>
+
+**Original (broken):**
+```fish
+<broken-command>
+```
+
+**Error observed:**
+```
+<exact error string from the tower>
+```
+
+**Corrected:**
+```fish
+<working-command>
+```
+
+**Reason:** <one sentence>.
+```
+
+---
+
+## 6. Branch protection & remote naming
+
+| Remote       | URL                                                  | Purpose                                  |
+|--------------|------------------------------------------------------|------------------------------------------|
+| `origin`     | `git@github.com:nomaan02/captain-system.git`         | Primary private repo (Nomaan only)       |
+| `multi-user` | `git@github.com:nomaan02/captain-multi-user.git`     | Shared repo for multi-instance towers    |
+
+`main` is the only deployment branch. Feature branches are local-only unless
+explicitly pushed. PR-style review is not used in this repo — small fixes
+land directly on `main` after passing the static lint+test gate
+(`scripts/lint_decimal_boundary.py` + the regression suite in
+`docs2/quick-fixes/fixing-decimal-errors/TOWER_VALIDATION_RUNBOOK_FINAL.md` §1).
+
+---
+
+## 7. Context trail handoff
+
+The `/record` skill at `.cursor/skills/record/SKILL.md` writes cross-agent
+context-trail entries into `docs2/context/`. After writing a record, the
+skill MUST push to both remotes per §1. A record that is not on both remotes
+is invisible to a fresh agent on the other tower.
