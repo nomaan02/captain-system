@@ -11,16 +11,17 @@
 
 ## Active Issue
 
-**APAC NKD signal cards never appeared in the GUI overnight 2026-04-30 → 2026-05-01,
-AND captain-offline is crashing on every weekly D4 diagnostic run with a NULL-pnl
-TypeError that yesterday's decimal sweep missed.** Tower 1 confirmed three blockers:
-(1) `captain-offline` `compute_d4` crashes on `float(None)` at `b9_diagnostic.py:451`
-because both ternary branches were identical and neither handled `pnl IS NULL` rows
-in P3-D03; (2) Tower 1 doesn't have the `multi-user` remote configured; (3) tower
-shell doesn't inherit `$REDIS_PASSWORD` so `redis-cli -a` AUTH-fails. All three are
-now patched and the rule file `.cursor/rules/captain-deploy-and-tower-discipline.mdc`
-§5 has the lessons-learned entries. Tower 1 still needs to pull post-fix and re-run
-Steps 2-3 of the investigation playbook.
+**Pre-NY-open consolidation, ~1h 20m to go.** System is GO for NY today on both
+towers — adapter registered (acct 21855714 Tower A LIVE, acct 20258288 Tower B
+LIVE, both `canTrade=True`), dry-runs pass for sessions 1+2 with sane sizing,
+`b9_diagnostic` no longer crashes on NULL pnl. Account just switched from
+PRAC-V2 (Tower's old practice combine) to 150KTC-V2 (real-money Trading Combine,
+EVAL stage); TSM auto-link picked `topstep_150k_eval.json` correctly (the
+`live.json` validation warning is benign — that file is for Live Funded accounts,
+not the current EVAL combine). Yesterday's GUI silence retroactively fits the
+decimal `_build_per_account` bug now fixed in `1910f71`. APAC silent-overnight
+remains an open ticket but deferred per user instruction (NY is priority). Live
+monitors set up on each tower to observe the first NY breakout end-to-end.
 
 ---
 
@@ -155,23 +156,29 @@ docker exec captain-system-redis-1 redis-cli -a "$REDIS_PASSWORD" --no-auth-warn
 
 **How to read this:**
 
-| Step 3.1 result | Meaning |
-|---|---|
-| No matches at all | APAC session was never scheduled — check `config/session_registry.json` for NKD's APAC entry. |
-| `Phase B starting … session=3` but no further activity | Session started but B1 returned zero assets — check D00 NKD `captain_status` (Step 5). |
-| `Phase B starting … session=3` AND `Phase B: generated …` | Pipeline ran. Check 3.2-3.4. |
 
-| Step 3.3 result | Meaning |
-|---|---|
+| Step 3.1 result                                           | Meaning                                                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| No matches at all                                         | APAC session was never scheduled — check `config/session_registry.json` for NKD's APAC entry. |
+| `Phase B starting … session=3` but no further activity    | Session started but B1 returned zero assets — check D00 NKD `captain_status` (Step 5).        |
+| `Phase B starting … session=3` AND `Phase B: generated …` | Pipeline ran. Check 3.2-3.4.                                                                  |
+
+
+
+| Step 3.3 result                                                     | Meaning                                                                                               |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `ON-B6-SUMMARY user=primary_user session=3 recommended=0 built=0 …` | B5C/B5B filtered out NKD upstream — could be quality gate, circuit breaker, capacity, or correlation. |
-| `recommended=N built=0` (N ≥ 1) | Zero-contracts skip or unresolved direction — `ON-B6-SKIP` lines show which. |
-| `recommended=N built=N` but step 3.4 shows `Failed to publish` | Redis publish path broken. |
-| **No `ON-B6-SUMMARY` line at all when 3.1 confirms session ran** | The diagnostic logging was never deployed to this tower. Pull and rebuild. |
+| `recommended=N built=0` (N ≥ 1)                                     | Zero-contracts skip or unresolved direction — `ON-B6-SKIP` lines show which.                          |
+| `recommended=N built=N` but step 3.4 shows `Failed to publish`      | Redis publish path broken.                                                                            |
+| **No `ON-B6-SUMMARY` line at all when 3.1 confirms session ran**    | The diagnostic logging was never deployed to this tower. Pull and rebuild.                            |
 
-| Step 3.5 result | Meaning |
-|---|---|
+
+
+| Step 3.5 result                             | Meaning                                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
 | `XLEN` = 0 even after 3.3 shows `built ≥ 1` | Stream key mismatch (consumer reading wrong key) OR publish silently no-op'd. |
-| `XLEN` ≥ 1 with recent entry | B6 worked → bug is on Command / GUI side. Move to Step 4. |
+| `XLEN` ≥ 1 with recent entry                | B6 worked → bug is on Command / GUI side. Move to Step 4.                     |
+
 
 ---
 
@@ -236,14 +243,14 @@ LIMIT 5;
 
 NY open is safe to enable when **all** of these are green on **both** towers:
 
-- [ ] Step 0 SHA parity confirmed
-- [ ] Step 1 all containers Up
-- [ ] Step 2 zero TypeError matches across the 3 pipeline containers
-- [ ] Step 3.5 OR Step 5.3 shows ≥ 1 published signal in the last 24h (proof B6 is alive)
-- [ ] `online-run dry_run_phase_a.py 1` produces `VERDICT: Phase A would produce signals.`
-- [ ] `online-run dry_run_phase_a.py 3` produces the same for APAC (NKD)
-- [ ] `cap-run verify_schema_drift.py` exits 0
-- [ ] No tower has `M` (modified) tracked files in `git status`
+- Step 0 SHA parity confirmed
+- Step 1 all containers Up
+- Step 2 zero TypeError matches across the 3 pipeline containers
+- Step 3.5 OR Step 5.3 shows ≥ 1 published signal in the last 24h (proof B6 is alive)
+- `online-run dry_run_phase_a.py 1` produces `VERDICT: Phase A would produce signals.`
+- `online-run dry_run_phase_a.py 3` produces the same for APAC (NKD)
+- `cap-run verify_schema_drift.py` exits 0
+- No tower has `M` (modified) tracked files in `git status`
 
 If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 
@@ -251,38 +258,90 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 
 ## Records
 
+### 2026-05-01 13:10 BST — NY open clearance: pipeline GO, monitors armed
+
+**Status:** Verifying · ~1h 20m to NY open · live monitors running
+
+**What we know — confirmed:**
+- Both towers passed `online-run dry_run_phase_a.py {1,2,3}`. Session 1 (NY) verdict on both: `Phase A would produce signals. System ready to trade.` Tower A acct 21855714 sized {ZN, ZB:2, MYM:8, M2K:10, MNQ:5, MES:15}; Tower B acct 20258288 sized {ZN, ZB:3, MYM:7, M2K:10, MNQ:5, MES:15}. Session 2 (LON) sized MGC: 3 (Tower A) / 2 (Tower B). Session 3 (APAC) NKD = 0 contracts (Kelly 0.0003 → 0.1 raw → SKIP) — by design at current EWMA, user accepted as not-blocking.
+- `cmd-run dry_run_command.py` reports `_active_connections is EMPTY — adapter_registered FAILED` on **both towers**. Initial alarm: false. **Captain-command logs prove the adapter IS registered:** `TopstepX CONNECTED: account=150KTC-V2-551001-86041837 (id=21855714), balance=150000.00, canTrade=True` on Tower A startup at 06:17 ET; `api_connections:{connected:1,total:1}` on `/api/health`. The dry_run_command script is a known false-negative — it spawns a fresh Python process inside the container via `docker exec`, which has its own empty in-memory `_active_connections`; it does NOT inspect the long-running orchestrator's state.
+- TSM warning at command startup `topstep_150k_live.json has errors: ['Missing required field: starting_balance', 'Missing required field: max_drawdown_limit']` is benign and documented at `docs2/quick-fixes/pnl_miscalculations/PRE_MARKET_VALIDATION.md:657`. The current 150KTC-V2 account auto-links to `topstep_150k_eval.json` (which has correct values); the live.json file is for Live Funded accounts only.
+- `B5C: L1/L2 falling back to live ... (SOD not run)` warnings present in both towers' dry-runs. SOD = Start-Of-Day reconciliation/circuit-breaker init. Yesterday's commit `61f0ab2 fix(command): SOD reconciliation signature` claimed to address this but warning persists. Fallback is to live values which are correct, so non-blocking. **Backlog item — investigate after market close.**
+- User context (critical): yesterday ran on PRAC-V2 (paper-mode practice combine), trades were placed via auto-execute on the broker (confirmed visually on TopstepX), but no GUI cards (caused by decimal `_build_per_account` crash in B6 yielding type-mixed dicts that broke `sanitise_for_gui`). Today switched to 150KTC-V2 (real-money Trading Combine, EVAL stage) and validated the switch this morning. Decimal fix `1910f71` is now deployed on both towers; the same B6 path that broke yesterday is now type-pure.
+- F3 D03 `trade_outcome_log` query returned only synthetic test rows (`LEGACY-`, `BACKFILL-TEST-`, `SUM-`, `TEST-MODELM-`) on both towers in 48h. **No real Captain-placed trade has ever written back to D03.** Yesterday's broker-side trades are not in the QuestDB record. Separate B7→D03 writeback bug, deferred (doesn't block trading).
+- `dry_run_command.py` doesn't truly verify adapter state — it has a structural bug. **Backlog item — fix to inspect orchestrator state via API endpoint instead of new-process import.**
+
+**What we DON'T yet know:**
+- Whether the GUI WebSocket actually receives signal cards on the live `1910f71` build. Yesterday's bug claimed-fixed; not E2E-tested today. Will be observed live at first NY breakout.
+- Why APAC was silent overnight (B6 never invoked for session_id=3). Container recreates around 09:30 UTC today wiped the relevant logs. **Backlog item — observe live during tonight's APAC at 22:00 UTC, capture full logs.**
+- Whether the SOD-not-run warning has any second-order effects for live trading on a fresh-bootstrapped tower. Sizing looked correct in dry-runs; assume non-blocking and watch.
+- Why captain-online + captain-command were both restarted ~09:30-10:17 UTC today (no user action recalled). Possibly auto-restart from a transient crash. **Backlog item — investigate restart cause from journal/syslog after market close.**
+
+**Where we're at:**
+- Both towers pulled `2476d76` (b9 fix + lessons-learned rule entries). All 6 services Up healthy on each.
+- Live monitors running on each tower in 3 separate fish tabs:
+  1. `dco logs -f captain-online` filtered for `Phase B|_run_b6|ON-B6|OR|TypeError|Traceback`
+  2. `dco logs -f captain-command` filtered for `signal batch|sanitise_for_gui|broadcast|AUTO-EXECUTE|TopstepX|400|429|500`
+  3. Redis `XREAD BLOCK` on `captain:signals:primary_user`
+- GUI loaded in browser on each tower; WebSocket connection confirmed.
+- Synthetic smoke-test (`XADD captain:signals:primary_user asset=SMOKE_TEST`) **deliberately skipped** — would land a TopstepX 400 on the live audit trail. Relying on first real NY breakout for E2E proof.
+
+**Next steps:**
+1. **At NY OR window 13:30–13:35 UTC (14:30–14:35 BST)** — watch all three monitor tabs + GUI. Expect:
+   - Tab-1: `OR FORMING <asset>` → `OR COMPLETE <asset>` → `OR BREAKOUT <DIRECTION>: <asset>` → `_run_b6_for_user` → `ON-B6-SUMMARY built=N`
+   - Tab-2: `signal batch received` → `sanitise_for_gui` → `AUTO-EXECUTE` → `TopstepX BRACKET PLACED` (or similar)
+   - Tab-3: New stream entry with the signal payload
+   - GUI: New signal card appearing with entry/TP/SL fields populated
+2. **Immediately on first signal** — `/record` a new context entry with the actual log lines captured, success or failure.
+3. **If anything in Tab-1/2/3 doesn't match expected pattern** — paste the exact divergent line back to this chat for live diagnosis.
+4. **After NY closes** — investigate (a) APAC silent overnight, (b) SOD-not-run warning, (c) D03 writeback gap, (d) `dry_run_command.py` false-negative, (e) why containers auto-restarted this morning.
+
+**Useful refs:**
+- `docs2/quick-fixes/pnl_miscalculations/PRE_MARKET_VALIDATION.md:657` — TSM live.json benign warning explanation
+- `captain-online/captain_online/blocks/b6_signal_output.py:303` — `_build_per_account` (yesterday's decimal crash site, now fixed in `1910f71`)
+- `captain-command/captain_command/blocks/b1_core_routing.py` — `sanitise_for_gui` (yesterday's GUI-display path)
+- `captain-command/captain_command/blocks/b3_api_adapter.py` — adapter registration (proven working)
+- `.cursor/rules/captain-deploy-and-tower-discipline.mdc` §5 — lessons-learned entries (multi-user remote, REDIS_PASSWORD sourcing, b9 NULL pnl)
+
+---
+
 ### 2026-05-01 12:35 BST — Tower 1 first-run findings: 3 blockers patched
 
 **Status:** Patching · Tower 1 needs to pull then re-run Steps 2-3
 
 **What we know — confirmed:**
+
 - Tower 1 ran the Step 0 preamble. Output revealed three independent issues:
-  1. **`captain-offline` is crashing** with `TypeError: float() argument must be a string or a real number, not 'NoneType'`. Source: `captain-offline/captain_offline/blocks/b9_diagnostic.py:451`. Original code `float(pnl) if not isinstance(pnl, Decimal) else float(pnl)` had identical ternary branches AND no `None` guard. P3-D03 has open-trade rows where `pnl IS NULL`, so every D4 dimension run crashed. **Fixed** in this session: routed through `shared.decimal_boundary.to_float` and `continue` on `None`.
+  1. `**captain-offline` is crashing** with `TypeError: float() argument must be a string or a real number, not 'NoneType'`. Source: `captain-offline/captain_offline/blocks/b9_diagnostic.py:451`. Original code `float(pnl) if not isinstance(pnl, Decimal) else float(pnl)` had identical ternary branches AND no `None` guard. P3-D03 has open-trade rows where `pnl IS NULL`, so every D4 dimension run crashed. **Fixed** in this session: routed through `shared.decimal_boundary.to_float` and `continue` on `None`.
   2. **Tower 1 doesn't have the `multi-user` remote configured** (`fatal: 'multi-user' does not appear to be a git repository`). The Step 0 SHA-parity check therefore can't compare against `multi-user/main`. **Fixed** by adding an idempotent `git remote add multi-user ...` line to the dependency preamble in this rule file's lessons-learned section.
-  3. **`redis-cli -a "$REDIS_PASSWORD"` AUTH-failed** because the tower's fish shell doesn't inherit the env var the containers use. **Fixed** by prepending `set -gx REDIS_PASSWORD (grep '^REDIS_PASSWORD=' ~/captain-system/.env | cut -d= -f2)` before any `redis-cli` call.
+  3. `**redis-cli -a "$REDIS_PASSWORD"` AUTH-failed** because the tower's fish shell doesn't inherit the env var the containers use. **Fixed** by prepending `set -gx REDIS_PASSWORD (grep '^REDIS_PASSWORD=' ~/captain-system/.env | cut -d= -f2)` before any `redis-cli` call.
 - B8 OR-tracker is alive: `OR tracker registered: NKD (APAC) OR 18:00:00–18:05:00 on 2026-05-01` was logged at 05:55:01 UTC. So the orchestrator IS scheduling APAC for tonight.
 - MGC OR window completed with `range=0.0000` (`high=4572.4000 low=4572.4000`, **only 1 tick captured in the 5-minute window**). MGC then triggered `OR BREAKOUT SHORT` because `4572.2000 < 4572.4000`. This is a separate concern: a degenerate OR with one tick and zero range. Not the cause of the APAC failure but worth flagging.
 
 **What we DON'T yet know:**
+
 - Whether the `compute_d4` crash was the actual root cause of last night's APAC silent failure, or whether it merely co-existed alongside it. The crash is in offline (learning loop), APAC signals come from online (B6) — they're independent processes. But if offline crashed during APAC evaluation, downstream learning state for the next session could be stale.
 - Whether `captain-offline` was in a crash-restart loop for the entire APAC window.
 - The actual `ON-B6-SUMMARY` content for last night's APAC session — Tower 1 still needs to run Step 3.3 after pulling the fix.
 - Whether Tower 2 also lacks the `multi-user` remote (likely yes — same provisioning).
 
 **Where we're at:**
+
 - Patch committed to `main` and pushed to BOTH remotes.
 - Cursor rule `.cursor/rules/captain-deploy-and-tower-discipline.mdc` §5 has the three new "Known failure modes" entries with corrected commands.
 - Tower 1 (and Tower 2) need to (a) add the `multi-user` remote, (b) `git pull origin main --ff-only`, (c) `dco up -d --build captain-offline`, (d) re-run Step 2 to confirm no fresh `TypeError` after rebuild, then (e) Step 3 for APAC forensics on last night's session.
 
 **Next steps:**
+
 1. Tower-A operator runs the corrected preamble (with the `git remote add multi-user` and `set -gx REDIS_PASSWORD` lines from rule file §5).
 2. `git pull origin main --ff-only` then `dco up -d --build captain-offline` to load the b9 fix.
 3. Confirm the offline crash is gone: `dco logs --since 5m captain-offline 2>&1 | grep -iE "TypeError|compute_d4"` returns nothing.
 4. Run Step 3 of investigation playbook against last night's APAC session.
-5. Mirror everything on Tower B.
+5. **Mirror everything on Tower B.**
 6. Run `online-run dry_run_phase_a.py 1` (NY) and `online-run dry_run_phase_a.py 3` (APAC) on both towers — both must print `VERDICT: Phase A would produce signals.` before NY open.
 
 **Useful refs:**
+
 - `captain-offline/captain_offline/blocks/b9_diagnostic.py:441-454` — the `compute_d4` D4 fix
 - `.cursor/rules/captain-deploy-and-tower-discipline.mdc` §5 — three lessons-learned with corrected commands
 - `shared/decimal_boundary.py:72` — `to_float(value, *, default=0.0)` (None-safe)
@@ -295,53 +354,58 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 **Status:** Investigating · 2h to NY open · APAC silent overnight
 
 **What we know — confirmed:**
+
 - Yesterday (Apr 30) Phase 1-4 of decimal-boundary work landed on `main`:
-  `03de644` (B8 OR-tracker WAITING expiry) → `1910f71` (boundary helpers + B6 type purity,
-  the explicit fix for the NY/APAC `TypeError: decimal.Decimal - float` at
-  `b6_signal_output._build_per_account`) → `9659b4c` (helper consolidation + closed
-  silent reconciliation gap with CRITICAL log + GUI alert) → `5681fb6` (offline replay
-  + b3_pseudotrader) → `dbe550b` (CI lint guard).
+`03de644` (B8 OR-tracker WAITING expiry) → `1910f71` (boundary helpers + B6 type purity,
+the explicit fix for the NY/APAC `TypeError: decimal.Decimal - float` at
+`b6_signal_output._build_per_account`) → `9659b4c` (helper consolidation + closed
+silent reconciliation gap with CRITICAL log + GUI alert) → `5681fb6` (offline replay
+  - b3_pseudotrader) → `dbe550b` (CI lint guard).
 - Then `2169e7c` (B7 monitor + shadow monitor, "Bug C"), `8fa7a54` (e2e flow tests),
-  `7b254bd` (rg→grep -E), `61f0ab2` (SOD reconciliation + GUI invalid-column queries),
-  `a3c6063` (TSM auto-link Trading Combine fail-closed), `6a11c39` (D16 phase 2 account-switch
-  detection — current HEAD).
+`7b254bd` (rg→grep -E), `61f0ab2` (SOD reconciliation + GUI invalid-column queries),
+`a3c6063` (TSM auto-link Trading Combine fail-closed), `6a11c39` (D16 phase 2 account-switch
+detection — current HEAD).
 - `origin/main` and `multi-user/main` are both at `6a11c39`. Local repo is at `6a11c39`.
 - Local working tree shows `M` against `b6_signal_output.py` and `orchestrator.py` —
-  **but `git diff --stat` is exactly 1487/1487 lines (every line "changed")**, which is
-  pure LF↔CRLF line-ending churn from a non-LF editor opening the file. **NOT real code
-  drift.** Confirm with `git diff -b -w | wc -l` returning 0 before discarding.
+**but `git diff --stat` is exactly 1487/1487 lines (every line "changed")**, which is
+pure LF↔CRLF line-ending churn from a non-LF editor opening the file. **NOT real code
+drift.** Confirm with `git diff -b -w | wc -l` returning 0 before discarding.
 - The B6 ON-B6-SUMMARY diagnostic from memory entry `#3164` (commit `7da97e4`) is
-  present in the local file (line 191) but `7da97e4` does not appear in `git log` of
-  either remote. Most likely it was rolled into `1910f71` during the boundary fix. The
-  log line IS deployed.
+present in the local file (line 191) but `7da97e4` does not appear in `git log` of
+either remote. Most likely it was rolled into `1910f71` during the boundary fix. The
+log line IS deployed.
 
 **What we DON'T yet know:**
+
 - Whether last night's APAC NKD session actually ran B1→B5C at all (Step 3.1 above
-  answers this).
+answers this).
 - Whether NKD's D00 `captain_status` is ACTIVE for APAC (Step 5.1).
 - Whether the towers actually pulled past `6a11c39` before the APAC evaluation (Step 0).
 - Whether there is a second silent-skip path inside B6 for `recommended=0` cases that
-  the Apr 28 diagnostic wired up but didn't cover (Step 3.3).
+the Apr 28 diagnostic wired up but didn't cover (Step 3.3).
 - Whether the consumer group on `captain:signals:primary_user` advanced beyond an old
-  offset, causing Command to think there are no new entries (Step 4.1).
+offset, causing Command to think there are no new entries (Step 4.1).
 
 **Where we're at:**
+
 - Investigation playbook above is the runbook for the next 2 hours.
 - Run Steps 0-3 first. The branch point at Step 3.3 / 3.5 tells us which of five
-  failure modes happened.
+failure modes happened.
 - After triage, fix forward, push to **both** remotes per
-  `.cursor/rules/captain-deploy-and-tower-discipline.mdc`, towers pull, re-run dry runs.
+`.cursor/rules/captain-deploy-and-tower-discipline.mdc`, towers pull, re-run dry runs.
 
 **Next steps (sequential):**
+
 1. Tower-A operator runs Step 0 → confirm SHA parity.
 2. Run Steps 1-3 → identify which of the five failure modes triggered overnight.
 3. Branch into Step 4 if signals reached Redis, or Step 5 if D00/D08 looks suspect.
 4. Capture the exact log/SQL output that confirms root cause; paste into the next
-   `/record` entry.
+  `/record` entry.
 5. Patch on a fix branch → push to BOTH remotes → towers pull → re-run dry runs for
-   sessions 1, 2, 3 → enable `AUTO_EXECUTE` for NY open.
+  sessions 1, 2, 3 → enable `AUTO_EXECUTE` for NY open.
 
 **Useful refs:**
+
 - `docs2/quick-fixes/fixing-decimal-errors/EXECUTION_SUMMARY.md` — Phase 1-4 commit map
 - `docs2/quick-fixes/fixing-decimal-errors/TOWER_VALIDATION_RUNBOOK_FINAL.md` — full tower runbook
 - `docs2/quick-fixes/pnl_miscalculations/PRE_MARKET_VALIDATION.md` — Tier 1/2/3 dry-run guide
@@ -349,3 +413,4 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 - `captain-online/captain_online/blocks/b6_signal_output.py:303` — `_build_per_account` (was the Apr 30 NY-open crash site)
 
 ---
+
