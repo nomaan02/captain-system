@@ -161,6 +161,36 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-01 — `online-run: command not found` — helpers not loaded in new shell session
+
+**Original (broken):**
+```fish
+online-run dry_run_phase_a.py 1
+```
+
+**Error observed:**
+```
+online-run: command not found
+```
+
+**Corrected:**
+```fish
+# Either paste the function definitions at the top of each new shell session,
+# OR persist them permanently to ~/.config/fish/config.fish (one-time):
+#   cat >> ~/.config/fish/config.fish << 'HELPERS'
+#   function online-run; ... end
+#   HELPERS
+# Then the functions survive across sessions.
+```
+
+**Reason:** fish functions defined interactively only persist for that shell session.
+Every tower instruction block must EITHER include the function definitions inline
+(with `type -q name; or function ...` guards), OR the preamble must note that
+the user should source `~/.config/fish/config.fish` if the functions aren't loaded.
+Prefer the permanent config.fish approach. The `type -q` guard in the dependency
+preamble already handles this but must be included in EVERY script block, not just
+the first one in a session.
+
 ### 2026-05-01 — `redis-cli` AUTH failed: `$REDIS_PASSWORD` env var unset in tower shell
 
 **Original (broken):**
