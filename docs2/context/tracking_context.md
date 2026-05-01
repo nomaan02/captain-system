@@ -11,14 +11,18 @@
 
 ## Active Issue
 
-**Pre-NY-open, ~1h to go (NY OR window 13:30–13:35 UTC = 14:30–14:35 BST).**
-Pipeline is GO on both towers — adapter registered (acct 21855714 LIVE Tower A,
-acct 20258288 LIVE Tower B, both `canTrade=True`), dry-runs pass for sessions 1+2
-with sane sizing. Both remotes at HEAD `aeecf71` (b9 NULL-pnl fix + 2 precautionary
-None-safety patches + lint extension). Towers running `2476d76` image; should
-`git pull` to `aeecf71` but **NOT rebuild captain-online before NY close**
-(precautionary only). Live monitors armed; GUI loaded with WS open. Awaiting
-first NY breakout for E2E validation. Bug-status dashboard in latest record below.
+**NY traded, post-trade writeback CRASHED.** Trades fired correctly through the
+full pipeline (B6 → Redis → Command → broker, multiple `ON-B6-SUMMARY built=1`
+lines for ZN/ZB/M2K/MNQ; broker bracket order placement worked). On position
+TP_HIT, `b7_position_monitor._write_trade_outcome` hit a NEW bug:
+`psycopg2.DatabaseError: inconvertible types: DECIMAL(8,0) -> SYMBOL [from=cast,
+to=account_id]`. Root cause: `shared/decimal_json.loads_decimal._coerce` over-
+coerces every numeric-looking string to Decimal when reloading positions from
+Redis — including `account_id="21855714"` which then trips the global psycopg2
+DECIMAL cast adapter into emitting `cast('21855714' as DECIMAL(8,0))` against
+the SYMBOL column. Patched at the boundary in `resolve_position` (str-coerce
+account_id and mutate `pos["account"]` in-place). Tower must rebuild
+captain-online to apply. NY OR window is over — rebuild safe now.
 
 ---
 
@@ -254,6 +258,74 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 ---
 
 ## Records
+
+### 2026-05-01 15:10 BST — NY traded; post-trade D03 writeback NEW crash on account_id Decimal-coercion
+
+**Status:** Patching · CRITICAL · captain-online rebuild required
+
+**What happened (good):**
+- NY OR window 13:30–13:35 UTC fired correctly. B6 invoked for **M2K, ZN, ZB** with `ON-B6-SUMMARY user=primary_user session=1 recommended=1 built=1 below_threshold=0` per asset. `Phase B complete — all assets resolved`. Bracket orders placed at TopstepX. Yesterday's GUI silence and `_build_per_account` decimal bug are confirmed fixed in production.
+- Shadow-monitor on the parity-split side resolved theoretical outcomes cleanly (ZN SL_HIT -$140.62, ZB SL_HIT -$125.00, MNQ TP_HIT +$181.50).
+
+**What broke (bad — NEW bug, not in prior dashboard):**
+- At 09:55:35 ET, the REAL position for account 21855714 (MNQ TP_HIT) tried to write back to D03. Crashed:
+  ```
+  psycopg2.DatabaseError: inconvertible types: DECIMAL(8,0) -> SYMBOL
+  [from=cast, to=account_id]
+  LINE 7: ...ECF8FD5BD6F', 'SIG-C07CAC7394C1', 'primary_user', cast('2185...
+  ```
+- Position monitor entered an **infinite retry loop** — every cycle re-attempts the same TP_HIT resolution and crashes (logs spam `Position monitor error: inconvertible types: DECIMAL(8,0) -> SYMBOL`).
+
+**Root cause:**
+- `shared/decimal_json.py:52-56` `loads_decimal._coerce`: aggressively wraps EVERY string in JSON output as `Decimal` if it parses as a number. Decision tree:
+  - `"primary_user"` → letters → stays str ✓
+  - `"SIG-C07CAC7394C1"`, `"TRD-..."` → letters → stays str ✓
+  - **`"21855714"` (account_id) → all-numeric → becomes `Decimal("21855714")` ❌**
+- Position dict goes through Redis (`captain:open_positions`) on creation and is read back when `monitor_positions` runs. Round-trip turns `account_id` from str into Decimal.
+- `_write_trade_outcome` passes the Decimal account_id to `cur.execute(INSERT INTO p3_d03_trade_outcome_log)`.
+- Global psycopg2 adapter at `shared/questdb_client.py:62-65` wraps every Decimal as `cast('<value>' as DECIMAL(<p>,<s>))`. account_id becomes `cast('21855714' as DECIMAL(8,0))`.
+- D03's `account_id` column is **SYMBOL** type. QuestDB rejects: `inconvertible types: DECIMAL -> SYMBOL`.
+
+**Trade implications:**
+- ✅ MNQ broker order DID fill at TP — your $181.50 (gross) is in TopstepX.
+- ❌ No D03 trade outcome row written for today's MNQ.
+- ❌ No D16 capital silo update.
+- ❌ No D23 circuit-breaker intraday update.
+- ❌ No Redis stream publish to offline → Kelly / EWMA / DMA / BOCPD don't see the trade. **Learning loop starved for today's outcomes.**
+- ❌ `open_positions` Redis cache never clears — orchestrator keeps trying to monitor an already-closed position.
+- ⚠️ Tomorrow's NY SOD reconciliation may patch some of this from broker truth, but the regime/AIM context for today's trades is lost.
+
+**What we DON'T yet know:**
+- Whether `_update_capital_and_cb` and `_publish_trade_outcome` will also crash with the same shape after the boundary fix is applied (`_update_capital_and_cb` uses `account_id` as a SQL param at lines 535 + 580; `_publish_trade_outcome` passes `pos["account"]` into the Redis stream payload). Boundary fix mutates `pos["account"]` in-place so they should see the str — but unverified live.
+- Whether other code paths read `account_id` from Redis and use it as a SYMBOL parameter elsewhere. Backlog: audit all call-sites of `pos.get("account")` and any consumer of `captain:open_positions`.
+- Whether the orphaned positions in Redis cache will resolve cleanly on next monitor pass post-rebuild OR need manual cleanup.
+
+**Where we're at:**
+- Patch applied at `captain-online/captain_online/blocks/b7_position_monitor.py:328-336` (`resolve_position`): coerce `account_id` to str if it's not already, mutate `pos["account"]` in-place so downstream callees see str. 12-line diff.
+- About to commit + push to both remotes, then operator rebuilds captain-online (NY OR is over — rebuild is safe).
+- After rebuild, the next `monitor_positions` cycle should resolve the stuck MNQ position cleanly: D03 row written, D16 capital updated, D23 CB updated, Redis publish to offline succeeds.
+
+**Next steps (sequential, immediate):**
+1. Push fix to both remotes.
+2. Tower operator: `git pull origin main --ff-only` then `dco up -d --build captain-online` (~2-3min downtime; safe — NY OR is past).
+3. Watch captain-online logs for first successful `ON-B7: Position resolved — MNQ TP_HIT primary_user net_pnl=...` line. Confirms recovery.
+4. Verify D03 row landed: `SELECT * FROM p3_d03_trade_outcome_log WHERE asset='MNQ' AND ts > dateadd('h', -2, now())`.
+5. Verify Redis `open_positions` cache cleared: `XLEN captain:open_positions` (or HLEN — check hash type).
+6. `/record` resolution.
+
+**Backlog (post-market):**
+- B8 (NEW): root-cause fix in `loads_decimal._coerce` — should NOT coerce all-numeric strings to Decimal. Either use a structural marker (`{"__type":"Decimal"}`) for round-trip Decimal fields, or whitelist known monetary keys.
+- B9 (NEW): audit all call-sites of `pos.get("account")` and `pos["account"]` across captain-online + captain-command for the same Decimal-leak shape.
+- B10 (NEW): `version_snapshot._enforce_max_versions:160` log spam — demote per-version line to DEBUG, keep summary at INFO.
+- B11 (NEW): `UserStream TRADE/ORDER/POSITION: ...None None None` lines (from captain-online `__main__`) — broker payload parse failing? Same may explain `Commission data missing for account 21855714` warning. Investigate.
+- (Plus all prior dashboard backlog: B1-B7.)
+
+**Useful refs:**
+- `captain-online/captain_online/blocks/b7_position_monitor.py:328-336` — patched site (12 new lines)
+- `shared/decimal_json.py:32-59` — `loads_decimal` over-coercion site (root cause; backlog B8)
+- `shared/questdb_client.py:62-65` — global Decimal psycopg2 adapter (works as designed; not the bug)
+
+---
 
 ### 2026-05-01 13:35 BST — Bug-status dashboard for NY-open handoff
 

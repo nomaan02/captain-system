@@ -325,7 +325,19 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     direction = pos.get("direction", 1)
     contracts = pos.get("contracts", 0)
     entry_price = pos.get("entry_price", 0)
+    # account_id is a SYMBOL column in D03 / D16 / D23 — never a monetary
+    # value. ``loads_decimal`` (used when reloading positions from Redis)
+    # coerces every numeric-looking string to Decimal, which then trips the
+    # global psycopg2 cast adapter into emitting `cast('<id>' as DECIMAL(p,s))`
+    # on INSERT, which QuestDB rejects with `inconvertible types: DECIMAL ->
+    # SYMBOL`. Coerce to str at the boundary so the rest of resolve_position
+    # (and `_publish_trade_outcome`, which receives the whole dict) sees a
+    # string. Mutate in-place so callees that read `pos["account"]` directly
+    # also benefit.
     account_id = pos.get("account")
+    if account_id is not None and not isinstance(account_id, str):
+        account_id = str(account_id)
+        pos["account"] = account_id
     dir_d = Decimal(direction)
     ctr = Decimal(contracts)
 
