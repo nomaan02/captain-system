@@ -156,9 +156,12 @@ def _enforce_max_versions(component_id: str):
         return
 
     to_prune = versions[MAX_VERSIONS_PER_COMPONENT:]
+    logger.info("Cold-storage migration: pruning %d excess versions for %s "
+                "(oldest=%s, newest=%s)",
+                len(to_prune), component_id, to_prune[-1][1], to_prune[0][1])
     for vid, ts in to_prune:
-        logger.info("Cold-storage migration: pruning version %s "
-                     "(component=%s, ts=%s)", vid, component_id, ts)
+        logger.debug("  pruning version %s (component=%s, ts=%s)",
+                      vid, component_id, ts)
 
     # Batch delete by timestamp cutoff
     cutoff_ts = versions[MAX_VERSIONS_PER_COMPONENT - 1][1]
