@@ -11,17 +11,15 @@
 
 ## Active Issue
 
-**Pre-NY-open consolidation, ~1h 20m to go.** System is GO for NY today on both
-towers — adapter registered (acct 21855714 Tower A LIVE, acct 20258288 Tower B
-LIVE, both `canTrade=True`), dry-runs pass for sessions 1+2 with sane sizing,
-`b9_diagnostic` no longer crashes on NULL pnl. Account just switched from
-PRAC-V2 (Tower's old practice combine) to 150KTC-V2 (real-money Trading Combine,
-EVAL stage); TSM auto-link picked `topstep_150k_eval.json` correctly (the
-`live.json` validation warning is benign — that file is for Live Funded accounts,
-not the current EVAL combine). Yesterday's GUI silence retroactively fits the
-decimal `_build_per_account` bug now fixed in `1910f71`. APAC silent-overnight
-remains an open ticket but deferred per user instruction (NY is priority). Live
-monitors set up on each tower to observe the first NY breakout end-to-end.
+**Pre-NY-open consolidation, ~1h to go.** System is GO for NY today on both towers —
+adapter registered (acct 21855714 Tower A LIVE, acct 20258288 Tower B LIVE, both
+`canTrade=True`), dry-runs pass for sessions 1+2 with sane sizing, `b9_diagnostic`
+no longer crashes on NULL pnl. Two precautionary downstream-block None-safety patches
+landed (`hmm_inference_block:94`, `b7_position_monitor:706`) plus extended decimal
+lint to catch the no-op-ternary shape — committed but **towers should NOT rebuild
+captain-online before NY close** (precautionary only; dry-runs proved current image
+is safe). APAC silent-overnight + B7→D03 writeback gap + 12-file captain-offline
+audit are post-market backlog. Live monitors armed for first NY breakout.
 
 ---
 
@@ -257,6 +255,78 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 ---
 
 ## Records
+
+### 2026-05-01 13:30 BST — Downstream-blocks decimal/None audit + 2 precautionary patches
+
+**Status:** Patching · pushed to `main` both remotes · DO NOT REBUILD towers before NY close
+
+**Trigger:** User flagged the b9 NULL-pnl traceback from last night's captain-offline log
+(`2026-05-01 00:00:28 ERROR Monthly tasks error: float() argument must be a string or a real number, not 'NoneType'`)
+and asked "are blocks downstream of B5C also covered? `dry_run_phase_a.py` only tests B1→B5C — what
+else could be lurking?"
+
+**What we know — confirmed:**
+- The exact b9 traceback the user flagged is **already-fixed** by `2476d76`. Timestamp on the trace
+  was 8 PM ET April 30, 11h before the patch landed; today's MONTHLY diagnostic ran clean
+  (`overall=0.51-0.52, actions=17-18`).
+- `dry_run_phase_a.py` covers B1→B5C in captain-online only. **B6, B7, B8 in captain-online; ALL of
+  captain-command; ALL of captain-offline are not exercised by the dry-run.**
+- The decimal-boundary lint guard (`scripts/lint_decimal_boundary.py`) catches the
+  `r[N] or 0.0` antipattern but did **NOT** previously catch the `float(x) if not isinstance(x, T) else float(x)`
+  no-op-ternary pattern that caused the b9 bug. **Now extended** to catch both shapes
+  (`float()` and `Decimal()` variants, with whitespace tolerance).
+- Repo-wide grep for `float(x) if not isinstance(x, …) else float(x)` returns **only the b9 site**
+  (already fixed). The two other ternaries in this shape (`b4_kelly_sizing.py:168`, `b5_trade_selection.py:213`)
+  have a different `else` branch (`else override` / `else pair`) and are **not** no-ops — they
+  conditionally avoid redundant casting. Both are guarded by an upstream `if x is not None:` check.
+- Repo-wide grep for unguarded `float(row[0])` against potentially-NULL columns: most call-sites
+  ARE None-guarded (`if row and row[0] is not None`). Two trading-path edge cases were not:
+
+| File | Line | Risk shape | Fixed |
+|---|---|---|---|
+| `captain-online/.../hmm_inference_block.py` | 94 | `float(prior_dict.get("last_session_slot_pnl", 0.0))` — `.get()` returns None if key set to None, not just on key-absent | ✅ defensive raw-then-coerce |
+| `captain-online/.../b7_position_monitor.py` | 706 | `if row: return float(row[0]) * 2` — checks row absence, not row[0] None | ✅ `if row and row[0] is not None` |
+
+**What we DON'T yet know:**
+- Whether captain-offline blocks (b1_dma_update, b1_aim_lifecycle, b2_bocpd, b2_cusum, b3_pseudotrader,
+  b4_injection, b5_sensitivity, b6_auto_expansion, b8_cb_params, b8_kelly_update) have similar
+  unguarded `float()` calls. **Did not exhaustively audit** — outside the trading-path window for NY
+  open. Backlog item: extend the audit to all 12 captain-offline files post-market.
+- Whether the SOD-not-run warning has hidden monetary-coercion implications. Backlog.
+- Whether the `_log_signal_output` consumer in captain-command has similar issues. The
+  `b6_reports.py:272-273` site uses `float(aim_data.get("modifier", 1.0))` which crashes if the
+  value is explicitly None. Report-generation only, not trading-path. Backlog.
+
+**Where we're at:**
+- `2 patches + lint extension` committed and pushed to BOTH remotes:
+  - `captain-online/.../hmm_inference_block.py:94` defensive None-handling
+  - `captain-online/.../b7_position_monitor.py:706` `is not None` check on D17 fallback
+  - `scripts/lint_decimal_boundary.py` extended with `NOOP_TERNARY_RE` regex catching `float() if not isinstance() else float()` and Decimal variant
+- `pytest tests/test_decimal_boundary_lint.py tests/test_decimal_boundary.py` → **28 passed**.
+- Towers should `git pull origin main --ff-only` to receive the patches but **MUST NOT rebuild
+  captain-online before NY close**. The dry-runs proved the current image is safe; rebuild
+  introduces 2-3min downtime risk. Patches are precautionary against edge cases that have not
+  fired in observed sessions.
+
+**Next steps:**
+1. Tower operators: `cd ~/captain-system; git pull origin main --ff-only` (no rebuild).
+2. NY OR window 13:30-13:35 UTC: watch live monitors per record above.
+3. Post-NY-close: rebuild captain-online to load the precautionary patches.
+4. Post-NY-close backlog (priority order):
+   - Comprehensive audit of all 12 captain-offline `float()` call-sites for None-safety
+   - Fix `b6_reports.py:272-273` aim_data.get None-handling
+   - Fix `dry_run_command.py` false-negative (use API endpoint, not new-process import)
+   - Investigate APAC silent-overnight bug (separate orchestrator dispatch trace)
+   - Investigate B7→D03 trade-outcome writeback gap
+   - Investigate this morning's container auto-restart cause
+
+**Useful refs:**
+- `captain-online/.../hmm_inference_block.py:94-95` — patched site (used by HMM inference per `phase_10_execution.md` note: "Online persists inference after B3 aggregation")
+- `captain-online/.../b7_position_monitor.py:705-706` — patched fallback fee path
+- `scripts/lint_decimal_boundary.py:58-72` — `NOOP_TERNARY_RE` regex + comment
+- `tests/test_decimal_boundary_lint.py` — CI gate (still 1 test, now also exercising the new regex)
+
+---
 
 ### 2026-05-01 13:10 BST — NY open clearance: pipeline GO, monitors armed
 

@@ -702,7 +702,7 @@ def _get_api_commission(account_id: str, asset_id: str = "", tsm: dict | None = 
                 "LATEST ON last_updated PARTITION BY param_key"
             )
             row = cur.fetchone()
-            if row:
+            if row and row[0] is not None:
                 return float(row[0]) * 2  # round-trip
     except Exception:
         logger.debug("_get_api_commission: D17 fallback failed")

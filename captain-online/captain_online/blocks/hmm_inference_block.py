@@ -91,7 +91,8 @@ def persist_online_hmm_inference(session_id: int, asset_universe: list[str]) -> 
     else:
         prev_smooth_vec = None
 
-    prev_slot_pnl = float(prior_dict.get("last_session_slot_pnl", 0.0))
+    _prev_pnl_raw = prior_dict.get("last_session_slot_pnl", 0.0)
+    prev_slot_pnl = float(_prev_pnl_raw) if _prev_pnl_raw is not None else 0.0
     x_vec = build_single_observation_vector(
         sess_date=day,
         session_int=sid_int,

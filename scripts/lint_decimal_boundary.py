@@ -60,6 +60,17 @@ MONETARY_COLUMN_NAMES = {
 # like `or "[]"` and dict defaults `or {}`.
 OR_NUMBER_RE = re.compile(r"\bor\s+\d+(?:\.\d+)?\b")
 
+# No-op ternary antipattern (b9_diagnostic 2026-05-01 incident):
+# `float(x) if not isinstance(x, T) else float(x)`
+# `Decimal(x) if not isinstance(x, T) else Decimal(x)`
+# Both branches identical and neither None-safe. Always replace with
+# `to_float(x)` / `as_money(x)` from shared.decimal_boundary.
+NOOP_TERNARY_RE = re.compile(
+    r"(float|Decimal)\s*\(\s*([a-z_][a-z0-9_]*)\s*\)\s+if\s+not\s+isinstance\s*\(\s*\2\s*,\s*"
+    r"(?:float|int|Decimal|\(.*?\))\s*\)\s+else\s+\1\s*\(\s*\2\s*\)",
+    re.IGNORECASE,
+)
+
 SUPPRESSION_MARKER = "# decimal-boundary: ok"
 
 # Files / directories to skip — lint script itself, tests of the boundary,
@@ -112,6 +123,10 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
 
     for i, line in enumerate(content.splitlines(), start=1):
         if SUPPRESSION_MARKER in line:
+            continue
+        # No-op ternary check is universally bad (no scope filter needed)
+        if NOOP_TERNARY_RE.search(line):
+            findings.append((i, line.rstrip()))
             continue
         if not _line_in_scope(line):
             continue
@@ -172,9 +187,15 @@ def main() -> int:
     print(f"decimal-boundary lint: {total} violation(s) "
           f"across {files_with_findings} file(s)")
     print()
-    print("FIX: replace `... or 0.0` with shared.decimal_boundary.as_money(...) "
-          "for monetary fields. For legitimate non-monetary defaults "
-          "(probability, divisor, dimensionless ratio) add suffix marker:")
+    print("FIX OPTIONS:")
+    print("  1. `r[N] or 0.0` antipattern — replace with "
+          "`shared.decimal_boundary.as_money(r[N])` for monetary fields.")
+    print("  2. `float(x) if not isinstance(x, T) else float(x)` no-op ternary — "
+          "replace with `shared.decimal_boundary.to_float(x)` "
+          "(None-safe). Same shape with Decimal — use `as_money(x)`.")
+    print()
+    print("For legitimate non-monetary defaults (probability, divisor, "
+          "dimensionless ratio) add suffix marker:")
     print(f"    {SUPPRESSION_MARKER}")
     return 1
 
