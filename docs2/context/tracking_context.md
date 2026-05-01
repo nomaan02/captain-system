@@ -11,15 +11,16 @@
 
 ## Active Issue
 
-**APAC NKD signal cards never appeared in the GUI overnight 2026-04-30 → 2026-05-01.**
-Trades were not placed. We are 2 hours from NY open. Yesterday (Apr 30) we shipped five
-decimal/float boundary commits (`03de644 → 1910f71 → 9659b4c → 5681fb6 → dbe550b`) plus
-B7 monitor (`2169e7c`), runbook fixes, init_questdb fix, lint, and most recently
-`6a11c39 fix(bootstrap): D16 phase 2 detects account-switch instead of silently skipping`.
-Both remotes are in sync at `6a11c39`. Yesterday we said decimal errors were resolved.
-APAC's silent failure today suggests EITHER (a) the towers were never updated past an old
-SHA, or (b) a separate B6 silent-skip path is firing on NKD specifically (not on the
-8 NY assets that traded fine yesterday).
+**APAC NKD signal cards never appeared in the GUI overnight 2026-04-30 → 2026-05-01,
+AND captain-offline is crashing on every weekly D4 diagnostic run with a NULL-pnl
+TypeError that yesterday's decimal sweep missed.** Tower 1 confirmed three blockers:
+(1) `captain-offline` `compute_d4` crashes on `float(None)` at `b9_diagnostic.py:451`
+because both ternary branches were identical and neither handled `pnl IS NULL` rows
+in P3-D03; (2) Tower 1 doesn't have the `multi-user` remote configured; (3) tower
+shell doesn't inherit `$REDIS_PASSWORD` so `redis-cli -a` AUTH-fails. All three are
+now patched and the rule file `.cursor/rules/captain-deploy-and-tower-discipline.mdc`
+§5 has the lessons-learned entries. Tower 1 still needs to pull post-fix and re-run
+Steps 2-3 of the investigation playbook.
 
 ---
 
@@ -249,6 +250,45 @@ If any of those is red, **do not enable AUTO_EXECUTE for the next session**.
 ---
 
 ## Records
+
+### 2026-05-01 12:35 BST — Tower 1 first-run findings: 3 blockers patched
+
+**Status:** Patching · Tower 1 needs to pull then re-run Steps 2-3
+
+**What we know — confirmed:**
+- Tower 1 ran the Step 0 preamble. Output revealed three independent issues:
+  1. **`captain-offline` is crashing** with `TypeError: float() argument must be a string or a real number, not 'NoneType'`. Source: `captain-offline/captain_offline/blocks/b9_diagnostic.py:451`. Original code `float(pnl) if not isinstance(pnl, Decimal) else float(pnl)` had identical ternary branches AND no `None` guard. P3-D03 has open-trade rows where `pnl IS NULL`, so every D4 dimension run crashed. **Fixed** in this session: routed through `shared.decimal_boundary.to_float` and `continue` on `None`.
+  2. **Tower 1 doesn't have the `multi-user` remote configured** (`fatal: 'multi-user' does not appear to be a git repository`). The Step 0 SHA-parity check therefore can't compare against `multi-user/main`. **Fixed** by adding an idempotent `git remote add multi-user ...` line to the dependency preamble in this rule file's lessons-learned section.
+  3. **`redis-cli -a "$REDIS_PASSWORD"` AUTH-failed** because the tower's fish shell doesn't inherit the env var the containers use. **Fixed** by prepending `set -gx REDIS_PASSWORD (grep '^REDIS_PASSWORD=' ~/captain-system/.env | cut -d= -f2)` before any `redis-cli` call.
+- B8 OR-tracker is alive: `OR tracker registered: NKD (APAC) OR 18:00:00–18:05:00 on 2026-05-01` was logged at 05:55:01 UTC. So the orchestrator IS scheduling APAC for tonight.
+- MGC OR window completed with `range=0.0000` (`high=4572.4000 low=4572.4000`, **only 1 tick captured in the 5-minute window**). MGC then triggered `OR BREAKOUT SHORT` because `4572.2000 < 4572.4000`. This is a separate concern: a degenerate OR with one tick and zero range. Not the cause of the APAC failure but worth flagging.
+
+**What we DON'T yet know:**
+- Whether the `compute_d4` crash was the actual root cause of last night's APAC silent failure, or whether it merely co-existed alongside it. The crash is in offline (learning loop), APAC signals come from online (B6) — they're independent processes. But if offline crashed during APAC evaluation, downstream learning state for the next session could be stale.
+- Whether `captain-offline` was in a crash-restart loop for the entire APAC window.
+- The actual `ON-B6-SUMMARY` content for last night's APAC session — Tower 1 still needs to run Step 3.3 after pulling the fix.
+- Whether Tower 2 also lacks the `multi-user` remote (likely yes — same provisioning).
+
+**Where we're at:**
+- Patch committed to `main` and pushed to BOTH remotes.
+- Cursor rule `.cursor/rules/captain-deploy-and-tower-discipline.mdc` §5 has the three new "Known failure modes" entries with corrected commands.
+- Tower 1 (and Tower 2) need to (a) add the `multi-user` remote, (b) `git pull origin main --ff-only`, (c) `dco up -d --build captain-offline`, (d) re-run Step 2 to confirm no fresh `TypeError` after rebuild, then (e) Step 3 for APAC forensics on last night's session.
+
+**Next steps:**
+1. Tower-A operator runs the corrected preamble (with the `git remote add multi-user` and `set -gx REDIS_PASSWORD` lines from rule file §5).
+2. `git pull origin main --ff-only` then `dco up -d --build captain-offline` to load the b9 fix.
+3. Confirm the offline crash is gone: `dco logs --since 5m captain-offline 2>&1 | grep -iE "TypeError|compute_d4"` returns nothing.
+4. Run Step 3 of investigation playbook against last night's APAC session.
+5. Mirror everything on Tower B.
+6. Run `online-run dry_run_phase_a.py 1` (NY) and `online-run dry_run_phase_a.py 3` (APAC) on both towers — both must print `VERDICT: Phase A would produce signals.` before NY open.
+
+**Useful refs:**
+- `captain-offline/captain_offline/blocks/b9_diagnostic.py:441-454` — the `compute_d4` D4 fix
+- `.cursor/rules/captain-deploy-and-tower-discipline.mdc` §5 — three lessons-learned with corrected commands
+- `shared/decimal_boundary.py:72` — `to_float(value, *, default=0.0)` (None-safe)
+- Investigation playbook above (Steps 0-6)
+
+---
 
 ### 2026-05-01 12:25 BST — Pre-NY-open consolidation triage (this session)
 

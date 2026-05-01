@@ -161,6 +161,79 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-01 — `redis-cli` AUTH failed: `$REDIS_PASSWORD` env var unset in tower shell
+
+**Original (broken):**
+```fish
+docker exec captain-system-redis-1 redis-cli -a "$REDIS_PASSWORD" --no-auth-warning XLEN captain:signals:primary_user
+```
+
+**Error observed:**
+```
+AUTH failed: WRONGPASS invalid username-password pair or user is disabled.
+NOAUTH Authentication required.
+```
+
+**Corrected:**
+```fish
+# Source REDIS_PASSWORD from the same .env the containers use, then retry.
+set -gx REDIS_PASSWORD (grep '^REDIS_PASSWORD=' ~/captain-system/.env | cut -d= -f2)
+docker exec captain-system-redis-1 redis-cli -a "$REDIS_PASSWORD" --no-auth-warning XLEN captain:signals:primary_user
+```
+
+**Reason:** the user's interactive fish shell does not inherit `REDIS_PASSWORD` from the
+container env. Always prepend a `set -gx REDIS_PASSWORD (grep ...)` line before any
+`redis-cli -a "$REDIS_PASSWORD"` invocation, OR run `redis-cli` *inside* the container
+where the env var is already set: `docker exec captain-system-redis-1 sh -c 'redis-cli -a "$REDIS_PASSWORD" XLEN ...'`.
+
+### 2026-05-01 — `git pull multi-user main` fatal: `'multi-user' does not appear to be a git repository`
+
+**Original (broken):**
+```fish
+git fetch multi-user
+git rev-parse multi-user/main
+```
+
+**Error observed:**
+```
+fatal: 'multi-user' does not appear to be a git repository
+fatal: Could not read from remote repository.
+fatal: ambiguous argument 'multi-user/main': unknown revision or path not in the working tree.
+```
+
+**Corrected — first add the missing remote (idempotent):**
+```fish
+# Idempotent: add multi-user remote if missing, no-op if already present.
+git remote get-url multi-user > /dev/null 2>&1
+or git remote add multi-user git@github.com:nomaan02/captain-multi-user.git
+git fetch multi-user
+git rev-parse multi-user/main
+```
+
+**Reason:** towers cloned from `origin` only and were never given the `multi-user` remote.
+Every dependency-preamble block on a tower MUST include the `git remote get-url ... or
+git remote add ...` line so the dual-remote SHA-parity check in `Step 0` of
+`docs2/context/tracking_context.md` works on a fresh tower.
+
+### 2026-05-01 — `captain-offline` crash: `float() argument must be a string or a real number, not 'NoneType'` in `b9_diagnostic.compute_d4`
+
+**Error observed:**
+```
+captain-offline-1 |     pnl_f = float(pnl) if not isinstance(pnl, Decimal) else float(pnl)
+captain-offline-1 | TypeError: float() argument must be a string or a real number, not 'NoneType'
+```
+
+**Reason:** `captain-offline/captain_offline/blocks/b9_diagnostic.py:451` had
+`float(pnl) if not isinstance(pnl, Decimal) else float(pnl)` — both ternary branches
+identical, and neither handled `pnl is None`. P3-D03 rows with `pnl IS NULL` (open
+trades, replay rows) crashed the D4 dimension on every weekly diagnostic run. Fixed
+in the same commit as this rule update by routing through `shared.decimal_boundary.to_float`
+and skipping NULL rows explicitly.
+
+**Lesson:** any `if not isinstance(x, Decimal) else float(x)` ternary is a no-op and a
+None-handling bug. The repo-wide grep `not isinstance\(.*Decimal\) else float` should
+return zero matches. Add a CI lint if this recurs.
+
 ### Template for a new entry
 
 ```markdown

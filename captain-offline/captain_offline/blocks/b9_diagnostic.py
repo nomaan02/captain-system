@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from shared.constants import now_et
+from shared.decimal_boundary import to_float
 from shared.decimal_json import loads_decimal
 from shared.questdb_client import get_cursor
 
@@ -448,7 +449,9 @@ def compute_d4(action_queue: list) -> float:
             bd = {}
         if not isinstance(bd, dict):
             continue
-        pnl_f = float(pnl) if not isinstance(pnl, Decimal) else float(pnl)
+        pnl_f = to_float(pnl)  # NULL pnl rows: skipped (hit returns None below).
+        if pnl is None:
+            continue
         for aid_str, payload in bd.items():
             try:
                 aid = int(aid_str)
