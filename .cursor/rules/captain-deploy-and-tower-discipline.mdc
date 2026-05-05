@@ -161,6 +161,36 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-05 — `psql: command not found` inside `captain-system-questdb-1` container
+
+**Original (broken):**
+```fish
+docker exec captain-system-questdb-1 sh -c \
+    "psql -h localhost -p 8812 -U admin -d qdb -c \"SELECT asset_id, captain_status FROM p3_d00_asset_universe WHERE asset_id IN ('MGC','MYM') ORDER BY asset_id;\""
+```
+
+**Error observed:**
+```
+sh: line 1: psql: command not found
+```
+
+**Corrected (preferred — host curl to QuestDB HTTP /exec):**
+```fish
+command -v jq > /dev/null 2>&1; or sudo apt install -y jq
+
+curl -s -G "http://localhost:9000/exec" \
+    --data-urlencode "query=SELECT asset_id, captain_status FROM p3_d00_asset_universe WHERE asset_id IN ('MGC','MYM') ORDER BY asset_id" \
+    | jq '.columns, .dataset'
+```
+
+**Corrected (alternative — psql from a container that ships it, e.g. captain-command):**
+```fish
+dco exec -T captain-command sh -c \
+    'PGPASSWORD=quest psql -h questdb -p 8812 -U admin -d qdb -c "SELECT asset_id, captain_status FROM p3_d00_asset_universe WHERE asset_id IN ('"'"'MGC'"'"','"'"'MYM'"'"') ORDER BY asset_id;"'
+```
+
+**Reason:** the `questdb/questdb` Docker image does not ship a PostgreSQL client; QuestDB only listens for psql connections, it does not provide one. Use the HTTP `/exec` endpoint on host port 9000 (already bound in `docker-compose.local.yml`) for ad-hoc queries — no container shell games and no client install needed. For scripted SQL, prefer running through `cap-run`/`cmd-run` so existing `shared.questdb_client` connection handling and credentials are reused. Never `docker exec captain-system-questdb-1 sh -c "psql ..."`.
+
 ### 2026-05-01 — `online-run: command not found` — helpers not loaded in new shell session
 
 **Original (broken):**

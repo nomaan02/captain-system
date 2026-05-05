@@ -261,12 +261,13 @@ All 43 blocks implemented. All 9 containers healthy. Data bootstrap complete:
 | D01 (aim_model_states) | 270 rows | Tier 1 AIMs installed per asset |
 | D02 (aim_meta_weights) | 60 rows | Equal initial weights (6 AIMs x 10 assets) |
 | D05 (ewma_states) | 60 rows | Bootstrapped from P1 trade history |
-| D08 (tsm_state) | 1 account | 20319811 (150K Trading Combine) |
+| D08 (tsm_state) | 1 account | 21855714 (150K Trading Combine) |
 | D12 (kelly_params) | 60 rows | Bootstrapped from P1 trade history |
-| D16 (capital_silos) | primary_user | $150K, account 20319811 linked, max 5 positions |
+| D16 (capital_silos) | primary_user | $150K, account 21855714 linked, max 5 positions |
 | D25 (circuit_breaker) | 1 row | Cold-start (beta_b=0, layers 3-4 disabled) |
 
-**Active account:** 20319811 (TopstepX PRAC-V2-551001-43861321, $150K Trading Combine)
+**Active account:** 21855714 (TopstepX 150KTC-V2-551001-86041837, $150K Trading Combine, PASS_EVAL)
+**Previous account (deprecated):** 20319811 (PRAC-V2-551001-43861321) — switched 2026-05; do not use for new bootstraps.
 **AUTO_EXECUTE:** true
 
 ### Locked Strategies (from P2-D06)
