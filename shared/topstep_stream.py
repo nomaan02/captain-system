@@ -239,6 +239,18 @@ class MarketStream:
     def state(self) -> StreamState:
         return self._state
 
+    _MAX_RECONNECT_BACKOFF_S = 60
+
+    def _register_handlers(self) -> None:
+        """Wire pysignalr event handlers onto self._client."""
+        self._client.on("GatewayQuote", self._async_handle_quote)
+        self._client.on("GatewayTrade", self._async_handle_trade)
+        self._client.on("GatewayDepth", self._async_handle_depth)
+        self._client.on("GatewayLogout", self._async_handle_logout)
+        self._client.on_open(self._async_on_open)
+        self._client.on_close(self._async_on_close)
+        self._client.on_error(self._async_on_error)
+
     def start(self) -> None:
         """Connect to market hub and subscribe to quotes.
 
@@ -250,13 +262,7 @@ class MarketStream:
         self._rapid_failures = 0
         try:
             self._client = self._create_client(MARKET_HUB_URL)
-            self._client.on("GatewayQuote", self._async_handle_quote)
-            self._client.on("GatewayTrade", self._async_handle_trade)
-            self._client.on("GatewayDepth", self._async_handle_depth)
-            self._client.on("GatewayLogout", self._async_handle_logout)
-            self._client.on_open(self._async_on_open)
-            self._client.on_close(self._async_on_close)
-            self._client.on_error(self._async_on_error)
+            self._register_handlers()
 
             self._loop = asyncio.new_event_loop()
             self._thread = threading.Thread(
@@ -321,14 +327,36 @@ class MarketStream:
     # -- Event loop ---------------------------------------------------------
 
     def _run_loop(self) -> None:
-        """Background thread: run the pysignalr client in its own event loop."""
+        """Background thread: run the pysignalr client in its own event loop.
+
+        Retries with exponential backoff when pysignalr raises ServerError
+        (server-initiated close with error payload).  Stops retrying only
+        when the stream has been explicitly stopped (DISCONNECTED state) or
+        after the rapid-failure circuit breaker trips.
+        """
         asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._async_main())
-        except Exception:
-            if self._state != StreamState.DISCONNECTED:
-                logger.exception("MarketStream event loop exited unexpectedly")
-                self._state = StreamState.ERROR
+        backoff = 2
+        while self._state != StreamState.DISCONNECTED:
+            try:
+                self._loop.run_until_complete(self._async_main())
+                break  # clean exit (e.g. cancelled)
+            except Exception:
+                if self._state == StreamState.DISCONNECTED:
+                    break
+                logger.exception(
+                    "MarketStream event loop exited unexpectedly — "
+                    "retrying in %ds", backoff,
+                )
+                self._state = StreamState.RECONNECTING
+                time.sleep(backoff)
+                backoff = min(backoff * 2, self._MAX_RECONNECT_BACKOFF_S)
+                if self._state == StreamState.DISCONNECTED:
+                    break
+                self._client = self._create_client(MARKET_HUB_URL)
+                self._register_handlers()
+
+        if self._state != StreamState.DISCONNECTED:
+            self._state = StreamState.ERROR
 
     async def _async_main(self) -> None:
         """Async entry point — stores task ref for cross-thread cancellation."""
@@ -531,25 +559,24 @@ class UserStream:
         with self._lock:
             return dict(self._positions_cache)
 
+    def _register_handlers(self) -> None:
+        """Wire pysignalr event handlers onto self._client."""
+        self._client.on("GatewayUserAccount", self._async_handle_account)
+        self._client.on("GatewayUserOrder", self._async_handle_order)
+        self._client.on("GatewayUserPosition", self._async_handle_position)
+        self._client.on("GatewayUserTrade", self._async_handle_trade)
+        self._client.on("GatewayLogout", self._async_handle_logout)
+        self._client.on_open(self._async_on_open)
+        self._client.on_close(self._async_on_close)
+        self._client.on_error(self._async_on_error)
+
     def start(self) -> None:
         """Connect to user hub and subscribe to all user events."""
         self._state = StreamState.CONNECTING
         self._rapid_failures = 0
         try:
             self._client = self._create_client(USER_HUB_URL)
-            self._client.on("GatewayUserAccount",
-                            self._async_handle_account)
-            self._client.on("GatewayUserOrder",
-                            self._async_handle_order)
-            self._client.on("GatewayUserPosition",
-                            self._async_handle_position)
-            self._client.on("GatewayUserTrade",
-                            self._async_handle_trade)
-            self._client.on("GatewayLogout",
-                            self._async_handle_logout)
-            self._client.on_open(self._async_on_open)
-            self._client.on_close(self._async_on_close)
-            self._client.on_error(self._async_on_error)
+            self._register_handlers()
 
             self._loop = asyncio.new_event_loop()
             self._thread = threading.Thread(
@@ -586,17 +613,41 @@ class UserStream:
         time.sleep(1)
         self.start()
 
+    _MAX_RECONNECT_BACKOFF_S = 60
+
     # -- Event loop ---------------------------------------------------------
 
     def _run_loop(self) -> None:
-        """Background thread: run the pysignalr client in its own event loop."""
+        """Background thread: run the pysignalr client in its own event loop.
+
+        Retries with exponential backoff when pysignalr raises ServerError
+        (server-initiated close with error payload).  Stops retrying only
+        when the stream has been explicitly stopped (DISCONNECTED state) or
+        after the rapid-failure circuit breaker trips.
+        """
         asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._async_main())
-        except Exception:
-            if self._state != StreamState.DISCONNECTED:
-                logger.exception("UserStream event loop exited unexpectedly")
-                self._state = StreamState.ERROR
+        backoff = 2
+        while self._state != StreamState.DISCONNECTED:
+            try:
+                self._loop.run_until_complete(self._async_main())
+                break  # clean exit (e.g. cancelled)
+            except Exception:
+                if self._state == StreamState.DISCONNECTED:
+                    break
+                logger.exception(
+                    "UserStream event loop exited unexpectedly — "
+                    "retrying in %ds", backoff,
+                )
+                self._state = StreamState.RECONNECTING
+                time.sleep(backoff)
+                backoff = min(backoff * 2, self._MAX_RECONNECT_BACKOFF_S)
+                if self._state == StreamState.DISCONNECTED:
+                    break
+                self._client = self._create_client(USER_HUB_URL)
+                self._register_handlers()
+
+        if self._state != StreamState.DISCONNECTED:
+            self._state = StreamState.ERROR
 
     async def _async_main(self) -> None:
         """Async entry point — stores task ref for cross-thread cancellation."""
