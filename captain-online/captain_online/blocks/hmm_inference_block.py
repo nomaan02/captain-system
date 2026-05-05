@@ -56,6 +56,7 @@ def persist_online_hmm_inference(session_id: int, asset_universe: list[str]) -> 
 
     if last_train_ts is None:
         last_train_ts = datetime.now()
+    hp = hmm_params_from_json(hmm_blob)
     if not hp or "pi" not in hp:
         return
     try:
