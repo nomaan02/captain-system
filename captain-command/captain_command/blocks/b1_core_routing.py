@@ -30,6 +30,7 @@ from shared.redis_client import (
     STREAM_COMMANDS,
 )
 from shared.journal import write_checkpoint
+from shared.decimal_json import dumps_decimal
 from shared.constants import (
     COMMAND_TYPE_VALUES,
     NOTIFICATION_PRIORITY_VALUES,
@@ -421,7 +422,7 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
                     "SIGNAL_RECEIVED",
                     signal_id,
                     signal.get("asset", ""),
-                    json.dumps({
+                    dumps_decimal({
                         "direction": signal.get("direction"),
                         "entry_price": ctx.get("entry_price"),
                         "tp_level": signal.get("tp_level"),
@@ -474,7 +475,7 @@ def _log_trade_confirmation(signal_id: str, user_id: str, action: str, data: dic
                     f"TRADE_{action}",
                     signal_id,
                     data.get("asset", ""),
-                    json.dumps({
+                    dumps_decimal({
                         "account_id": data.get("account_id"),
                         "contracts": data.get("contracts"),
                         "actual_entry_price": data.get("actual_entry_price"),
@@ -515,7 +516,7 @@ def _handle_tsm_switch(data: dict):
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
                 (
                     now_et().isoformat(), user_id, "TSM_SWITCH",
-                    account_id, "", json.dumps({"tsm_name": tsm_name}),
+                    account_id, "", dumps_decimal({"tsm_name": tsm_name}),
                 ),
             )
     except Exception as exc:
@@ -534,7 +535,7 @@ def _handle_concentration_response(event_id: str, decision: str, user_id: str):
                 (
                     now_et().isoformat(), user_id,
                     "CONCENTRATION_RESPONSE", event_id, "",
-                    json.dumps({"decision": decision}),
+                    dumps_decimal({"decision": decision}),
                 ),
             )
     except Exception as exc:
@@ -553,7 +554,7 @@ def _confirm_contract_roll(asset: str, new_contract: str, user_id: str):
                 (
                     now_et().isoformat(), user_id, "ROLL_CONFIRMED",
                     f"ROLL-{asset}", asset,
-                    json.dumps({"new_contract": new_contract}),
+                    dumps_decimal({"new_contract": new_contract}),
                 ),
             )
     except Exception as exc:
@@ -575,7 +576,7 @@ def _update_action_item(user_id: str, action_id: str, new_status: str, notes: st
                     "ACTION_ITEM_UPDATE",
                     action_id,
                     "",
-                    json.dumps({
+                    dumps_decimal({
                         "new_status": new_status,
                         "notes": notes,
                     }),
@@ -598,7 +599,7 @@ def _set_asset_pause(asset: str, paused: bool, user_id: str):
                     now_et().isoformat(), user_id,
                     "MANUAL_PAUSE" if paused else "MANUAL_RESUME",
                     f"PAUSE-{asset}", asset,
-                    json.dumps({"paused": paused}),
+                    dumps_decimal({"paused": paused}),
                 ),
             )
     except Exception as exc:
