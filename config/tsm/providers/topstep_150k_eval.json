@@ -45,6 +45,12 @@
             "NQ":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
             "MES": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
             "MNQ": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "M2K": {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
+            "MYM": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "NKD": {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
+            "MGC": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}},
+            "ZB":  {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
+            "ZN":  {"round_turn": 2.26, "components": {"nfa_clearing": 2.26}},
             "CL":  {"round_turn": 2.80, "components": {"nfa_clearing": 2.80}},
             "MCL": {"round_turn": 0.74, "components": {"nfa_clearing": 0.74}}
         },
