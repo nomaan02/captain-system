@@ -173,6 +173,57 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-06 — `dco up -d --build` ships stale config: container reads old JSON despite host file being updated
+
+**Original (broken):**
+```fish
+# Edit a config file (e.g. bump c=0.5 -> c=1.0 in topstep_150k_eval.json)
+$EDITOR config/tsm/providers/topstep_150k_eval.json
+
+git add config/tsm/providers/topstep_150k_eval.json
+git commit -m "bump c=1.0"
+git push origin HEAD; and git push multi-user HEAD
+
+# On tower:
+git pull --ff-only
+dco up -d --build captain-command   # rebuilds, but config is STILL old in container
+cmd-run force_sod_recompute.py      # uses old c=0.5
+```
+
+**Symptom observed:**
+```
+SOD params for 21855714: c=0.5 e=0.01 p=0.005   # expected c=1.0
+SOD Topstep params computed for 21855714: ... L_halt=750.00   # expected 1500.00
+```
+And inside the container:
+```
+dco exec -T captain-command grep '"c":' /captain/config/tsm/providers/topstep_150k_eval.json
+        "c": 0.5,
+```
+
+**Corrected:**
+```fish
+# After git pull, BEFORE dco build, sync config/ -> each service's _config/.
+# Dockerfiles use `COPY _config/ /captain/config/` to bake config into the image
+# (avoids WSL2 9p bind-mount issues). Only captain-start.sh syncs config/ ->
+# _config/ automatically; raw `dco up -d --build` skips this step.
+for svc in captain-offline captain-online captain-command
+    rm -rf $svc/_config
+    cp -r config $svc/_config
+end
+
+# Verify before rebuilding
+grep '"c":' captain-{command,online,offline}/_config/tsm/providers/topstep_150k_eval.json
+# All three lines should show the new value
+
+# Force no-cache on the affected service(s) so Docker doesn't reuse a cached
+# `COPY _config/` layer
+dco build --no-cache captain-command
+dco up -d captain-command
+```
+
+**Reason:** the captain-{command,online,offline} Dockerfiles each `COPY _config/ /captain/config/` from a per-service `_config/` directory. The `_config/` directories are gitignored sync targets — `captain-start.sh` populates them via `cp -r config <svc>/_config` before invoking `docker compose`. Raw `dco up -d --build` skips that sync, so config edits in `config/*.json` never reach the container. Always run `captain-start.sh` for deploys, OR run the `for svc in ...; cp -r config <svc>/_config; end` block manually before `dco build`.
+
 ### 2026-05-06 — `cmd-run <script>.py`: `No such file or directory` for repo-root scripts
 
 **Original (broken):**

@@ -154,10 +154,26 @@ If OK, continue:
 git pull --ff-only origin main
 
 # Sanity: confirm we landed on the expected feature SHA
-git log -1 --oneline   # expect: 2a184df ... Phase 8: GUI TSM panel per-session breakdown
+git log -1 --oneline   # expect: 9aefcb5 ... feat(shared): add qexecute helper
 
-# Rebuild + restart (uses the dco helper)
+# CRITICAL: sync config/ -> each service's _config/ build context.
+# Dockerfiles COPY _config/ /captain/config/, so changes to config/*.json
+# (including this deploy's bump of c=0.5 -> c=1.0 in topstep_150k_eval.json)
+# DO NOT reach the container unless this sync runs first. captain-start.sh
+# does it automatically; raw `dco up -d --build` does not.
+for svc in captain-offline captain-online captain-command
+    rm -rf $svc/_config
+    cp -r config $svc/_config
+end
+
+# Verify the bumped c=1.0 is present in all three build contexts
+grep '"c":' captain-{command,online,offline}/_config/tsm/providers/topstep_150k_eval.json
+# Expected: all three lines show "c": 1.0,
+
+# Rebuild + restart (uses the dco helper). --no-cache on captain-command
+# guarantees the refreshed _config/ layer is picked up.
 dco down
+dco build --no-cache captain-command
 dco up -d --build
 ```
 
@@ -357,7 +373,7 @@ then drill into the nested key:
 ```fish
 curl -s -G "http://localhost:9000/exec" \
     --data-urlencode "query=SELECT account_id, last_updated, topstep_state FROM p3_d08_tsm_state LATEST ON last_updated PARTITION BY account_id" \
-    | jq -r '.dataset[] | "ACCOUNT: \(.[0])\nLAST_UPDATED: \(.[1])\nCOMPUTED_SOD.SESSION:\n\(.[2] | fromjson | .computed_sod.session // \"<null>\" | tojson)\n---"'
+    | jq -r '.dataset[] | "ACCOUNT: \(.[0])\nLAST_UPDATED: \(.[1])\nCOMPUTED_SOD.SESSION:\n\(.[2] | fromjson | .computed_sod.session // "<null>" | tojson)\n---"'
 ```
 
 Expected output (account `21855714`, primary_user, $150K Combine):
