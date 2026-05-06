@@ -118,7 +118,7 @@ def run_circuit_breaker_screen(
         proposed_contracts = final_contracts
 
     cb_params = _load_cb_params(accounts, model_m=model_m)
-    intraday_state = _load_intraday_state(accounts)
+    intraday_state = _load_intraday_state(accounts, session_id=int(session_id))
 
     blocked_count = 0
 
@@ -235,18 +235,21 @@ def _check_all_layers(
         Decimal(str(sl_distance)) * _pv + Decimal(str(fee_per_trade))
     )
 
-    # Layer 1: Preemptive hard halt — abs(L_t) + rho_j >= c * e * A
-    reason = _layer1_preemptive_halt(intraday, tsm, rho_j)
+    # Layer 1: Preemptive hard halt — abs(L_t) + rho_j >= L_halt (per session)
+    reason = _layer1_preemptive_halt(intraday, tsm, rho_j, session_id=session_id)
     if reason:
         return reason
 
-    # Layer 2: Dollar budget — remaining < rho_j
-    reason = _layer2_budget(intraday, tsm, rho_j)
+    # Layer 2: Dollar budget — remaining < rho_j (per session)
+    reason = _layer2_budget(intraday, tsm, rho_j, session_id=session_id)
     if reason:
         return reason
 
     # Layer 3: Per-basket conditional expectancy — mu_b = r_bar + beta_b * L_b
-    reason = _layer3_basket_expectancy(cb_param, intraday, model_m)
+    # (basket keyed by (session_id, model_m) per Phase 3)
+    reason = _layer3_basket_expectancy(
+        cb_param, intraday, model_m, session_id=session_id,
+    )
     if reason:
         return reason
 
@@ -305,20 +308,32 @@ def _layer0_scaling_cap(tsm: dict, proposed_contracts: int, open_positions: list
     return None
 
 
-def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
+def _layer1_preemptive_halt(
+    intraday: dict, tsm: dict, rho_j: Decimal, session_id: int = 0,
+) -> str | None:
     """Layer 1: Preemptive hard halt (account survival).
 
     Formula: abs(L_t) + rho_j >= L_halt
     Where rho_j = contracts * (SL_distance * point_value + fee).
 
-    L_halt is SOD-frozen from p3_d08_tsm_state.topstep_state.computed_sod.L_halt,
-    set by b8_reconciliation._compute_sod_topstep_params at session start.
-    Fallback to live c * e * A only on cold start (SOD not yet run).
+    PER-SESSION (2026-05-06): the relevant ``L_halt`` and ``L_t`` are now
+    SCOPED TO THE CURRENT SESSION. NY's accumulated L_t no longer pollutes
+    APAC's gate — each session has its own SOD-allocated L_halt and its own
+    independent intraday L_t ledger. Lookup chain:
+
+      1. intraday["effective_l_halt"] — written by the orchestrator's
+         session-open hook (Phase 3a) with carryover from earlier sessions.
+      2. computed_sod.session.<KEY>.L_halt — written by Command B8 at SOD
+         (Phase 2). Used when the session-open hook hasn't fired yet OR
+         when intraday entry is missing.
+      3. computed_sod.L_halt — legacy flat scalar for backwards-compat.
+      4. live c * e * A — final fallback when SOD has never run.
 
     This is PREEMPTIVE: blocks trades whose worst-case SL outcome would breach
     the halt threshold, not just trades where L_t has already breached it.
-    When H = 0, all trading stops. No exceptions.
     """
+    from shared.sod_session_budget import get_session_l_halt
+
     A = Decimal(str(tsm.get("current_balance", 0)))
 
     if A <= 0:
@@ -328,20 +343,30 @@ def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: Decimal) -> str | 
 
     topstep_state = parse_json_decimal(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    l_halt_raw = computed_sod.get("L_halt")
-    if l_halt_raw is None or (isinstance(l_halt_raw, Decimal) and l_halt_raw <= 0) or (
-            not isinstance(l_halt_raw, Decimal) and (l_halt_raw or 0) <= 0):
+
+    # Per-session L_halt lookup chain.
+    l_halt: Decimal | None = None
+    eff_from_intraday = intraday.get("effective_l_halt")
+    if eff_from_intraday is not None:
+        l_halt = (
+            eff_from_intraday if isinstance(eff_from_intraday, Decimal)
+            else Decimal(str(eff_from_intraday))
+        )
+    elif session_id and session_id > 0:
+        sess_halt = get_session_l_halt(computed_sod, session_id)
+        if sess_halt > 0:
+            l_halt = sess_halt
+    if l_halt is None or l_halt <= 0:
+        # Final fallback: live c * e * A (cold-start, SOD never ran).
         topstep_params = parse_json(tsm.get("topstep_params"), {})
         c = Decimal(str(topstep_params.get("c", 0.5)))
         e = Decimal(str(topstep_params.get("e", 0.01)))
         l_halt = c * e * A
         logger.warning(
-            "ON-B5C: L1 falling back to live L_halt=%s for %s (SOD not run)",
-            l_halt,
-            tsm.get("account_id"),
+            "ON-B5C: L1 falling back to live L_halt=%s for %s session=%s "
+            "(no SOD per-session value)",
+            l_halt, tsm.get("account_id"), session_id,
         )
-    else:
-        l_halt = l_halt_raw if isinstance(l_halt_raw, Decimal) else Decimal(str(l_halt_raw))
 
     l_t_raw = intraday.get("l_t", 0)
     l_t = l_t_raw if isinstance(l_t_raw, Decimal) else Decimal(str(l_t_raw))
@@ -350,26 +375,30 @@ def _layer1_preemptive_halt(intraday: dict, tsm: dict, rho_j: Decimal) -> str | 
 
     if projected >= l_halt:
         return (
-            f"L1: preemptive halt — |L_t|={abs(l_t):.0f} + rho_j={rho:.0f} "
-            f"= {projected:.0f} >= L_halt={l_halt:.0f}"
+            f"L1: preemptive halt session={session_id} — "
+            f"|L_t|={abs(l_t):.0f} + rho_j={rho:.0f} = {projected:.0f} "
+            f">= L_halt={l_halt:.0f}"
         )
 
     return None
 
 
-def _layer2_budget(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
+def _layer2_budget(
+    intraday: dict, tsm: dict, rho_j: Decimal, session_id: int = 0,
+) -> str | None:
     """Layer 2: Remaining dollar budget — IF remaining < rho_j -> BLOCKED.
 
     Spec: remaining_budget = E - |L_t|; IF remaining < rho_j -> BLOCK
     where E = E_daily_exposure (daily exposure budget in dollars).
 
-    E_daily_exposure is SOD-frozen from
-    p3_d08_tsm_state.topstep_state.computed_sod.E_daily_exposure,
-    set by b8_reconciliation._compute_sod_topstep_params at session start.
-    Fallback to live e * A only on cold start (SOD not yet run).
+    PER-SESSION (2026-05-06): same lookup chain as ``_layer1_preemptive_halt``.
+    The relevant ``E`` is the session's SOD share + carryover; the relevant
+    ``L_t`` is the session's intraday cumulative.
 
-    Blocks when worst-case signal risk exceeds remaining day budget.
+    Blocks when worst-case signal risk exceeds the remaining session budget.
     """
+    from shared.sod_session_budget import get_session_e_exposure
+
     A = Decimal(str(tsm.get("current_balance", 0)))
 
     if A <= 0:
@@ -379,19 +408,28 @@ def _layer2_budget(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
 
     topstep_state = parse_json_decimal(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    E_raw = computed_sod.get("E_daily_exposure")
-    if E_raw is None or (isinstance(E_raw, Decimal) and E_raw <= 0) or (
-            not isinstance(E_raw, Decimal) and (E_raw or 0) <= 0):
+
+    # Per-session E lookup chain.
+    E: Decimal | None = None
+    eff_from_intraday = intraday.get("effective_e_exposure")
+    if eff_from_intraday is not None:
+        E = (
+            eff_from_intraday if isinstance(eff_from_intraday, Decimal)
+            else Decimal(str(eff_from_intraday))
+        )
+    elif session_id and session_id > 0:
+        sess_e = get_session_e_exposure(computed_sod, session_id)
+        if sess_e > 0:
+            E = sess_e
+    if E is None or E <= 0:
         topstep_params = parse_json(tsm.get("topstep_params"), {})
         e = Decimal(str(topstep_params.get("e", 0.01)))
         E = e * A
         logger.warning(
-            "ON-B5C: L2 falling back to live E_daily_exposure=%s for %s (SOD not run)",
-            E,
-            tsm.get("account_id"),
+            "ON-B5C: L2 falling back to live E=%s for %s session=%s "
+            "(no SOD per-session value)",
+            E, tsm.get("account_id"), session_id,
         )
-    else:
-        E = E_raw if isinstance(E_raw, Decimal) else Decimal(str(E_raw))
 
     l_t_raw = intraday.get("l_t", 0)
     l_t = l_t_raw if isinstance(l_t_raw, Decimal) else Decimal(str(l_t_raw))
@@ -399,8 +437,9 @@ def _layer2_budget(intraday: dict, tsm: dict, rho_j: Decimal) -> str | None:
 
     if remaining < rho:
         return (
-            f"L2: dollar budget exhausted — remaining={remaining:.0f} "
-            f"< rho_j={rho:.0f} (E={E:.0f}, |L_t|={abs(l_t):.0f})"
+            f"L2: dollar budget exhausted session={session_id} — "
+            f"remaining={remaining:.0f} < rho_j={rho:.0f} "
+            f"(E={E:.0f}, |L_t|={abs(l_t):.0f})"
         )
 
     return None
@@ -410,11 +449,18 @@ def _layer3_basket_expectancy(
     cb_param: dict | None,
     intraday: dict,
     model_m: str | None,
+    session_id: int = 0,
 ) -> str | None:
     """Layer 3: Per-basket conditional expectancy filter.
 
     mu_b = r_bar_b + beta_b * L_b
     If mu_b <= 0 -> BLOCKED (negative expected return for this basket).
+
+    PER-SESSION (2026-05-06): basket key is now ``"<session_id>:<model_m>"``
+    so a strategy m=6 running in both NY and APAC keeps two independent
+    basket P&L tallies (Isaac's spec answer Q-2). Backwards-compat: if the
+    session-scoped key is absent, fall back to the legacy bare ``model_m``
+    key — handles intraday state from rows written before Phase 3.
 
     Cold start: beta_b = 0 -> mu_b = r_bar_b > 0 (assuming positive-expectancy
     strategy). Filter never triggers until Offline Block 8 produces significant
@@ -435,7 +481,16 @@ def _layer3_basket_expectancy(
         beta_b = Decimal("0")
 
     l_b_dict = intraday.get("l_b", {})
-    basket_key = str(model_m) if model_m is not None else None
+    basket_key = None
+    if model_m is not None:
+        # Phase 3 namespacing: prefer "<session>:<m>" if present.
+        if session_id and session_id > 0:
+            scoped = f"{int(session_id)}:{model_m}"
+            if scoped in l_b_dict:
+                basket_key = scoped
+        # Fallback to bare model_m for rows written pre-Phase-3.
+        if basket_key is None and str(model_m) in l_b_dict:
+            basket_key = str(model_m)
     lb_raw = l_b_dict.get(basket_key, 0.0) if basket_key else 0.0
     l_b = lb_raw if isinstance(lb_raw, Decimal) else Decimal(str(lb_raw))
 
@@ -443,8 +498,8 @@ def _layer3_basket_expectancy(
 
     if mu_b <= 0:
         return (
-            f"L3: negative basket expectancy — mu_b={mu_b:.2f} "
-            f"(r_bar={r_bar:.2f}, beta_b={beta_b:.4f}, L_b={l_b:.0f})"
+            f"L3: negative basket expectancy session={session_id} basket={basket_key} "
+            f"— mu_b={mu_b:.2f} (r_bar={r_bar:.2f}, beta_b={beta_b:.4f}, L_b={l_b:.0f})"
         )
 
     return None
@@ -563,14 +618,58 @@ def _load_cb_params(accounts: list[str], model_m: str | None = None) -> dict:
     return result
 
 
-def _load_intraday_state(accounts: list[str]) -> dict:
-    """Load intraday CB state from P3-D23, keyed by account_id."""
+def _load_intraday_state(accounts: list[str], session_id: int = 0) -> dict:
+    """Load intraday CB state from P3-D23 for a specific session, keyed by account_id.
+
+    Per-session-budget semantics (2026-05-06): D23 is now keyed by
+    ``(account_id, session_id)`` so every session has its own L_t / n_t /
+    l_b / n_b ledger, plus the SOD-locked effective_l_halt /
+    effective_e_exposure / session_opened_at fields written by the
+    orchestrator's session-open hook.
+
+    Parameters
+    ----------
+    accounts
+        Reserved for future filtering — the SQL currently returns all
+        accounts and the caller decides which ones to read.
+    session_id
+        Filter D23 to this session_id only. Default ``0`` is interpreted as
+        "no session filter" (legacy callers); production callers should
+        always pass the actual session_id from the orchestrator.
+
+    Returns
+    -------
+    dict[account_id, dict]
+        ``{account_id: {"l_t", "n_t", "l_b", "n_b", "effective_l_halt",
+                        "effective_e_exposure", "session_opened_at"}}``
+        ``effective_l_halt`` / ``effective_e_exposure`` may be ``None`` if
+        the orchestrator session-open hook hasn't fired yet for this
+        session — callers (B5C layers) MUST fall back to D08's per-session
+        SOD share via ``shared.sod_session_budget.get_session_l_halt``.
+    """
     with get_cursor() as cur:
-        cur.execute(
-            """SELECT account_id, l_t, n_t, l_b, n_b
-               FROM p3_d23_circuit_breaker_intraday
-               LATEST ON last_updated PARTITION BY account_id"""
-        )
+        if session_id and session_id > 0:
+            cur.execute(
+                """SELECT account_id, l_t, n_t, l_b, n_b,
+                          effective_l_halt, effective_e_exposure,
+                          session_opened_at
+                   FROM p3_d23_circuit_breaker_intraday
+                   WHERE session_id = %s
+                   LATEST ON last_updated PARTITION BY account_id, session_id""",
+                (int(session_id),),
+            )
+        else:
+            # Legacy/no-filter path: returns ALL session rows for an account;
+            # the LATEST ON collapses to one row per account_id which may
+            # belong to ANY session — only used by callers that don't care
+            # about per-session isolation (none in production after Phase 4).
+            cur.execute(
+                """SELECT account_id, l_t, n_t, l_b, n_b,
+                          effective_l_halt, effective_e_exposure,
+                          session_opened_at
+                   FROM p3_d23_circuit_breaker_intraday
+                   LATEST ON last_updated PARTITION BY account_id"""
+            )
         rows = cur.fetchall()
 
     result = {}
@@ -582,11 +681,20 @@ def _load_intraday_state(accounts: list[str]) -> dict:
             lt_dec = lt_raw
         else:
             lt_dec = Decimal(str(lt_raw))
+        eff_l_halt = r[5]
+        if eff_l_halt is not None and not isinstance(eff_l_halt, Decimal):
+            eff_l_halt = Decimal(str(eff_l_halt))
+        eff_e = r[6]
+        if eff_e is not None and not isinstance(eff_e, Decimal):
+            eff_e = Decimal(str(eff_e))
         result[r[0]] = {
             "l_t": lt_dec,
             "n_t": r[2] or 0,
             "l_b": parse_json_decimal(r[3], {}),
             "n_b": parse_json(r[4], {}),
+            "effective_l_halt": eff_l_halt,
+            "effective_e_exposure": eff_e,
+            "session_opened_at": r[7],
         }
     return result
 
