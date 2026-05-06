@@ -25,7 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from shared.questdb_client import get_cursor, qexecute
+from shared.questdb_client import get_cursor
 from shared.journal import write_checkpoint
 from shared.constants import now_et
 from shared.decimal_json import dumps_decimal
@@ -506,7 +506,7 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
     for attempt in range(retries):
         try:
             with get_cursor() as cur:
-                qexecute(cur, sql, params)
+                cur.execute(sql, params)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
         except psycopg2.Error as exc:
