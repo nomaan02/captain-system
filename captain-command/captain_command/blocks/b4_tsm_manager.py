@@ -25,7 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.journal import write_checkpoint
 from shared.constants import now_et
 from shared.decimal_json import dumps_decimal
@@ -177,6 +177,57 @@ def load_all_tsm_files() -> list[dict]:
             logger.error("Failed to load TSM file %s: %s", filename, exc, exc_info=True)
 
     return results
+
+
+def refresh_tsm_config_in_d08(tsm_results: list[dict]) -> int:
+    """Re-write D08 rows for existing accounts with the latest TSM config.
+
+    At startup the TSM JSON files on disk are the source of truth for config
+    parameters (topstep_params, fee_schedule, payout_rules, etc.).  Existing
+    D08 rows may hold stale copies from when the account was first linked.
+    This function reads the latest D08 row per account, matches it to a TSM
+    config by name, and inserts a fresh row that preserves runtime state
+    (current_balance, daily_loss_used, ...) but carries the latest config.
+
+    Returns the number of accounts refreshed.
+    """
+    tsm_by_name: dict[str, dict] = {}
+    for r in tsm_results:
+        if r["validation"]["valid"] and r["tsm"] is not None:
+            tsm_by_name[r["tsm"]["name"]] = r["tsm"]
+
+    if not tsm_by_name:
+        return 0
+
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT account_id, user_id, name,
+                          current_balance, starting_balance, daily_loss_used,
+                          max_drawdown_limit, max_daily_loss
+                   FROM p3_d08_tsm_state
+                   LATEST ON last_updated PARTITION BY account_id"""
+            )
+            rows = cur.fetchall()
+    except Exception as exc:
+        logger.error("refresh_tsm_config_in_d08: failed to read D08: %s", exc)
+        return 0
+
+    refreshed = 0
+    for row in rows:
+        ac_id, user_id, tsm_name = row[0], row[1], row[2]
+        if tsm_name not in tsm_by_name:
+            continue
+
+        tsm = dict(tsm_by_name[tsm_name])
+        tsm["user_id"] = user_id
+        tsm["current_balance"] = row[3] if row[3] is not None else tsm.get("starting_balance", 0)
+
+        _store_tsm_in_d08(ac_id, tsm)
+        refreshed += 1
+        logger.info("TSM config refreshed in D08 for account %s from '%s'", ac_id, tsm_name)
+
+    return refreshed
 
 
 def load_tsm_for_account(account_id: str, tsm_filename: str) -> dict | None:
@@ -455,7 +506,7 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
     for attempt in range(retries):
         try:
             with get_cursor() as cur:
-                cur.execute(sql, params)
+                qexecute(cur, sql, params)
             logger.info("TSM stored in D08: account=%s tsm=%s", account_id, tsm.get("name"))
             return True
         except psycopg2.Error as exc:

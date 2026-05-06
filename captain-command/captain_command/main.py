@@ -62,11 +62,14 @@ def verify_connections():
 
 
 def load_tsm_files():
-    """Load all TSM configuration files at startup."""
-    from captain_command.blocks.b4_tsm_manager import load_all_tsm_files
+    """Load all TSM configuration files at startup and refresh D08 rows."""
+    from captain_command.blocks.b4_tsm_manager import load_all_tsm_files, refresh_tsm_config_in_d08
     results = load_all_tsm_files()
     valid = sum(1 for r in results if r["validation"]["valid"])
     logger.info("TSM files loaded: %d/%d valid", valid, len(results))
+    refreshed = refresh_tsm_config_in_d08(results)
+    if refreshed:
+        logger.info("TSM config refreshed in D08 for %d account(s)", refreshed)
     return results
 
 
@@ -267,7 +270,7 @@ def _ensure_telegram_chat_id():
         logger.info("TELEGRAM_CHAT_ID not set — Telegram notifications will not be delivered")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     from captain_command.blocks.b7_notifications import save_user_preferences
 
     user_id = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
@@ -303,7 +306,7 @@ def _ensure_telegram_chat_id():
                 return
 
             # Insert updated row with chat_id
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d16_user_capital_silos (
                        user_id, status, role, starting_capital, total_capital,
                        accounts, max_simultaneous_positions, max_portfolio_risk_pct,
