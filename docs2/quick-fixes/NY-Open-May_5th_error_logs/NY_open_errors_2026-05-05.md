@@ -12,7 +12,7 @@ Session: **NY Open, Monday May 5 2026**
 | 2 | [Pseudotrader Crash — missing `requests`](#2-pseudotrader-crash--missing-requests-module) | HIGH | :white_check_mark: Resolved |
 | 3 | [Pseudotrader Rejections — zero sharpe_delta](#3-pseudotrader-rejections--zero-sharpe_delta) | MEDIUM | :white_check_mark: Resolved |
 | 4 | [UserStream returning all Nones](#4-userstream-returning-all-nones) | HIGH | :x: Open |
-| 5 | [Decimal → DOUBLE conversion error in B7](#5-decimal--double-conversion-error-in-b7-position-monitor) | HIGH | :x: Open |
+| 5 | [Decimal → DOUBLE conversion error in B7](#5-decimal--double-conversion-error-in-b7-position-monitor) | HIGH | :white_check_mark: Resolved |
 | 6 | [Remove ZB and ZN from NY session](#6-remove-zb-and-zn-from-ny-session) | MEDIUM | :x: Open |
 
 > Update the **Status** column to `:white_check_mark: Resolved` and add a one-line note after each fix lands.
