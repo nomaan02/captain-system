@@ -205,6 +205,49 @@ def process_manual_balance(ac_id: str, user_id: str, reported_balance: float):
 
 
 # ---------------------------------------------------------------------------
+# TSM config disk loader (authoritative source for topstep_params)
+# ---------------------------------------------------------------------------
+
+_TSM_PARAMS_CACHE: dict[str, dict] = {}
+
+
+def _load_topstep_params_from_config(tsm_name: str) -> dict:
+    """Read topstep_params from the TSM JSON config file matching *tsm_name*.
+
+    Uses a module-level cache so the disk is only read once per process
+    lifetime. Returns empty dict if no match found.
+    """
+    if not tsm_name:
+        return {}
+
+    if not _TSM_PARAMS_CACHE:
+        import os as _os
+        from captain_command.blocks.b4_tsm_manager import TSM_CONFIG_DIR
+        if _os.path.isdir(TSM_CONFIG_DIR):
+            for fn in sorted(_os.listdir(TSM_CONFIG_DIR)):
+                if not fn.endswith(".json"):
+                    continue
+                try:
+                    with open(_os.path.join(TSM_CONFIG_DIR, fn)) as _f:
+                        disk_tsm = json.load(_f)
+                    name = disk_tsm.get("name", "")
+                    raw_params = disk_tsm.get("topstep_params", {})
+                    if name and raw_params:
+                        _TSM_PARAMS_CACHE[name] = {
+                            k: Decimal(str(v))
+                            for k, v in raw_params.items()
+                            if not k.startswith("_") and isinstance(v, (int, float, str))
+                        }
+                except Exception:
+                    continue
+
+    result = _TSM_PARAMS_CACHE.get(tsm_name, {})
+    if result:
+        logger.debug("topstep_params from config file for '%s': %s", tsm_name, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # V3: SOD Topstep Parameter Computation
 # ---------------------------------------------------------------------------
 
@@ -227,13 +270,18 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
     """
     try:
         ts_state = parse_json_decimal(ac.get("topstep_state", "{}") or "{}", {})
-        # topstep_params live nested inside topstep_state JSON (written by
-        # _store_tsm_in_d08); the top-level D08 column was never populated.
-        ts_params_nested = ts_state.get("topstep_params", {})
-        if isinstance(ts_params_nested, str):
-            ts_params_nested = parse_json_decimal(ts_params_nested, {})
-        ts_params_col = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
-        ts_params = ts_params_nested if ts_params_nested else ts_params_col
+
+        # Authoritative topstep_params: read from TSM config file on disk,
+        # matched by TSM name.  D08 rows may hold stale copies from when the
+        # account was first linked; the JSON file is always the source of truth.
+        ts_params = _load_topstep_params_from_config(ac.get("tsm_name", ""))
+        if not ts_params:
+            ts_params_nested = ts_state.get("topstep_params", {})
+            if isinstance(ts_params_nested, str):
+                ts_params_nested = parse_json_decimal(ts_params_nested, {})
+            ts_params_col = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
+            ts_params = ts_params_nested if ts_params_nested else ts_params_col
+
         payout_rules = parse_json_decimal(ac.get("payout_rules", "{}") or "{}", {})
         fee_schedule = parse_json_decimal(ac.get("fee_schedule", "{}") or "{}", {})
 
@@ -248,6 +296,8 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         p = Decimal(str(ts_params.get("p", 0.005)))
         e = Decimal(str(ts_params.get("e", 0.01)))
         c = Decimal(str(ts_params.get("c", 0.5)))
+        logger.info("SOD params for %s: c=%s e=%s p=%s (ts_params keys: %s)",
+                     ac_id, c, e, p, list(ts_params.keys()))
 
         fees_by_inst = fee_schedule.get("fees_by_instrument", {})
         phi = Decimal("0")
