@@ -1095,9 +1095,31 @@ def compute_contracts(
             final = max(0, scaling_tier_micros - current_open_micros)
             cb_l0_blocked = (final == 0)
 
-    # Step 12: CB L1 — Preemptive halt: abs(L_t) + rho_j >= c * e * A
-    l_t = Decimal(str(abs(config.get("_intraday_cumulative_pnl", 0.0))))
-    l_halt = Decimal(str(c_param)) * Decimal(str(e_param)) * Decimal(str(user_capital))
+    # Step 12: CB L1 — Preemptive halt: abs(L_t_session) + rho_j >= L_halt_session
+    # Per-session (2026-05-06): cumulative pnl, l_halt, and basket pnl are
+    # all scoped to session_id to mirror production B5C behaviour after
+    # Phases 2-4. Falls back to global accumulators if the test harness
+    # didn't initialise per-session dicts (legacy replay callers).
+    cumulative_pnl_dict = config.get("_intraday_cumulative_pnl_per_session")
+    if cumulative_pnl_dict is None:
+        cumulative_pnl_dict = {session_id: config.get("_intraday_cumulative_pnl", 0.0)}
+    l_t_session_pnl = cumulative_pnl_dict.get(session_id, 0.0)
+    l_t = Decimal(str(abs(l_t_session_pnl)))
+
+    # Per-session L_halt: prefer SOD per-session map, then live computation.
+    session_block = config.get("_session_budget_map", {})  # injected by run_replay
+    if session_block.get(session_id) is not None:
+        l_halt = session_block[session_id]
+        if not isinstance(l_halt, Decimal):
+            l_halt = Decimal(str(l_halt))
+    else:
+        # Live formula: L_halt_session = c * e * A * share_session.
+        # Default cold-start equal share = 1/3.
+        share = config.get("_session_shares", {}).get(session_id, Decimal("0.3333333333"))
+        if not isinstance(share, Decimal):
+            share = Decimal(str(share))
+        l_halt = Decimal(str(c_param)) * Decimal(str(e_param)) * Decimal(str(user_capital)) * share
+
     rho_j = Decimal(final) * (Decimal(str(fallback_risk)) + Decimal(str(fee_per_trade)))
     cb_blocked = False
     if cb_enabled and final > 0 and (l_t + rho_j) >= l_halt:
@@ -1108,19 +1130,29 @@ def compute_contracts(
             final -= 1
         final = max(final, 0)
 
-    # Step 13: CB L2 — Budget exhaustion: n_t < N (b5c_circuit_breaker.py:292-321)
-    n_t = config.get("_intraday_trade_count", 0)
+    # Step 13: CB L2 — Budget exhaustion: n_t_session < N_session
+    trade_count_dict = config.get("_intraday_trade_count_per_session")
+    if trade_count_dict is None:
+        trade_count_dict = {session_id: config.get("_intraday_trade_count", 0)}
+    n_t = trade_count_dict.get(session_id, 0)
     p_param = topstep_params_cb.get("p", 0.005)
     mdd_val = config.get("mdd_limit", 4500.0)
     l2_denom = mdd_val * p_param + fee_per_trade
-    cb_l2_N = int((e_param * user_capital) / l2_denom) if l2_denom > 0 else 999
+    # Per-session N: floor((share * e * A) / denom)
+    share_for_n = config.get("_session_shares", {}).get(session_id, Decimal("0.3333333333"))
+    if not isinstance(share_for_n, Decimal):
+        share_for_n = Decimal(str(share_for_n))
+    cb_l2_N = (
+        int(float(share_for_n) * e_param * user_capital / l2_denom)
+        if l2_denom > 0 else 999
+    )
     cb_l2_blocked = False
     if cb_enabled and final > 0 and n_t >= cb_l2_N:
         cb_l2_blocked = True
         final = 0
 
     # Step 14: CB L3 — Basket expectancy: mu_b = r_bar + beta_b * L_b
-    #   (b5c_circuit_breaker.py:324-368)
+    # Per-session: basket key namespaced by "<session_id>:<model_m>".
     cb_l3_blocked = False
     mu_b = None
     n_obs = 0
@@ -1137,8 +1169,14 @@ def compute_contracts(
             # Significance gate: require p<0.05 AND n>=100
             if p_val > 0.05 or n_obs < 100:
                 beta_b = 0.0
-            l_b_raw = config.get("_intraday_basket_pnl", {}).get(_model_m, 0.0)
-            l_b = l_b_raw if isinstance(l_b_raw, Decimal) else Decimal(str(l_b_raw))
+            # Per-session basket P&L lookup. Old config callers may still
+            # provide flat _intraday_basket_pnl[m]; use the scoped key first.
+            basket_dict = config.get("_intraday_basket_pnl_per_session", {}).get(session_id, {})
+            l_b_raw = basket_dict.get(_model_m)
+            if l_b_raw is None:
+                # Legacy fallback
+                l_b_raw = config.get("_intraday_basket_pnl", {}).get(_model_m, 0.0)
+            l_b = l_b_raw if isinstance(l_b_raw, Decimal) else Decimal(str(l_b_raw or 0))
             mu_b = Decimal(str(r_bar)) + Decimal(str(beta_b)) * l_b
             if mu_b <= 0 and beta_b > 0:
                 cb_l3_blocked = True
@@ -1656,9 +1694,47 @@ def run_replay(
         active_assets = [a for a in ACTIVE_ASSETS if ASSET_SESSION_MAP[a] in sessions]
 
     # --- Intraday state accumulators for CB L1/L2/L3 ---
-    config["_intraday_cumulative_pnl"] = 0.0
+    # Per-session (2026-05-06): each session_id has its own L_t / n_t / l_b
+    # ledger so NY/LON/APAC are independent.
+    config["_intraday_cumulative_pnl"] = 0.0  # legacy/global (kept for back-compat)
     config["_intraday_trade_count"] = 0
     config["_intraday_basket_pnl"] = {}
+    config["_intraday_cumulative_pnl_per_session"] = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    config["_intraday_trade_count_per_session"] = {1: 0, 2: 0, 3: 0, 4: 0}
+    config["_intraday_basket_pnl_per_session"] = {1: {}, 2: {}, 3: {}, 4: {}}
+
+    # Per-session HMM shares (cold-start equal thirds; HMM-driven if D26 has data).
+    # Used by compute_contracts at L1/L2 when SOD per-session map is absent.
+    try:
+        from shared.sod_session_budget import session_budget_shares as _shares
+        _hmm_state = config.get("hmm_state")
+        _shares_dict = _shares(_hmm_state)
+        # Map session_id → share Decimal
+        _id_to_key = {1: "NY", 2: "LON", 3: "APAC", 4: "NY_PRE"}
+        config["_session_shares"] = {
+            sid: _shares_dict.get(_id_to_key.get(sid, "NY"), Decimal("0.3333333333"))
+            for sid in (1, 2, 3, 4)
+        }
+    except Exception as _exc:
+        logger.debug("replay: session_budget_shares unavailable (%s) — equal fallback", _exc)
+        config["_session_shares"] = {sid: Decimal("0.3333333333") for sid in (1, 2, 3, 4)}
+
+    # Per-session SOD L_halt map: live-computed at config-load time so
+    # compute_contracts has the same SOD state production B5C reads.
+    # Format: {session_id: Decimal_L_halt_for_session}
+    _user_cap = Decimal(str(config.get("user_capital", 150000.0)))
+    _topstep = config.get("topstep_params", {})
+    if isinstance(_topstep, str):
+        try:
+            _topstep = json.loads(_topstep) if _topstep else {}
+        except Exception:
+            _topstep = {}
+    _c = Decimal(str(_topstep.get("c", 1.0)))
+    _e = Decimal(str(_topstep.get("e", 0.01)))
+    config["_session_budget_map"] = {
+        sid: _c * _e * _user_cap * config["_session_shares"][sid]
+        for sid in (1, 2, 3, 4)
+    }
 
     # --- Regime probability (B2) — initial pass from strategy data ---
     config["regime_probs"] = {}
@@ -1836,7 +1912,7 @@ def run_replay(
         result["expected_edge"] = round(_expected_edge(result, config), 4)
         result["aim_modifier"] = asset_aim_mod
 
-        # Update intraday state for subsequent CB checks
+        # Update intraday state for subsequent CB checks (global + per-session)
         if result.get("direction", 0) != 0 and sizing.get("contracts", 0) > 0:
             config["_intraday_trade_count"] = (
                 config.get("_intraday_trade_count", 0) + 1
@@ -1849,6 +1925,23 @@ def run_replay(
             _bpnl = config.get("_intraday_basket_pnl", {})
             _bpnl[_m] = _bpnl.get(_m, 0.0) + result["total_pnl"]
             config["_intraday_basket_pnl"] = _bpnl
+
+            # Per-session (2026-05-06): scope by the asset's session_id so
+            # each session's CB layers see only its own L_t / n_t / l_b.
+            _sid = SESSION_ID_MAP.get(session_type, 1)
+            ps_pnl = config.get("_intraday_cumulative_pnl_per_session", {})
+            ps_pnl[_sid] = ps_pnl.get(_sid, 0.0) + result["total_pnl"]
+            config["_intraday_cumulative_pnl_per_session"] = ps_pnl
+
+            ps_n = config.get("_intraday_trade_count_per_session", {})
+            ps_n[_sid] = ps_n.get(_sid, 0) + 1
+            config["_intraday_trade_count_per_session"] = ps_n
+
+            ps_basket = config.get("_intraday_basket_pnl_per_session", {})
+            sess_basket = ps_basket.get(_sid, {})
+            sess_basket[_m] = sess_basket.get(_m, 0.0) + result["total_pnl"]
+            ps_basket[_sid] = sess_basket
+            config["_intraday_basket_pnl_per_session"] = ps_basket
 
         results.append(result)
 
@@ -2034,10 +2127,41 @@ def run_whatif(
             config["regime_probs"][_asset] = _probs
             config["regime_uncertain"][_asset] = _unc
 
-    # Initialize intraday state accumulators for CB L1/L2/L3
-    config["_intraday_cumulative_pnl"] = 0.0
+    # Initialize intraday state accumulators for CB L1/L2/L3.
+    # Per-session (2026-05-06): mirror run_replay so what-if CB behaviour
+    # matches main replay byte-for-byte.
+    config["_intraday_cumulative_pnl"] = 0.0  # legacy/global
     config["_intraday_trade_count"] = 0
     config["_intraday_basket_pnl"] = {}
+    config["_intraday_cumulative_pnl_per_session"] = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    config["_intraday_trade_count_per_session"] = {1: 0, 2: 0, 3: 0, 4: 0}
+    config["_intraday_basket_pnl_per_session"] = {1: {}, 2: {}, 3: {}, 4: {}}
+
+    try:
+        from shared.sod_session_budget import session_budget_shares as _shares
+        _hmm_state = config.get("hmm_state")
+        _shares_dict = _shares(_hmm_state)
+        _id_to_key = {1: "NY", 2: "LON", 3: "APAC", 4: "NY_PRE"}
+        config["_session_shares"] = {
+            sid: _shares_dict.get(_id_to_key.get(sid, "NY"), Decimal("0.3333333333"))
+            for sid in (1, 2, 3, 4)
+        }
+    except Exception:
+        config["_session_shares"] = {sid: Decimal("0.3333333333") for sid in (1, 2, 3, 4)}
+
+    _user_cap_w = Decimal(str(config.get("user_capital", 150000.0)))
+    _topstep_w = config.get("topstep_params", {})
+    if isinstance(_topstep_w, str):
+        try:
+            _topstep_w = json.loads(_topstep_w) if _topstep_w else {}
+        except Exception:
+            _topstep_w = {}
+    _c_w = Decimal(str(_topstep_w.get("c", 1.0)))
+    _e_w = Decimal(str(_topstep_w.get("e", 0.01)))
+    config["_session_budget_map"] = {
+        sid: _c_w * _e_w * _user_cap_w * config["_session_shares"][sid]
+        for sid in (1, 2, 3, 4)
+    }
 
     # Extract AIM modifiers from original results for what-if (#11)
     aim_modifiers = {}
@@ -2105,7 +2229,7 @@ def run_whatif(
         result["expected_edge"] = round(_expected_edge(result, config), 4)
         result["aim_modifier"] = _aim_mod
 
-        # Update intraday state for subsequent CB checks
+        # Update intraday state for subsequent CB checks (global + per-session)
         if result.get("direction", 0) != 0 and sizing.get("contracts", 0) > 0:
             config["_intraday_trade_count"] = (
                 config.get("_intraday_trade_count", 0) + 1
@@ -2118,6 +2242,23 @@ def run_whatif(
             _bpnl = config.get("_intraday_basket_pnl", {})
             _bpnl[_m] = _bpnl.get(_m, 0.0) + result["total_pnl"]
             config["_intraday_basket_pnl"] = _bpnl
+
+            # Per-session (2026-05-06): scope by the asset's session_id so
+            # each session's CB layers see only its own L_t / n_t / l_b.
+            _sid = SESSION_ID_MAP.get(session_type, 1)
+            ps_pnl = config.get("_intraday_cumulative_pnl_per_session", {})
+            ps_pnl[_sid] = ps_pnl.get(_sid, 0.0) + result["total_pnl"]
+            config["_intraday_cumulative_pnl_per_session"] = ps_pnl
+
+            ps_n = config.get("_intraday_trade_count_per_session", {})
+            ps_n[_sid] = ps_n.get(_sid, 0) + 1
+            config["_intraday_trade_count_per_session"] = ps_n
+
+            ps_basket = config.get("_intraday_basket_pnl_per_session", {})
+            sess_basket = ps_basket.get(_sid, {})
+            sess_basket[_m] = sess_basket.get(_m, 0.0) + result["total_pnl"]
+            ps_basket[_sid] = sess_basket
+            config["_intraday_basket_pnl_per_session"] = ps_basket
 
         whatif_results.append(result)
 
