@@ -161,6 +161,69 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-06 — `cat >> ~/.config/fish/config.fish <<'HELPERS'` fails in fish
+
+**Original (broken):**
+```fish
+cat >> ~/.config/fish/config.fish <<'HELPERS'
+type -q dco; or function dco
+    docker compose -f docker-compose.yml -f docker-compose.local.yml $argv
+end
+HELPERS
+```
+
+**Error observed:**
+```
+fish: Expected a string, but found a redirection
+cat >> ~/.config/fish/config.fish <<'HELPERS'
+                                   ^
+```
+
+**Corrected (use fish's built-in `funcsave` — auto-loads on every new shell):**
+```fish
+function dco
+    docker compose -f docker-compose.yml -f docker-compose.local.yml $argv
+end
+funcsave dco
+
+function cap-run
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml \
+        exec -T -e PYTHONPATH=/app captain-offline \
+        python /captain/scripts/$script $rest
+end
+funcsave cap-run
+
+function online-run
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml \
+        exec -T -e PYTHONPATH=/app captain-online \
+        python3 /app/$script $rest
+end
+funcsave online-run
+
+function cmd-run
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml \
+        exec -T -e PYTHONPATH=/app captain-command \
+        python3 /app/$script $rest
+end
+funcsave cmd-run
+```
+
+**Reason:** fish does not support bash-style heredocs (`<<'TAG' ... TAG`). Fish has its own
+persistence mechanism — `funcsave <name>` writes the function to
+`~/.config/fish/functions/<name>.fish`, which fish auto-loads on every shell startup. This
+is strictly better than appending to `config.fish` because each function lives in its own
+file, can be inspected/edited individually with `funced <name>`, and doesn't grow `config.fish`
+into an unmaintainable blob. NEVER emit bash heredocs in fish-targeted instructions.
+
+If a multi-line file write is genuinely required in fish (e.g. for a non-function config block),
+either drop into bash explicitly with `bash -c '...'`, or use `printf '%s\n' line1 line2 ... >> file`.
+
 ### 2026-05-05 — `psql: command not found` inside `captain-system-questdb-1` container
 
 **Original (broken):**
