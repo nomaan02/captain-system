@@ -227,7 +227,13 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
     """
     try:
         ts_state = parse_json_decimal(ac.get("topstep_state", "{}") or "{}", {})
-        ts_params = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
+        # topstep_params live nested inside topstep_state JSON (written by
+        # _store_tsm_in_d08); the top-level D08 column was never populated.
+        ts_params_nested = ts_state.get("topstep_params", {})
+        if isinstance(ts_params_nested, str):
+            ts_params_nested = parse_json_decimal(ts_params_nested, {})
+        ts_params_col = parse_json_decimal(ac.get("topstep_params", "{}") or "{}", {})
+        ts_params = ts_params_nested if ts_params_nested else ts_params_col
         payout_rules = parse_json_decimal(ac.get("payout_rules", "{}") or "{}", {})
         fee_schedule = parse_json_decimal(ac.get("fee_schedule", "{}") or "{}", {})
 

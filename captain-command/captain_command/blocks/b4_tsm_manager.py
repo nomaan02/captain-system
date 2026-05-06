@@ -421,6 +421,7 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
         topstep_opt,
         tsm.get("scaling_plan_active", False),
         topstep_state,
+        dumps_decimal(tsm.get("topstep_params", {})),
         dumps_decimal(tsm.get("fee_schedule", {})),
         dumps_decimal(tsm.get("payout_rules", {})),
     )
@@ -433,7 +434,8 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                  commission_per_contract, overnight_allowed,
                  trading_hours, risk_goal,
                  topstep_optimisation, scaling_plan_active,
-                 topstep_state, fee_schedule, payout_rules,
+                 topstep_state, topstep_params,
+                 fee_schedule, payout_rules,
                  last_updated
              ) VALUES(
                  %s, %s, %s, %s,
@@ -443,7 +445,8 @@ def _store_tsm_in_d08(account_id: str, tsm: dict, retries: int = 3):
                  %s, %s,
                  %s, %s,
                  %s, %s,
-                 %s, %s, %s,
+                 %s, %s,
+                 %s, %s,
                  now()
              )"""
 
