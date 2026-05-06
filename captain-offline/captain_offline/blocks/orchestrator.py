@@ -57,6 +57,8 @@ def _stream_numeric_float(v) -> float:
 
 # Pseudotrader gate: skip replay when max absolute param change < epsilon
 PSEUDOTRADER_EPSILON = 1e-4
+# Cold-start: auto-approve updates when asset has fewer than this many D03 trades
+COLD_START_MIN_TRADES = 5
 
 
 class OfflineOrchestrator:
@@ -91,7 +93,25 @@ class OfflineOrchestrator:
             # path). The legacy ``run_signal_replay_comparison`` shim still
             # exists for any external caller; the gate uses the typed
             # entry point.
-            from captain_offline.blocks.b3_pseudotrader import run_pseudotrader
+            from captain_offline.blocks.b3_pseudotrader import (
+                run_pseudotrader, fetch_d03_trade_outcomes,
+            )
+
+            # Cold-start bypass: if the asset has insufficient D03 history,
+            # the pseudotrader cannot produce a meaningful counterfactual.
+            # Auto-approve to avoid freezing all learning on day 1.
+            user_id = os.environ.get("BOOTSTRAP_USER_ID", "primary_user")
+            d03_count = len(fetch_d03_trade_outcomes(user_id, asset_id, limit=COLD_START_MIN_TRADES))
+            if d03_count < COLD_START_MIN_TRADES:
+                logger.info("Pseudotrader SKIP (cold-start) for %s [%s]: "
+                            "only %d D03 trades (need %d)",
+                            asset_id, update_type, d03_count, COLD_START_MIN_TRADES)
+                self.plog.info(
+                    f"Pseudotrader SKIP (cold-start) {update_type} for {asset_id} "
+                    f"— {d03_count}/{COLD_START_MIN_TRADES} trades",
+                    source="b3_pseudotrader",
+                )
+                return True
 
             proposed_params: dict = {}
             if proposed_aim_weights is not None:
