@@ -1059,3 +1059,124 @@ def table_name_of(ddl: str) -> str:
     """Extract the table name from a CREATE TABLE IF NOT EXISTS statement."""
     head = ddl.strip().split("(", 1)[0]
     return head.strip().split()[-1]
+
+
+# --------------------------------------------------------------------- #
+# COLUMN_TYPES — auto-derived column type map for typed-INSERT helper   #
+# (qexecute in shared/questdb_client.py). Single source of truth: the    #
+# CANONICAL_DDLS strings above + every CANONICAL_MIGRATIONS entry that   #
+# changes a column type.                                                 #
+# --------------------------------------------------------------------- #
+
+import re
+
+# Match a column line inside a CREATE TABLE body. Groups:
+#   1 = column name (lowercase identifier)
+#   2 = column type (DECIMAL(p,s) | DOUBLE | FLOAT | INT | LONG | SHORT |
+#                    BYTE | BOOLEAN | STRING | VARCHAR | SYMBOL | CHAR |
+#                    TIMESTAMP | DATE | UUID | GEOHASH | IPv4)
+# The trailing column constraints (NOT NULL etc.) and trailing comma are
+# tolerated. Comment lines (starting with --) are ignored upstream.
+_COLUMN_LINE_RE = re.compile(
+    r"^\s+([a-z_][a-z0-9_]*)\s+"
+    r"(DECIMAL\s*\(\s*\d+\s*,\s*\d+\s*\)"
+    r"|DOUBLE|FLOAT|INT|LONG|SHORT|BYTE|BOOLEAN"
+    r"|STRING|VARCHAR|SYMBOL|CHAR|TIMESTAMP|DATE|UUID|GEOHASH|IPv4)\b",
+    re.IGNORECASE,
+)
+
+# Match `ALTER TABLE <table> ALTER COLUMN <col> TYPE <type>` from
+# CANONICAL_MIGRATIONS. Used to overlay type changes on top of the base DDL.
+_ALTER_TYPE_RE = re.compile(
+    r"ALTER\s+TABLE\s+([a-z0-9_]+)\s+ALTER\s+COLUMN\s+([a-z_][a-z0-9_]*)\s+"
+    r"TYPE\s+(DECIMAL\s*\(\s*\d+\s*,\s*\d+\s*\)|DOUBLE|FLOAT|INT|LONG|SHORT|BYTE"
+    r"|BOOLEAN|STRING|VARCHAR|SYMBOL|CHAR|TIMESTAMP|DATE|UUID|GEOHASH|IPv4)",
+    re.IGNORECASE,
+)
+
+# Match `ALTER TABLE <table> ADD COLUMN <col> <type>` (additive migrations).
+_ADD_COLUMN_RE = re.compile(
+    r"ALTER\s+TABLE\s+([a-z0-9_]+)\s+ADD\s+COLUMN\s+([a-z_][a-z0-9_]*)\s+"
+    r"(DECIMAL\s*\(\s*\d+\s*,\s*\d+\s*\)|DOUBLE|FLOAT|INT|LONG|SHORT|BYTE"
+    r"|BOOLEAN|STRING|VARCHAR|SYMBOL|CHAR|TIMESTAMP|DATE|UUID|GEOHASH|IPv4)",
+    re.IGNORECASE,
+)
+
+
+def _normalise_type(raw: str) -> str:
+    """Canonicalise a column type string: collapse whitespace, uppercase keyword.
+
+    DECIMAL(18, 2) and DECIMAL(18,2) and decimal( 18 , 2 ) all become DECIMAL(18, 2).
+    Bare types (DOUBLE, INT, ...) become uppercase.
+    """
+    raw = raw.strip()
+    if raw.upper().startswith("DECIMAL"):
+        m = re.match(
+            r"DECIMAL\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)", raw, re.IGNORECASE,
+        )
+        if m:
+            return f"DECIMAL({m.group(1)}, {m.group(2)})"
+    return raw.upper()
+
+
+def _parse_table_columns(ddl: str) -> dict[str, str]:
+    """Extract {column_name: column_type} from a CREATE TABLE DDL string.
+
+    Reads the block between the opening `(` of the column list and the
+    closing `)` before WAL/PARTITION clauses. Skips comment-only lines.
+    Returns column types canonicalised via _normalise_type.
+    """
+    cols: dict[str, str] = {}
+    in_body = False
+    paren_depth = 0
+    body_lines: list[str] = []
+    for line in ddl.splitlines():
+        if not in_body:
+            if "CREATE TABLE" in line.upper() and "(" in line:
+                in_body = True
+                idx = line.index("(")
+                paren_depth = line[idx:].count("(") - line[idx:].count(")")
+                body_lines.append(line[idx + 1:])
+                continue
+        else:
+            paren_depth += line.count("(") - line.count(")")
+            body_lines.append(line)
+            if paren_depth <= 0:
+                break
+    for body_line in body_lines:
+        m = _COLUMN_LINE_RE.match(body_line)
+        if not m:
+            continue
+        col = m.group(1).lower()
+        typ = _normalise_type(m.group(2))
+        cols[col] = typ
+    return cols
+
+
+def _build_column_types() -> dict[str, dict[str, str]]:
+    """Build {table: {column: type}} from CANONICAL_DDLS, then apply
+    CANONICAL_MIGRATIONS in order so ALTER COLUMN ... TYPE and ADD COLUMN
+    statements are reflected.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for ddl in CANONICAL_DDLS:
+        table = table_name_of(ddl).lower()
+        cols = _parse_table_columns(ddl)
+        if cols:
+            out[table] = cols
+    for _migration_id, migration_sql in CANONICAL_MIGRATIONS:
+        m = _ALTER_TYPE_RE.search(migration_sql)
+        if m:
+            table, col, new_type = m.group(1).lower(), m.group(2).lower(), _normalise_type(m.group(3))
+            if table in out:
+                out[table][col] = new_type
+            continue
+        m = _ADD_COLUMN_RE.search(migration_sql)
+        if m:
+            table, col, new_type = m.group(1).lower(), m.group(2).lower(), _normalise_type(m.group(3))
+            if table in out:
+                out[table][col] = new_type
+    return out
+
+
+COLUMN_TYPES: dict[str, dict[str, str]] = _build_column_types()

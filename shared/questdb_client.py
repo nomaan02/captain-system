@@ -8,13 +8,17 @@ except ImportError:
 
 import logging
 import os
+import re
 import threading
 import time
+from datetime import datetime
 from decimal import Decimal
 
 import psycopg2
 import psycopg2.extensions
 from contextlib import contextmanager
+
+from shared.canonical_schemas import COLUMN_TYPES
 
 # QuestDB maps psycopg2's NUMERIC wire type to DOUBLE, then rejects
 # DOUBLE→DECIMAL casts on assignment.  Quoted-string DECIMAL literals
@@ -69,6 +73,148 @@ psycopg2.extensions.register_adapter(
 psycopg2.extensions.register_adapter(
     bool, lambda b: psycopg2.extensions.AsIs("true" if b else "false")
 )
+
+
+# ------------------------------------------------------------------------- #
+# Typed-INSERT consumer-boundary helper (May 2026, fixes Issue 5 bug class) #
+# ------------------------------------------------------------------------- #
+#
+# The global Decimal adapter above renders every Decimal as
+# cast('<v>' as DECIMAL(p,s)) — correct for DECIMAL columns, FATAL for
+# DOUBLE / SYMBOL / INT columns (QuestDB rejects DECIMAL→DOUBLE casts on
+# assignment). qexecute() looks up each column's type from
+# shared.canonical_schemas.COLUMN_TYPES and coerces Decimal-typed params
+# to the right Python type BEFORE psycopg2 sees them.
+#
+# Usage:
+#   qexecute(cur, "INSERT INTO p3_d03_trade_outcome_log (col1, col2, ...) VALUES (%s, %s, ...)", (v1, v2, ...))
+#
+# For dynamic SQL (f-strings) where columns can't be auto-parsed, pass:
+#   qexecute(cur, sql, params, table="p3_d03_trade_outcome_log", columns=["col1", "col2", ...])
+#
+# Returns the cursor's rowcount — same as cur.execute().
+
+_INSERT_RE = re.compile(
+    r"INSERT\s+INTO\s+(p[23]_[a-z0-9_]+)\s*\(([^)]+)\)\s*VALUES",
+    re.IGNORECASE | re.DOTALL,
+)
+_UPDATE_RE = re.compile(
+    r"UPDATE\s+(p[23]_[a-z0-9_]+)\s+SET\s+(.+?)(?:\s+WHERE|\s*$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_table_columns_from_sql(sql: str) -> tuple[str, list[str]] | None:
+    """Extract (table_name, [columns]) from an INSERT statement.
+
+    Returns None for non-INSERT statements or unparseable SQL — caller
+    falls through to default behaviour. Column names are stripped of
+    leading/trailing whitespace and newlines so multi-line INSERT bodies
+    parse correctly.
+    """
+    m = _INSERT_RE.search(sql)
+    if not m:
+        return None
+    table = m.group(1).lower()
+    cols = [c.strip() for c in m.group(2).split(",") if c.strip()]
+    return table, cols
+
+
+def _coerce_for_column(value: object, col_type: str) -> object:
+    """Coerce a single param to the right Python type for col_type.
+
+    DECIMAL columns: leave Decimal as-is (existing global adapter handles it).
+    DOUBLE / FLOAT:   Decimal -> float; None stays None.
+    SYMBOL / VARCHAR / STRING / CHAR: Decimal -> str; None stays None.
+    INT / LONG / SHORT / BYTE:       Decimal -> int; None stays None.
+    BOOLEAN:          Decimal/numeric -> bool; None stays None.
+    TIMESTAMP / DATE: datetime -> isoformat string; passthrough otherwise.
+    UUID / GEOHASH / IPv4: passthrough.
+    """
+    if value is None:
+        return None
+    if col_type.startswith("DECIMAL"):
+        return value
+    if col_type in ("DOUBLE", "FLOAT"):
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
+    if col_type in ("SYMBOL", "VARCHAR", "STRING", "CHAR"):
+        if isinstance(value, Decimal):
+            return str(value)
+        return value
+    if col_type in ("INT", "LONG", "SHORT", "BYTE"):
+        if isinstance(value, Decimal):
+            return int(value)
+        return value
+    if col_type == "BOOLEAN":
+        if isinstance(value, Decimal):
+            return bool(int(value))
+        return value
+    if col_type in ("TIMESTAMP", "DATE"):
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return value
+    return value  # unknown column type — passthrough (safer than crashing)
+
+
+def qexecute(
+    cur,
+    sql: str,
+    params: tuple = (),
+    *,
+    table: str | None = None,
+    columns: list[str] | None = None,
+) -> int:
+    """psycopg2 cur.execute() wrapper that coerces each param to its column's type.
+
+    For INSERT statements into p3_*/p2_* tables:
+      - Parses the destination table + column list from the SQL (or uses
+        the explicit ``table=`` / ``columns=`` overrides for f-string SQLs).
+      - Looks up each column's type in ``shared.canonical_schemas.COLUMN_TYPES``.
+      - Coerces each param to the right Python type via ``_coerce_for_column``.
+      - Calls ``cur.execute(sql, coerced_params)`` and returns rowcount.
+
+    For non-INSERT statements (SELECT, DELETE, UPDATE, DDL): pass-through to
+    ``cur.execute()`` with no coercion — params for filter clauses are not
+    column-write targets. The ``_UPDATE_RE`` regex is defined for future use
+    when production UPDATE sites appear (Phase 0B inventory found 0 today).
+    """
+    if not isinstance(sql, str):
+        cur.execute(sql, params)
+        return getattr(cur, "rowcount", 0)
+
+    parsed_table = None
+    parsed_cols = None
+    if columns is not None:
+        parsed_table = table
+        parsed_cols = columns
+    else:
+        parse = _parse_table_columns_from_sql(sql)
+        if parse is not None:
+            parsed_table, parsed_cols = parse
+
+    if parsed_table is None or parsed_cols is None:
+        cur.execute(sql, params)
+        return getattr(cur, "rowcount", 0)
+
+    type_map = COLUMN_TYPES.get(parsed_table)
+    if type_map is None:
+        cur.execute(sql, params)
+        return getattr(cur, "rowcount", 0)
+
+    coerced = list(params)
+    for i, col in enumerate(parsed_cols):
+        if i >= len(coerced):
+            break  # SQL has more cols than params (NULL or now() literals)
+        col_type = type_map.get(col)
+        if col_type is None:
+            continue
+        coerced[i] = _coerce_for_column(coerced[i], col_type)
+
+    cur.execute(sql, tuple(coerced))
+    return getattr(cur, "rowcount", 0)
+
 
 logger = logging.getLogger(__name__)
 
@@ -240,9 +386,12 @@ def update_d00_fields(asset_id: str, updates: dict, cur=None) -> None:
         cols = D00_COLUMNS + ["last_updated"]
         placeholders = ", ".join(["%s"] * len(D00_COLUMNS) + ["now()"])
         col_names = ", ".join(cols)
-        c.execute(
+        qexecute(
+            c,
             f"INSERT INTO p3_d00_asset_universe ({col_names}) VALUES ({placeholders})",
             tuple(current[k] for k in D00_COLUMNS),
+            table="p3_d00_asset_universe",
+            columns=list(D00_COLUMNS),
         )
 
     if cur is not None:
