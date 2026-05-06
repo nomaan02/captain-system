@@ -171,7 +171,11 @@ def _resolve_shadow(shadow: dict, outcome: str, exit_price: float):
         "slippage": None,
         "outcome": outcome,
         "regime_at_entry": shadow.get("regime_state"),
-        "aim_modifier_at_entry": shadow.get("combined_modifier"),
+        # `aim_modifier_at_entry` lands in P3-D03 as a DOUBLE column. The global
+        # psycopg2 Decimal adapter would render Decimal as cast('<v>' as DECIMAL(p,s))
+        # which QuestDB rejects on assignment to DOUBLE. Coerce to float at this
+        # producer boundary. Mirrors the Issue 5 hotfix in _write_trade_outcome.
+        "aim_modifier_at_entry": to_float(shadow.get("combined_modifier"), default=1.0),
         "aim_breakdown_at_entry": shadow.get("aim_breakdown"),
         "session": shadow.get("session"),
         "theoretical": True,  # Category B blocks (CB params) must ignore this

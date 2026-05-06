@@ -34,7 +34,7 @@ from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS, publish_to_stream, STREAM_TRADE_OUTCOMES
 from shared.constants import TRADE_OUTCOME_VALUES, now_et
 from shared.contract_resolver import resolve_contract_id
@@ -42,7 +42,7 @@ from shared.topstep_stream import quote_cache
 from shared.vix_provider import get_latest_vix_close, get_trailing_vix_closes
 from shared.json_helpers import parse_json, parse_json_decimal
 from shared.decimal_json import dumps_decimal
-from shared.decimal_boundary import as_money as _money_d, as_money_or_none
+from shared.decimal_boundary import as_money as _money_d, as_money_or_none, to_float
 
 logger = logging.getLogger(__name__)
 
@@ -529,6 +529,12 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
     model_m = _get_locked_m(asset)
     sig_id = signal_id if signal_id else f"LEGACY-{uuid.uuid4()}"
 
+    # `aim_modifier_at_entry` is a DOUBLE column (per canonical_schemas) — the
+    # global psycopg2 Decimal adapter would render it as cast('<v>' as DECIMAL(p,s))
+    # which QuestDB rejects on assignment to DOUBLE. Coerce to float at this
+    # producer boundary. Issue 5 (NY-open 2026-05-05) crash site.
+    aim_modifier = to_float(aim_modifier, default=1.0)
+
     # Boundary: coerce every monetary field to Decimal so the global
     # psycopg2 adapter (shared.questdb_client) wraps each as
     # `cast('<v>' as DECIMAL(p,s))`. Without this, upstream type leaks
@@ -547,7 +553,8 @@ def _write_trade_outcome(trade_id, user_id, account_id, asset, direction,
 
     with get_cursor() as cur:
         exit_ts = now_et().isoformat()
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, signal_id, user_id, account_id, asset, direction,
                 entry_price, signal_entry_price, exit_price, contracts,
@@ -661,7 +668,12 @@ def _update_capital_and_cb(
 
         # ── Write both back-to-back ──
         if d16_row:
-            cur.execute(
+            # D16 DOUBLE columns — defensive float coercion in case the
+            # upstream _load_user_silo regresses to Decimal-typed values.
+            # The global Decimal psycopg2 adapter renders DECIMAL(p,s) which
+            # QuestDB rejects for DOUBLE assignment.
+            qexecute(
+                cur,
                 """INSERT INTO p3_d16_user_capital_silos (
                        user_id, status, role, starting_capital, total_capital, accounts,
                        max_simultaneous_positions, max_portfolio_risk_pct,
@@ -670,11 +682,15 @@ def _update_capital_and_cb(
                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
                 (user_id, d16_row[0], d16_row[1], d16_row[2],
                  new_capital, d16_accounts,
-                 d16_row[5], d16_row[6], d16_row[7], d16_row[8],
+                 d16_row[5],
+                 to_float(d16_row[6], default=0.0),
+                 to_float(d16_row[7], default=0.0),
+                 to_float(d16_row[8], default=0.0),
                  d16_row[9], d16_row[10], d16_row[11]),
             )
 
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d23_circuit_breaker_intraday
                (account_id, session_id, l_t, n_t, l_b, n_b,
                 effective_l_halt, effective_e_exposure, session_opened_at,
