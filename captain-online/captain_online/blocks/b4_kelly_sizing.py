@@ -204,7 +204,11 @@ def run_kelly_sizing(
             tsm_cap = _compute_tsm_cap(tsm, category, strategy_sl, point_value)
 
             # V3: Topstep daily cap and scaling cap
-            topstep_daily_cap = _compute_topstep_daily_cap(tsm, strategy_sl, point_value)
+            # Per-session (2026-05-06): cap derived from session's SOD share of E
+            # so NY/LON/APAC each have their own contract budget.
+            topstep_daily_cap = _compute_topstep_daily_cap(
+                tsm, strategy_sl, point_value, session_id=session_id,
+            )
             current_open_micros = tsm.get("current_open_micros", 0)
             scaling_cap = _compute_scaling_cap(tsm, current_open_micros)
 
@@ -409,21 +413,42 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
     return 999
 
 
-def _compute_topstep_daily_cap(tsm: dict, strategy_sl: float = 4.0, point_value: float = 50.0) -> int:
-    """V3: Topstep daily contract cap from SOD exposure budget E.
+def _compute_topstep_daily_cap(
+    tsm: dict,
+    strategy_sl: float = 4.0,
+    point_value: float = 50.0,
+    session_id: int = 0,
+) -> int:
+    """V3: Topstep daily contract cap from SOD exposure budget E (per session).
 
-    E = e * A (computed by reconciliation SOD).
-    Cap = floor(E / (strategy_sl * point_value))
+    PER-SESSION (2026-05-06): when ``session_id`` is provided, reads the
+    session-scoped ``E_daily_exposure`` from ``computed_sod.session.<KEY>.E``
+    instead of the day-total. This means NY's contract cap is sized off NY's
+    SOD allocation (~$500 with c=1.0 + equal cold-start shares), not the
+    full day's $1500 — giving each session its own per-session contract limit.
+
+    Cap = floor(E_session / (strategy_sl * point_value))
+
+    Lookup chain:
+      1. computed_sod.session.<KEY>.E_daily_exposure (Phase 2)
+      2. computed_sod.E_daily_exposure (legacy flat)
+      3. topstep_params.daily_contract_cap (static fallback)
     """
     if not tsm.get("topstep_optimisation", False):
         return 999
+    from shared.sod_session_budget import get_session_e_exposure
+
     topstep_state = parse_json(tsm.get("topstep_state"), {})
     computed_sod = topstep_state.get("computed_sod", {})
-    # `E` may be a Decimal-as-string after Phase A's dumps_decimal/loads_decimal
-    # round-trip on the topstep_state JSON. Coerce to float for sizing math.
-    E = _to_float(computed_sod.get("E_daily_exposure", 0))
+
+    # Per-session E lookup (falls back to legacy flat scalar internally).
+    if session_id and session_id > 0:
+        E = _to_float(get_session_e_exposure(computed_sod, session_id))
+    else:
+        E = _to_float(computed_sod.get("E_daily_exposure", 0))
+
     if E <= 0:
-        # Fallback to static cap
+        # Static fallback when SOD has never run.
         topstep_params = parse_json(tsm.get("topstep_params"), {})
         return topstep_params.get("daily_contract_cap", 999)
     risk_per_trade = strategy_sl * point_value
