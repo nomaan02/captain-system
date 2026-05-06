@@ -572,16 +572,21 @@ _AIM_FEATURE_CONNECTED = {
 
 
 def _get_aim_states(user_id: str) -> list[dict]:
-    """Fetch AIM states from P3-D01 (latest row per aim_id+asset_id).
+    """Fetch latest AIM state per (aim_id, asset_id) from P3-D01.
 
-    QuestDB LATEST ON PARTITION BY only works with SYMBOL columns, and
-    aim_id is INT.  So we fetch a limited number of recent rows ordered
-    by last_updated DESC and deduplicate in Python — keeping the first
-    (most recent) row per (aim_id, asset_id) pair.
+    Uses ``LATEST ON last_updated PARTITION BY aim_id, asset_id`` — the
+    canonical pattern used everywhere else in the codebase
+    (b1_aim_lifecycle._load_aim_states, b1_dma_update, b1_drift_detection,
+    b1_hdwm_diversity, bootstrap.py, verify_questdb_state.py, api.py).
 
-    We LIMIT the scan to avoid OOM on large tables (8M+ rows).  With
-    ~160 (aim_id, asset_id) combinations and frequent updates, the most
-    recent 5000 rows are more than enough to cover all combinations.
+    Earlier this function used ``ORDER BY last_updated DESC LIMIT 5000``
+    plus a Python dedup. That silently dropped (aim_id, asset_id) pairs
+    whose latest write fell outside the most-recent 5000 rows. On a
+    populated D01 (~520K rows dominated by AIM-13/16 writes), Tier 1
+    AIMs (4, 6, 8, 11, 12, 15 — the lowest-volume writers) were
+    completely missing from the response, and the GUI rendered them as
+    "INACTIVE" via its empty-state fallback even though the database
+    held ACTIVE rows for them.
     """
     try:
         with get_cursor() as cur:
@@ -589,15 +594,11 @@ def _get_aim_states(user_id: str) -> list[dict]:
                 """SELECT aim_id, asset_id, status, warmup_progress,
                           current_modifier
                    FROM p3_d01_aim_model_states
-                   ORDER BY last_updated DESC
-                   LIMIT 5000"""
+                   LATEST ON last_updated PARTITION BY aim_id, asset_id
+                   ORDER BY aim_id, asset_id"""
             )
-            seen: dict[tuple, dict] = {}
-            for r in cur.fetchall():
-                key = (r[0], r[1])
-                if key in seen:
-                    continue  # already have a newer row
-                seen[key] = {
+            return [
+                {
                     "aim_id": r[0],
                     "aim_name": _AIM_NAMES.get(r[0], f"AIM-{r[0]:02d}"),
                     "asset_id": r[1],
@@ -606,7 +607,8 @@ def _get_aim_states(user_id: str) -> list[dict]:
                     "meta_weight": None,
                     "modifier": r[4],
                 }
-            return sorted(seen.values(), key=lambda x: (x["aim_id"], x["asset_id"]))
+                for r in cur.fetchall()
+            ]
     except Exception as exc:
         logger.error("AIM states query failed: %s", exc, exc_info=True)
     return []
