@@ -801,6 +801,63 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                 daily_used = Decimal(str(r[5] or 0))
                 daily_pct = (daily_used / mll * Decimal(100)) if mll > 0 else Decimal("0")
 
+                # Per-session budget block (2026-05-06): show NY/LON/APAC
+                # effective_l_halt, l_t, n_t for each account. Best-effort —
+                # if any of these queries fail, omit per_session and the
+                # frontend falls back to its existing single-budget view.
+                per_session = {}
+                try:
+                    cur.execute(
+                        """SELECT session_id, l_t, n_t,
+                                  effective_l_halt, effective_e_exposure
+                           FROM p3_d23_circuit_breaker_intraday
+                           WHERE account_id = %s
+                           LATEST ON last_updated PARTITION BY account_id, session_id""",
+                        (account_id,),
+                    )
+                    sid_to_key = {1: "NY", 2: "LON", 3: "APAC", 4: "NY_PRE"}
+                    for sess_row in cur.fetchall() or []:
+                        sid = sess_row[0]
+                        key = sid_to_key.get(sid)
+                        if key is None:
+                            continue
+                        l_t_raw = sess_row[1]
+                        eff_l_halt_raw = sess_row[3]
+                        eff_e_raw = sess_row[4]
+                        l_t_d = Decimal(str(l_t_raw or 0))
+                        eff_l_halt_d = (
+                            Decimal(str(eff_l_halt_raw))
+                            if eff_l_halt_raw is not None else None
+                        )
+                        eff_e_d = (
+                            Decimal(str(eff_e_raw))
+                            if eff_e_raw is not None else None
+                        )
+                        used_pct = None
+                        if eff_l_halt_d is not None and eff_l_halt_d > 0:
+                            used_pct = round(
+                                float(min(abs(l_t_d) / eff_l_halt_d * Decimal(100), Decimal(100))),
+                                1,
+                            )
+                        per_session[key] = {
+                            "l_t": str(l_t_d.quantize(Decimal("0.01"))),
+                            "n_t": int(sess_row[2] or 0),
+                            "l_halt_session": (
+                                str(eff_l_halt_d.quantize(Decimal("0.01")))
+                                if eff_l_halt_d is not None else None
+                            ),
+                            "e_session": (
+                                str(eff_e_d.quantize(Decimal("0.01")))
+                                if eff_e_d is not None else None
+                            ),
+                            "l_halt_used_pct": used_pct,
+                        }
+                except Exception as exc:
+                    logger.warning(
+                        "TSM per-session panel query failed for %s: %s",
+                        account_id, exc,
+                    )
+
                 results.append({
                     "account_id": account_id, "tsm_name": r[1],
                     "starting_balance": str(starting_d.quantize(Decimal("0.01"))),
@@ -812,6 +869,10 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                     "daily_dd_used_pct": round(float(min(daily_pct, Decimal(100))), 1),
                     "profit_target": str(Decimal(str(r[9] or 0)).quantize(Decimal("0.01"))),  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
                     "pass_probability": r[6],
+                    # Per-session budget breakdown (2026-05-06). Format:
+                    # {NY|LON|APAC: {l_t, n_t, l_halt_session, e_session, l_halt_used_pct}}
+                    # Empty dict if D23 query failed or no rows yet today.
+                    "per_session": per_session,
                 })
 
             # Active account first so frontend tsmStatus[0] picks it up
