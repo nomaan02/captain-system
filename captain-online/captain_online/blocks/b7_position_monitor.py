@@ -421,13 +421,20 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
         f"(commission=${float(commission):.2f})",
     )
 
-    # Atomic capital + CB update (G-033: single cursor, both writes back-to-back)
+    # Atomic capital + CB update (G-033: single cursor, both writes back-to-back).
+    # session_id flows from pos["session"], set by Command's _handle_taken_skipped
+    # from the B6 signal payload. Defaults to 1 (NY) for legacy positions.
+    try:
+        session_id = int(pos.get("session", 1) or 1)
+    except (ValueError, TypeError):
+        session_id = 1
     _update_capital_and_cb(
         user_id=pos["user_id"],
         account_id=account_id,
         net_pnl=net_pnl,
         outcome=outcome,
         model_m=pos.get("model", ""),
+        session_id=session_id,
     )
 
     # CRITICAL: Publish trade outcome to Offline via Redis
@@ -563,11 +570,30 @@ def _update_capital_and_cb(
     net_pnl: float | Decimal,
     outcome: str,
     model_m: str = "",
+    session_id: int = 1,
 ):
     """G-033: Atomic capital silo (D16) + intraday CB (D23) update.
 
     Both reads and both writes execute in the same cursor context to prevent
     concurrent close races from producing inconsistent state.
+
+    Per-session-budget update (2026-05-06): D23 is now keyed by
+    ``(account_id, session_id)`` so each session has its own L_t / n_t /
+    l_b / n_b ledger. The read-modify-write must preserve the SOD-locked
+    ``effective_l_halt``, ``effective_e_exposure``, and ``session_opened_at``
+    fields so B5C reads see the values written by the orchestrator's
+    ``_initialize_session_budget`` hook at session open. ``model_m`` is now
+    namespaced by session in ``l_b`` ("``<session_id>:<model_m>``") so a
+    strategy that runs in multiple sessions doesn't pollute its own basket
+    P&L across sessions (Q-2 from Isaac's spec answer).
+
+    Parameters
+    ----------
+    session_id
+        The session within which this trade was taken (1=NY, 2=LON, 3=APAC,
+        4=NY_PRE). Comes from ``pos["session"]`` set by Command's
+        ``_handle_taken_skipped`` from the B6 signal payload. Defaults to 1
+        (NY) for legacy positions where session was not propagated.
     """
     with get_cursor() as cur:
         # ── Read both current states ──
@@ -583,11 +609,15 @@ def _update_capital_and_cb(
         )
         d16_row = cur.fetchone()
 
+        # Per-session D23 read: scope by both account_id AND session_id so
+        # each session has its own ledger.
         cur.execute(
-            """SELECT l_t, n_t, l_b, n_b FROM p3_d23_circuit_breaker_intraday
-               WHERE account_id = %s
-               LATEST ON last_updated PARTITION BY account_id""",
-            (account_id,),
+            """SELECT l_t, n_t, l_b, n_b,
+                      effective_l_halt, effective_e_exposure, session_opened_at
+               FROM p3_d23_circuit_breaker_intraday
+               WHERE account_id = %s AND session_id = %s
+               LATEST ON last_updated PARTITION BY account_id, session_id""",
+            (account_id, int(session_id)),
         )
         d23_row = cur.fetchone()
 
@@ -601,17 +631,33 @@ def _update_capital_and_cb(
             new_capital = net_dec
             d16_accounts = None
 
-        # D23 circuit breaker
-        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
+        # D23 circuit breaker — per-session
+        l_t = (Decimal(str(d23_row[0] or 0)) + net_dec) if d23_row else net_dec  # decimal-boundary: ok
         n_t = (d23_row[1] or 0) + 1 if d23_row else 1  # decimal-boundary: ok (n_t is a trade count, not money)
         l_b = parse_json_decimal(d23_row[2], {}) if d23_row else {}
         n_b = parse_json(d23_row[3], {}) if d23_row else {}
+        # Per-(session, model_m) basket key prevents a strategy running in
+        # both NY and APAC from polluting its own basket P&L across sessions.
+        # Format: "<session_id>:<model_m>" (Isaac's spec answer Q-2).
         if model_m:
-            prev = l_b.get(model_m, Decimal("0"))
+            basket_key = f"{int(session_id)}:{model_m}"
+            prev = l_b.get(basket_key, Decimal("0"))
             if not isinstance(prev, Decimal):
                 prev = Decimal(str(prev))
-            l_b[model_m] = prev + net_dec
-            n_b[model_m] = n_b.get(model_m, 0) + 1
+            l_b[basket_key] = prev + net_dec
+            n_b[basket_key] = n_b.get(basket_key, 0) + 1
+
+        # PRESERVE session-open SOD-locked fields. B5C reads these for L1/L2;
+        # if we write NULL on every B7 update, the per-session budget is lost
+        # the first time a trade closes.
+        if d23_row:
+            existing_eff_l_halt = d23_row[4]
+            existing_eff_e = d23_row[5]
+            existing_opened_at = d23_row[6]
+        else:
+            existing_eff_l_halt = None
+            existing_eff_e = None
+            existing_opened_at = None
 
         # ── Write both back-to-back ──
         if d16_row:
@@ -630,15 +676,22 @@ def _update_capital_and_cb(
 
         cur.execute(
             """INSERT INTO p3_d23_circuit_breaker_intraday
-               (account_id, l_t, n_t, l_b, n_b, last_updated)
-               VALUES (%s, %s, %s, %s, %s, now())""",
-            (account_id, l_t, n_t, dumps_decimal(l_b), json.dumps(n_b)),
+               (account_id, session_id, l_t, n_t, l_b, n_b,
+                effective_l_halt, effective_e_exposure, session_opened_at,
+                last_updated)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())""",
+            (
+                account_id, int(session_id),
+                l_t, n_t, dumps_decimal(l_b), json.dumps(n_b),
+                existing_eff_l_halt, existing_eff_e, existing_opened_at,
+            ),
         )
 
     logger.debug(
-        "Capital+CB updated: user=%s account=%s pnl=%.2f",
+        "Capital+CB updated: user=%s account=%s session=%d pnl=%.2f",
         user_id,
         account_id,
+        int(session_id),
         float(net_pnl),
     )
 
