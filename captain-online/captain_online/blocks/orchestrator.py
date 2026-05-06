@@ -254,6 +254,20 @@ class OnlineOrchestrator:
             self._session_evaluated_today[session_id] = datetime.now(_ET).date()
             return
 
+        # ──── PER-SESSION BUDGET INITIALISATION ────
+        # Compute and persist this session's effective_l_halt and
+        # effective_e_exposure for every active account, applying
+        # carryover from any earlier sessions today (parity-skip support).
+        # Idempotent — safe to call multiple times same day.
+        try:
+            self._initialize_session_budget(session_id)
+        except Exception as exc:
+            logger.error(
+                "ON-Orch: session-budget init failed for session %s: %s "
+                "— B5C will fall back to legacy single-budget for this session",
+                session_name, exc, exc_info=True,
+            )
+
         # ──── EARLY OR REGISTRATION (before Phase A) ────
         # Register active assets with the OR tracker NOW so ticks from
         # session open are captured. Phase A (B1-B5C) takes ~1-2 min;
@@ -798,6 +812,215 @@ class OnlineOrchestrator:
                     self.shadow_positions.remove(shadow)
                 except ValueError:
                     pass
+
+    def _initialize_session_budget(self, session_id: int) -> None:
+        """Compute and persist this session's effective per-session budget.
+
+        At every session-open (LON 03:00, NY 09:30, APAC 18:00), for every
+        account with ``topstep_optimisation=true``:
+
+        1. Read the session's SOD share from D08.computed_sod.session.<KEY>
+           (written by Command Block 8 at 19:00 EST the prior evening).
+        2. Read all completed earlier sessions today from D23 to compute
+           the carryover unused-pool (parity-skip support).
+        3. Apply ``compute_session_carryover`` (Isaac's "available × share /
+           remaining" formula) to derive the effective L_halt and E.
+        4. INSERT a fresh D23 row keyed by (account_id, session_id) with
+           ``l_t=0``, ``n_t=0``, ``effective_l_halt`` / ``effective_e_exposure``
+           / ``session_opened_at`` populated.
+
+        Idempotent — if a row already exists for this (account, session, today)
+        with ``session_opened_at`` set, this method is a no-op for that account.
+
+        Failure on a single account is logged and skipped — does NOT abort
+        the rest. Failure of the whole method is caught by the caller in
+        ``_run_session`` so B5C falls back to legacy single-budget for this
+        session if anything goes wrong.
+
+        Sources:
+          - Spec: ``docs2/quick-fixes/circuit-breaker-nkd-issue/15_Topstep_Optimisation_Functions (1).md`` §4.4.4
+          - HMM:  ``docs2/quick-fixes/circuit-breaker-nkd-issue/16_HMM_Opportunity_Regime_Spec.md`` §3.6
+          - Plan: ``docs2/audits/2026-05-06_per_session_budget_design.md``
+        """
+        from decimal import Decimal as _D
+        from shared.constants import SESSION_IDS as _SESSION_IDS
+        from shared.questdb_client import get_cursor as _gc
+        from shared.json_helpers import parse_json_decimal as _pjd
+        from shared.decimal_json import dumps_decimal as _dd
+        from shared.sod_session_budget import (
+            session_budget_shares as _shares_fn,
+            compute_session_carryover as _carryover_fn,
+            sessions_earlier_in_day as _earlier_fn,
+            sessions_remaining_in_day as _remaining_fn,
+            session_key_for as _key_fn,
+            TRADING_DAY_SESSION_ORDER as _ORDER,
+        )
+        import json as _json
+
+        if session_id not in _ORDER:
+            # NY_PRE etc. — falls back to legacy single-budget per design (v1).
+            logger.debug(
+                "ON-Orch: session %s not in TRADING_DAY_SESSION_ORDER — "
+                "skipping per-session budget init (legacy fallback applies)",
+                _SESSION_IDS.get(session_id, session_id),
+            )
+            return
+
+        today = datetime.now(_ET).date()
+
+        # Idempotency: if any account already has this (session, today) opened,
+        # skip the whole method to avoid double-counting carryover. We check
+        # one canonical account — the single-account convention is the eval
+        # combine reality (multi-instance towers each manage one account).
+        with _gc() as cur:
+            cur.execute(
+                """SELECT account_id, topstep_state
+                   FROM p3_d08_tsm_state
+                   LATEST ON last_updated PARTITION BY account_id"""
+            )
+            d08_rows = cur.fetchall() or []
+
+        for d08 in d08_rows:
+            ac_id = d08[0]
+            ts_state_raw = d08[1] or "{}"
+            try:
+                ts_state = _pjd(ts_state_raw, {})
+            except Exception:
+                ts_state = {}
+            computed_sod = ts_state.get("computed_sod") if isinstance(ts_state, dict) else None
+            if not computed_sod:
+                logger.debug(
+                    "ON-Orch: account %s has no computed_sod — skipping "
+                    "session-budget init (Phase 2 not yet run for this account)",
+                    ac_id,
+                )
+                continue
+
+            # SOD totals
+            sod_l_halt_total = _D(str(computed_sod.get("L_halt", 0) or 0))
+            sod_e_total = _D(str(computed_sod.get("E_daily_exposure", 0) or 0))
+            if sod_l_halt_total <= 0 or sod_e_total <= 0:
+                logger.debug(
+                    "ON-Orch: account %s has zero SOD totals (L_halt=%s, "
+                    "E=%s) — skipping",
+                    ac_id, sod_l_halt_total, sod_e_total,
+                )
+                continue
+
+            # Per-session shares: prefer the SOD-frozen ones if present,
+            # else recompute (matches what Phase 2 wrote with the same HMM state).
+            session_block = computed_sod.get("session", {}) or {}
+            shares: dict[str, _D] = {}
+            for k in ("NY", "LON", "APAC"):
+                entry = session_block.get(k, {}) or {}
+                share_val = entry.get("share")
+                if share_val is not None:
+                    shares[k] = _D(str(share_val))
+            if not shares:
+                # SOD didn't write per-session shares (legacy state) —
+                # fall back to live recompute. Must match what compute_sod
+                # WOULD have written; absent HMM state, defaults to equal.
+                shares = _shares_fn(None)
+
+            # Pull state for completed-earlier sessions today.
+            earlier_ids = _earlier_fn(session_id)
+            completed_state: dict[str, dict] = {}
+            with _gc() as cur:
+                for sid in earlier_ids:
+                    sess_key = _key_fn(sid)
+                    cur.execute(
+                        """SELECT l_t, effective_l_halt, effective_e_exposure,
+                                  session_opened_at
+                           FROM p3_d23_circuit_breaker_intraday
+                           WHERE account_id = %s AND session_id = %s
+                           LATEST ON last_updated PARTITION BY account_id, session_id""",
+                        (ac_id, int(sid)),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        # Session never opened today (parity skip pre-orch-start
+                        # OR tower was offline). Treat as full-budget unused.
+                        completed_state[sess_key] = {
+                            "effective_l_halt": sod_l_halt_total * shares.get(sess_key, _D("0")),
+                            "effective_e_exposure": sod_e_total * shares.get(sess_key, _D("0")),
+                            "l_t_final": _D("0"),
+                        }
+                        continue
+                    # Only count rows whose session_opened_at is on TODAY.
+                    # If session_opened_at is NULL the session hasn't actually
+                    # opened today — treat as full carryover.
+                    opened_at = row[3]
+                    if opened_at is None:
+                        completed_state[sess_key] = {
+                            "effective_l_halt": sod_l_halt_total * shares.get(sess_key, _D("0")),
+                            "effective_e_exposure": sod_e_total * shares.get(sess_key, _D("0")),
+                            "l_t_final": _D("0"),
+                        }
+                        continue
+                    completed_state[sess_key] = {
+                        "effective_l_halt": _D(str(row[1] or 0)),
+                        "effective_e_exposure": _D(str(row[2] or 0)),
+                        "l_t_final": _D(str(row[0] or 0)),
+                    }
+
+            # Idempotency: if THIS session already has session_opened_at on
+            # today's date for this account, skip (re-init would double-count).
+            with _gc() as cur:
+                cur.execute(
+                    """SELECT effective_l_halt, session_opened_at
+                       FROM p3_d23_circuit_breaker_intraday
+                       WHERE account_id = %s AND session_id = %s
+                       LATEST ON last_updated PARTITION BY account_id, session_id""",
+                    (ac_id, int(session_id)),
+                )
+                existing = cur.fetchone()
+            if existing and existing[0] is not None and existing[1] is not None:
+                logger.info(
+                    "ON-Orch: session %s already initialised for %s (eff_L_halt=%s) "
+                    "— skipping re-init",
+                    _SESSION_IDS.get(session_id, session_id), ac_id, existing[0],
+                )
+                continue
+
+            # Compute carryover.
+            remaining_ids = _remaining_fn(session_id)
+            eff_l_halt, eff_e = _carryover_fn(
+                sod_l_halt_total=sod_l_halt_total,
+                sod_e_total=sod_e_total,
+                shares=shares,
+                completed_sessions_state=completed_state,
+                target_session_id=session_id,
+                remaining_session_ids=remaining_ids,
+            )
+
+            # Persist initial D23 row for this (account, session) today.
+            with _gc() as cur:
+                cur.execute(
+                    """INSERT INTO p3_d23_circuit_breaker_intraday(
+                           account_id, session_id, l_t, n_t,
+                           l_b, n_b,
+                           effective_l_halt, effective_e_exposure,
+                           session_opened_at, last_updated
+                       ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        ac_id, int(session_id),
+                        _D("0"), 0,
+                        _dd({}), _json.dumps({}),
+                        eff_l_halt, eff_e,
+                        datetime.now(_ET).isoformat(),
+                        datetime.now(_ET).isoformat(),
+                    ),
+                )
+
+            sess_name = _SESSION_IDS.get(session_id, session_id)
+            logger.info(
+                "ON-Orch: session %s init for %s — eff_L_halt=%.2f eff_E=%.2f "
+                "(SOD share=%.4f, completed=%d earlier sessions, carryover=%.2f)",
+                sess_name, ac_id, float(eff_l_halt), float(eff_e),
+                float(shares.get(_key_fn(session_id), _D("0"))),
+                len(completed_state),
+                float(eff_l_halt - sod_l_halt_total * shares.get(_key_fn(session_id), _D("0"))),
+            )
 
     def _circuit_breaker_check(self, session_id: int) -> bool:
         """Per Arch §19.6: DATA_HOLD >= 3 OR VIX > threshold OR manual_halt."""
