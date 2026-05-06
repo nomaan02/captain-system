@@ -35,7 +35,7 @@ from decimal import Decimal
 from shared.constants import now_et
 from shared.decimal_boundary import to_float
 from shared.decimal_json import loads_decimal
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -869,7 +869,8 @@ def run_diagnostic(mode: str = "WEEKLY") -> dict:
 
     # Store to P3-D22
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d22_system_health_diagnostic
                (mode, scores, overall_health, action_items_generated,
                 critical_count, high_count, queue_total, open_count,

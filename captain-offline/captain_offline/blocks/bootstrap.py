@@ -24,7 +24,7 @@ import math
 import logging
 from collections import defaultdict
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
                 ewma = _compute_unconditional(all_returns)
 
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d05_ewma_states
                        (asset_id, regime, session, win_rate, avg_win, avg_loss,
                         n_trades, last_updated)
@@ -146,7 +147,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
     std_r = float(np.std(returns_arr)) if len(returns_arr) > 1 else 1.0
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d04_decay_detector_states
                (asset_id, bocpd_cp_probability, cusum_c_up_prev, cusum_c_down_prev,
                 cusum_sprint_length, cusum_allowance, current_changepoint_probability,
@@ -178,7 +180,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
             shrinkage = max(0.3, 1.0 - 1.0 / math.sqrt(max(n_trades, 1)))
 
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d12_kelly_parameters
                        (asset_id, regime, session, kelly_full, shrinkage_factor,
                         sizing_override, last_updated)
@@ -199,7 +202,8 @@ def asset_bootstrap(asset_id: str, historical_trades: list[dict],
 
         if row and row[0] in ("INSTALLED", "COLLECTING", "WARM_UP"):
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d01_aim_model_states
                        (aim_id, asset_id, status, warmup_progress, last_updated)
                        VALUES (%s, %s, 'BOOTSTRAPPED', 1.0, now())""",

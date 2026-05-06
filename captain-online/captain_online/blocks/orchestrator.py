@@ -844,7 +844,7 @@ class OnlineOrchestrator:
         """
         from decimal import Decimal as _D
         from shared.constants import SESSION_IDS as _SESSION_IDS
-        from shared.questdb_client import get_cursor as _gc
+        from shared.questdb_client import get_cursor as _gc, qexecute
         from shared.json_helpers import parse_json_decimal as _pjd
         from shared.decimal_json import dumps_decimal as _dd
         from shared.sod_session_budget import (
@@ -995,7 +995,8 @@ class OnlineOrchestrator:
 
             # Persist initial D23 row for this (account, session) today.
             with _gc() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d23_circuit_breaker_intraday(
                            account_id, session_id, l_t, n_t,
                            l_b, n_b,

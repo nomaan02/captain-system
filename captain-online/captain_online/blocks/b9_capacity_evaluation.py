@@ -18,7 +18,7 @@ import json
 import logging
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.constants import now_et
 
 logger = logging.getLogger(__name__)
@@ -293,7 +293,8 @@ def _load_params_batch(defaults: dict) -> dict:
 
 def _save_capacity_state(session_id: int, state: dict):
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",

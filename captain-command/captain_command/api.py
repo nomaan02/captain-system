@@ -370,10 +370,10 @@ def _write_audit_log(
     Non-blocking best-effort: logs a warning on failure but never raises.
     """
     try:
-        from shared.questdb_client import get_cursor
+        from shared.questdb_client import get_cursor, qexecute
         now = now_et().isoformat()
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_audit_log(user_id, action, detail, old_value, new_value, ts)
                    VALUES(%s, %s, %s, %s, %s, %s)""",
                 (user_id, action, detail, old_value, new_value, now),
@@ -1039,11 +1039,11 @@ def api_replay_preset_save(req: ReplayPresetRequest, request: Request):
     user_id = getattr(request.state, "user_id", "")
     try:
         import uuid as _uuid
-        from shared.questdb_client import get_cursor
+        from shared.questdb_client import get_cursor, qexecute
         preset_id = f"PRESET-{_uuid.uuid4().hex[:8].upper()}"
         now = now_et().isoformat()
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_replay_presets(
                        preset_id, user_id, name, config, ts
                    ) VALUES(%s, %s, %s, %s, %s)""",

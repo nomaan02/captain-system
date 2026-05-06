@@ -144,7 +144,7 @@ def probe_bytes():
         with get_cursor() as cur:
             mogrified = cur.mogrify(SQL_MULTILINE, params)
             print(f"  type(mogrified) = {type(mogrified).__name__}, len = {len(mogrified)}")
-            cur.execute(mogrified)
+            cur.execute(mogrified)  # qexecute: ok — debug-only utility, intentional bypass
         print("  RESULT: OK")
     except psycopg2.Error as exc:
         report_pg_error("bytes-execute", exc)
@@ -161,7 +161,7 @@ def probe_str():
             mogrified = cur.mogrify(SQL_MULTILINE, params)
             mogrified_str = mogrified.decode("utf-8") if isinstance(mogrified, bytes) else mogrified
             print(f"  type(query) = {type(mogrified_str).__name__}, len = {len(mogrified_str)}")
-            cur.execute(mogrified_str)
+            cur.execute(mogrified_str)  # qexecute: ok — debug-only utility, intentional bypass
         print("  RESULT: OK")
     except psycopg2.Error as exc:
         report_pg_error("str-execute", exc)
@@ -179,7 +179,7 @@ def probe_singleline():
             mogrified = cur.mogrify(sql_one_line, params)
             mogrified_str = mogrified.decode("utf-8") if isinstance(mogrified, bytes) else mogrified
             print(f"  len = {len(mogrified_str)}")
-            cur.execute(mogrified_str)
+            cur.execute(mogrified_str)  # qexecute: ok — debug-only utility, intentional bypass
         print("  RESULT: OK")
     except psycopg2.Error as exc:
         report_pg_error("singleline-execute", exc)
@@ -231,7 +231,7 @@ def probe_literal_only():
     print(f"  len = {len(sql)}")
     try:
         with get_cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql)  # qexecute: ok — debug-only utility, intentional bypass
         print("  RESULT: OK")
     except psycopg2.Error as exc:
         report_pg_error("literal-only", exc)

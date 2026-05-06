@@ -46,7 +46,7 @@ def test_load_tsm_configs_type_purity():
     user_id = f"type_purity_user_{int(time.time())}"
 
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises type-purity
             """INSERT INTO p3_d08_tsm_state (
                 account_id, user_id, name, classification,
                 starting_balance, current_balance, current_drawdown,

@@ -46,7 +46,7 @@ def _seed_aim_states():
     Idempotent: only inserts INSTALLED rows for (aim_id, asset_id) pairs
     that have no rows yet. Tier 1 AIMs get BOOTSTRAPPED status.
     """
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     import time
 
     try:
@@ -73,7 +73,8 @@ def _seed_aim_states():
                 warmup = 1.0 if aim_id in TIER1_AIMS else 0.0
                 try:
                     with get_cursor() as cur:
-                        cur.execute(
+                        qexecute(
+                            cur,
                             """INSERT INTO p3_d01_aim_model_states
                                (aim_id, asset_id, status, warmup_progress, last_updated)
                                VALUES (%s, %s, %s, %s, now())""",
@@ -83,7 +84,8 @@ def _seed_aim_states():
                 except Exception:
                     time.sleep(0.5)  # QuestDB table busy — brief retry
                     with get_cursor() as cur:
-                        cur.execute(
+                        qexecute(
+                            cur,
                             """INSERT INTO p3_d01_aim_model_states
                                (aim_id, asset_id, status, warmup_progress, last_updated)
                                VALUES (%s, %s, %s, %s, now())""",

@@ -85,7 +85,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from shared.questdb_client import get_cursor  # noqa: E402
+from shared.questdb_client import get_cursor, qexecute  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -226,7 +226,8 @@ def write_correction_row(correction: dict) -> None:
     new_outcome = (src.get("outcome") or "UNKNOWN") + "_CORRECTED"
     new_tsm_used = "BUG_A_BACKFILL"
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d03_trade_outcome_log (
                    trade_id, signal_id, user_id, account_id, asset, direction,
                    entry_price, signal_entry_price, exit_price, contracts,

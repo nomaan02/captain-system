@@ -287,7 +287,7 @@ def seed_d03_from_synthetic(asset: str = "ES",
     Returns:
         Number of trades written.
     """
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
 
     trades = _load_synthetic(asset, start_date, end_date)
     if not trades:
@@ -297,7 +297,8 @@ def seed_d03_from_synthetic(asset: str = "ES",
     import uuid as _uuid
     with get_cursor() as cur:
         for i, t in enumerate(trades):
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d03_trade_outcome_log
                    (trade_id, signal_id, user_id, account_id, asset, direction,
                     entry_price, signal_entry_price, exit_price, contracts,

@@ -24,7 +24,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.journal import write_checkpoint
 from shared.constants import INCIDENT_SEVERITY_VALUES, now_et
 
@@ -182,7 +182,7 @@ def resolve_incident(incident_id: str, resolution: str,
     try:
         with get_cursor() as cur:
             # QuestDB is append-only — insert a resolution row
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d21_incident_log(
                        timestamp, incident_id, incident_type, severity,
                        component, details, status,
@@ -356,7 +356,7 @@ def _store_incident(incident: dict):
     """Insert incident into P3-D21."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d21_incident_log(
                        timestamp, incident_id, incident_type, severity,
                        component, details, affected_users,

@@ -25,7 +25,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,8 @@ def backfill(dry_run: bool = False) -> int:
     with get_cursor() as cur:
         for row in rows:
             new_id = f"LEGACY-{uuid.uuid4()}"
-            cur.execute(
+            qexecute(
+                cur,
                 REINSERT_SQL,
                 (
                     row[0],   # trade_id  (DEDUP key — re-insert replaces)

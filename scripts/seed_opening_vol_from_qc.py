@@ -21,7 +21,7 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 ACTIVE_ASSETS = {"ES", "MES", "NQ", "MNQ", "M2K", "MYM", "NKD", "MGC", "ZB", "ZN"}
 
@@ -79,7 +79,8 @@ def seed_asset(asset: str, csv_path: str) -> int:
             vol = _compute_vol_from_bars(bars)
             if vol is None:
                 continue
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d33_opening_volatility
                    (asset_id, session_date, session_type, or_minutes,
                     opening_range_pct, opening_vol_z, ts)

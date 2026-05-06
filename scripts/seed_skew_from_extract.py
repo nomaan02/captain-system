@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get(
@@ -44,7 +44,8 @@ def seed_skew(csv_path: str, asset_id: str = "ES") -> int:
 
     with get_cursor() as cur:
         for r in rows:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d32_options_skew
                    (asset_id, trade_date, cboe_skew, skew_spread_proxy, ts)
                    VALUES (%s, %s, %s, %s, now())""",

@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get(
@@ -44,7 +44,8 @@ def seed_iv_rv(csv_path: str, asset_id: str = "ES") -> int:
 
     with get_cursor() as cur:
         for r in rows:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d31_implied_vol
                    (asset_id, trade_date, atm_iv_30d, realized_vol_20d, ts)
                    VALUES (%s, %s, %s, %s, now())""",

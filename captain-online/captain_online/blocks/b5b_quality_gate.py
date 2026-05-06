@@ -20,7 +20,7 @@ import json
 import logging
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,8 @@ def _log_quality_results(session_id, user_id, selected, recommended, below_thres
         },
     })
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",

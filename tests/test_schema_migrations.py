@@ -35,7 +35,7 @@ def test_b1_p2_d07_round_trip():
     """Round-trip: insert one row, read it back, verify shape."""
     now_ts = datetime.utcnow().isoformat()
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema migration roundtrip
             """INSERT INTO p2_d07_regime_models
                (asset, model_type, feature_list, pettersson_threshold,
                 regime_label, n_training_obs, cv_score, trained_at, last_updated)
@@ -74,7 +74,7 @@ def test_b2_d03_model_m_round_trip():
     """Round-trip: insert a row with model_m, read it back, verify value."""
     trade_id = f"TEST-MODELM-{int(time.time())}"
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema migration roundtrip
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, user_id, account_id, asset, direction,
                 outcome, model_m, ts)
@@ -96,7 +96,7 @@ def test_b2_d03_model_m_backwards_compat():
     """Backwards compat: existing rows without model_m return NULL gracefully."""
     trade_id = f"LEGACY-ROW-{int(time.time())}"
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema migration roundtrip
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, user_id, account_id, asset, direction,
                 outcome, ts)
@@ -133,13 +133,13 @@ def test_b3_d22b_table_exists():
 def test_b3_d22b_round_trip():
     """Round-trip: upsert two rows for same asset, LATEST ON reads most recent."""
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema migration roundtrip
             """INSERT INTO p3_d22b_asset_rerun_status
                (asset, last_p1p2_rerun_ts, rerun_trigger, last_updated)
                VALUES ('ES', now(), 'TEST_RUN_1', now())"""
         )
         time.sleep(0.01)
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema migration roundtrip
             """INSERT INTO p3_d22b_asset_rerun_status
                (asset, last_p1p2_rerun_ts, rerun_trigger, last_updated)
                VALUES ('ES', now(), 'TEST_RUN_2', now())"""

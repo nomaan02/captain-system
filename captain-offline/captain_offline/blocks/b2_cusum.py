@@ -22,7 +22,7 @@ import random
 
 import numpy as np
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,8 @@ def calibrate_and_persist(asset_id: str, in_control_pnl: list[float],
         return None
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d04_decay_detector_states
                (asset_id, cusum_sequential_limits, cusum_allowance, last_updated)
                VALUES (%s, %s, %s, now())""",

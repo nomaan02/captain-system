@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, time as dtime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.topstep_client import get_topstep_client
 from shared.contract_resolver import resolve_contract_id
 
@@ -179,7 +179,8 @@ def bootstrap_opening_volumes():
                     if date_str in daily_highs and date_str in daily_lows:
                         rng = daily_highs[date_str] - daily_lows[date_str]
                         or_range = rng if rng > 0 else None
-                    cur.execute(
+                    qexecute(
+                        cur,
                         """INSERT INTO p3_d29_opening_volumes
                            (asset_id, session_date, session_type, or_minutes,
                             volume_first_m_min, or_range_first_m_min, ts)

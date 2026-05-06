@@ -24,7 +24,7 @@ import json
 import logging
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
@@ -87,7 +87,8 @@ def _update_aim_status(aim_id: int, asset_id: str, new_status: str):
     """Update an AIM's status in P3-D01."""
     snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d01_aim_model_states
                (aim_id, asset_id, status, warmup_progress, last_updated)
                VALUES (%s, %s, %s, %s, now())""",
@@ -101,7 +102,8 @@ def _update_warmup_progress(aim_id: int, asset_id: str, progress: float):
     snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         # P3-D01: AIM-level warmup progress
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d01_aim_model_states
                (aim_id, asset_id, status, warmup_progress, last_updated)
                VALUES (%s, %s, %s, %s, now())""",
@@ -296,7 +298,8 @@ def run_tier_retrain(asset_id: str, aim_ids: list[int]):
         #   trained_model = aim_trainer_registry[aim_id].retrain(asset_id)
         #   _save_model_object(aim_id, asset_id, trained_model)
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d01_aim_model_states
                    (aim_id, asset_id, status, warmup_progress, last_retrained, last_updated)
                    VALUES (%s, %s, %s, 1.0, now(), now())""",

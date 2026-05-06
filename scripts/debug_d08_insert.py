@@ -178,7 +178,7 @@ def run_variant(label: str, params: tuple):
             mogrified = cur.mogrify(SQL, params)
             sql_text = mogrified.decode("utf-8", errors="replace") if isinstance(mogrified, bytes) else str(mogrified)
             print(f"  mogrified SQL (first 1500 chars):\n  {sql_text[:1500]}\n")
-            cur.execute(mogrified)
+            cur.execute(mogrified)  # qexecute: ok — debug-only utility, intentional bypass
         print("  RESULT: OK")
         return True
     except psycopg2.Error as exc:
@@ -279,7 +279,7 @@ def main():
             try:
                 with get_cursor() as cur:
                     mogrified = cur.mogrify(built, new_params_t)
-                    cur.execute(mogrified)
+                    cur.execute(mogrified)  # qexecute: ok — debug-only utility, intentional bypass
                 print(f"  {label_e}: OK  (column {swap_idx} is the suspect)")
             except psycopg2.Error as exc:
                 diag = getattr(exc, "diag", None)

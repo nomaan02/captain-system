@@ -836,7 +836,7 @@ class OfflineOrchestrator:
         daily/event sweep semantics.
         """
         try:
-            from shared.questdb_client import get_cursor
+            from shared.questdb_client import get_cursor, qexecute
 
             sql = ("""SELECT job_id, job_type, asset_id, params
                        FROM p3_offline_job_queue
@@ -864,7 +864,8 @@ class OfflineOrchestrator:
 
                 # Mark as in-progress
                 with get_cursor() as cur:
-                    cur.execute(
+                    qexecute(
+                        cur,
                         """INSERT INTO p3_offline_job_queue
                            (job_id, job_type, asset_id, status, started_at, last_updated)
                            VALUES (%s, %s, %s, 'RUNNING', now(), now())""",
@@ -889,7 +890,8 @@ class OfflineOrchestrator:
                         # Record the rerun request timestamp for D3 staleness scoring
                         try:
                             with get_cursor() as cur:
-                                cur.execute(
+                                qexecute(
+                                    cur,
                                     """INSERT INTO p3_d22b_asset_rerun_status
                                        (asset, last_p1p2_rerun_ts, rerun_trigger, last_updated)
                                        VALUES (%s, now(), 'LEVEL3_STALENESS', now())""",
@@ -909,7 +911,8 @@ class OfflineOrchestrator:
 
                 # Store result
                 with get_cursor() as cur:
-                    cur.execute(
+                    qexecute(
+                        cur,
                         """INSERT INTO p3_offline_job_queue
                            (job_id, job_type, asset_id, status, result,
                             completed_at, last_updated)

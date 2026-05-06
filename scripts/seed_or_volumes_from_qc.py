@@ -19,7 +19,7 @@ from collections import defaultdict
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -92,7 +92,8 @@ def seed_all():
                 # Phase 2 (F-04): or_range_first_m_min added in D29; QC seed
                 # CSVs don't carry OR range yet, so insert NULL — backfill via
                 # bootstrap_opening_volumes.py once historical bars available.
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d29_opening_volumes
                        (asset_id, session_date, session_type, or_minutes,
                         volume_first_m_min, or_range_first_m_min, ts)

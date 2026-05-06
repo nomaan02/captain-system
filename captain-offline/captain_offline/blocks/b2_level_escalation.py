@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 
 from shared.constants import now_et
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,8 @@ def _log_decay_event(asset_id: str, level: int, severity: float, source: str):
         "source": source,
     })
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d04_decay_detector_states
                (asset_id, decay_events, last_updated)
                VALUES (%s, %s, now())""",
@@ -82,7 +83,8 @@ def _set_sizing_override(asset_id: str, reduction_factor: float):
     """Write sizing override to P3-D12."""
     override = json.dumps(reduction_factor)
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d12_kelly_parameters
                (asset_id, regime, session, kelly_full, shrinkage_factor,
                 sizing_override, last_updated)
@@ -155,7 +157,8 @@ def _enqueue_job(job_type: str, asset_id: str, priority: str = "CRITICAL",
     import uuid
     job_id = f"JOB-{job_type[:3]}-{asset_id}-{uuid.uuid4().hex[:8]}"
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_offline_job_queue
                (job_id, job_type, asset_id, priority, status, params,
                 created_at, last_updated)

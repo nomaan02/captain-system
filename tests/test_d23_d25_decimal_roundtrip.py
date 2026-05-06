@@ -24,7 +24,7 @@ def test_d23_l_t_decimal_roundtrip():
     aid = f"D23DEC-{int(time.time())}"
     v = Decimal("-987.65")
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
             """INSERT INTO p3_d23_circuit_breaker_intraday
                (account_id, session_id, l_t, n_t, l_b, n_b,
                 effective_l_halt, effective_e_exposure, session_opened_at,
@@ -56,7 +56,7 @@ def test_d23_per_session_columns_roundtrip():
             (2, eff_l_halt + Decimal("100"), eff_e + Decimal("200")),
             (3, eff_l_halt + Decimal("50"), eff_e + Decimal("100")),
         ]:
-            cur.execute(
+            cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
                 """INSERT INTO p3_d23_circuit_breaker_intraday
                    (account_id, session_id, l_t, n_t, l_b, n_b,
                     effective_l_halt, effective_e_exposure, session_opened_at,
@@ -93,7 +93,7 @@ def test_d25_l_star_decimal_roundtrip():
     aid = f"D25DEC-{int(time.time())}"
     v = Decimal("1234.56")
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
             """INSERT INTO p3_d25_circuit_breaker_params(
                 account_id, model_m, r_bar, beta_b, sigma, rho_bar,
                 n_observations, p_value, l_star, cold_start, last_updated)

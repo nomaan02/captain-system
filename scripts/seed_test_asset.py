@@ -19,7 +19,7 @@ import json
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 
 def seed_es_asset():
@@ -53,7 +53,8 @@ def seed_es_asset():
     })
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d00_asset_universe (
                 asset_id, p1_status, p2_status, captain_status,
                 warm_up_progress, aim_warmup_progress, locked_strategy,
@@ -93,7 +94,8 @@ def seed_primary_user():
     })
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d15_user_session_data (
                 user_id, display_name, auth_token, role, tags,
                 device_sessions, preferences, created, last_active
@@ -113,7 +115,8 @@ def seed_primary_user():
 def seed_capital_silo():
     """Insert initial capital silo for primary_user in P3-D16."""
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d16_user_capital_silos (
                 user_id, status, role,
                 starting_capital, total_capital, accounts,

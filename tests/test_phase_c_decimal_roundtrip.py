@@ -26,7 +26,7 @@ def test_d16_decimal_capital_columns_roundtrip():
     v = Decimal("99999.99")
     cap_hist = json.dumps([{"capital": float(v), "date": "2026-03-01"}])
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
             """INSERT INTO p3_d16_user_capital_silos (
                    user_id, status, role, starting_capital, total_capital, accounts,
                    max_simultaneous_positions, max_portfolio_risk_pct,
@@ -64,7 +64,7 @@ def test_d00_decimal_asset_specs_roundtrip():
     ts = Decimal("0.2500")
     margin = Decimal("9876.5000")
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
             """INSERT INTO p3_d00_asset_universe (
                    asset_id, p1_status, p2_status, captain_status,
                    warm_up_progress, aim_warmup_progress, locked_strategy,
@@ -122,7 +122,7 @@ def test_d30_decimal_ohlc_roundtrip():
     lo = Decimal("4995.7500")
     c = Decimal("5008.1250")
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
             """INSERT INTO p3_d30_daily_ohlcv
                (asset_id, trade_date, open, high, low, close, volume, ts)
                VALUES (%s,%s,%s,%s,%s,%s,%s, now())""",

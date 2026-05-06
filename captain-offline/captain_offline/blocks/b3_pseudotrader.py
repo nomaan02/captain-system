@@ -30,7 +30,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.decimal_boundary import to_float
 
 logger = logging.getLogger(__name__)
@@ -547,7 +547,8 @@ def run_account_aware_replay(asset_id: str, update_type: str,
     # Store in P3-D11
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d11_pseudotrader_results
                    (result_id, update_type, sharpe_improvement, drawdown_change,
                     winrate_delta, pbo, dsr, recommendation, ts)
@@ -1028,7 +1029,8 @@ def run_pseudotrader(asset_id: str, update_type: str,
     # sharpe_updated, pair_series.
     pair_series_json = _safe_json(result["pair_series"])
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d11_pseudotrader_results
                (result_id, update_type, sharpe_baseline, sharpe_updated,
                 sharpe_improvement, drawdown_change, winrate_delta,
@@ -1364,7 +1366,8 @@ def run_cb_pseudotrader(account_id: str, historical_trades: list[dict],
 
     # Store in P3-D11
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d11_pseudotrader_results
                (result_id, update_type, sharpe_improvement, drawdown_change,
                 winrate_delta, pbo, dsr, recommendation, ts)
@@ -1552,7 +1555,8 @@ def run_multistage_replay(trades: list[dict],
     # Store summary in P3-D11
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d11_pseudotrader_results
                    (result_id, update_type, sharpe_improvement, drawdown_change,
                     winrate_delta, pbo, dsr, recommendation, ts)
@@ -2022,7 +2026,8 @@ def generate_dual_forecasts(trades: list[dict],
             continue
         try:
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d27_pseudotrader_forecasts
                        (forecast_id, forecast_type, account_id, version,
                         run_date, window_start, window_end,

@@ -22,7 +22,7 @@ import logging
 import warnings
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS
 from shared.constants import now_et
 
@@ -207,7 +207,8 @@ def snapshot_before_update(component_id: str, trigger_reason: str,
     state_json = json.dumps(state, default=str)
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d18_version_history
                (version_id, component, trigger, state, model_hash, ts)
                VALUES (%s, %s, %s, %s, %s, now())""",

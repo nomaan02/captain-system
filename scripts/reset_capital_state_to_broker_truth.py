@@ -68,7 +68,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from shared.questdb_client import get_cursor  # noqa: E402
+from shared.questdb_client import get_cursor, qexecute  # noqa: E402
 from shared.decimal_json import dumps_decimal, loads_decimal  # noqa: E402
 from shared.constants import now_et  # noqa: E402
 
@@ -148,7 +148,8 @@ def read_d16_row(user_id: str) -> dict | None:
 def write_d16_row(d16: dict, new_total_capital: Decimal,
                   new_capital_history: str) -> None:
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d16_user_capital_silos (
                    user_id, status, role, starting_capital, total_capital, accounts,
                    max_simultaneous_positions, max_portfolio_risk_pct,
@@ -234,10 +235,13 @@ def write_d08_row(d08: dict, new_current_balance: Decimal,
     d08["current_drawdown"] = new_current_drawdown
     d08["daily_loss_used"] = Decimal("0")  # fresh day — Bug A daily_loss_used was inflated
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             f"INSERT INTO p3_d08_tsm_state ({fields_str}) "
             f"VALUES ({placeholders})",
             tuple(d08[f] for f in D08_FIELDS),
+            table="p3_d08_tsm_state",
+            columns=list(D08_FIELDS),
         )
 
 
@@ -260,7 +264,8 @@ def reset_d23_intraday(account_id: str) -> None:
     )
     with get_cursor() as cur:
         for sid in _ORDER:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d23_circuit_breaker_intraday
                    (account_id, session_id, l_t, n_t, l_b, n_b,
                     effective_l_halt, effective_e_exposure, session_opened_at,

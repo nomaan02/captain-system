@@ -21,7 +21,7 @@ import json
 import math
 import logging
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import REDIS_KEY_BOCPD, get_redis_client
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
@@ -117,7 +117,8 @@ def _load_ewma(asset_id: str, regime: str, session: int) -> dict:
 def _save_ewma(asset_id: str, regime: str, session: int, ewma: dict):
     """Save updated EWMA state to P3-D05."""
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d05_ewma_states
                (asset_id, regime, session, win_rate, avg_win, avg_loss, n_trades, last_updated)
                VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
@@ -289,7 +290,8 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
     # Write Kelly to D12
     for (r, ss), kelly_full in proposed_kelly.items():
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d12_kelly_parameters
                    (asset_id, regime, session, kelly_full, shrinkage_factor,
                     sizing_override, last_updated)
@@ -299,7 +301,8 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
 
     # Write shrinkage row
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d12_kelly_parameters
                (asset_id, regime, session, kelly_full, shrinkage_factor,
                 sizing_override, last_updated)

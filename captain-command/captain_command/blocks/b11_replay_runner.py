@@ -297,7 +297,7 @@ def get_active_replay(user_id) -> dict | None:
 
 def save_replay(replay_id, user_id) -> dict:
     """Save replay results to p3_replay_results."""
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
 
     with _lock:
         rs = _active_sessions.get(replay_id)
@@ -313,7 +313,7 @@ def save_replay(replay_id, user_id) -> dict:
 
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_replay_results(
                        replay_id, user_id, replay_date, session_type,
                        config, results, summary, comparison,

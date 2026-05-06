@@ -192,9 +192,10 @@ def register_asset(
         print(f"    [DRY-RUN] Would register {asset_id} → {captain_status}")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d00_asset_universe (
                 asset_id, p1_status, p2_status, captain_status,
                 warm_up_progress, aim_warmup_progress, locked_strategy,
@@ -229,10 +230,11 @@ def seed_aims(asset_id: str, dry_run: bool = False) -> None:
     if dry_run:
         print(f"    [DRY-RUN] Would seed {len(TIER1_AIMS)} AIMs for {asset_id}")
         return
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     for aim_id in TIER1_AIMS:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d01_aim_model_states
                    (aim_id, asset_id, status, warmup_progress, last_updated)
                    VALUES (%s, %s, 'INSTALLED', 0.0, now())""",

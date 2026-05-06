@@ -29,7 +29,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS, get_redis_client, CH_ALERTS
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.contract_resolver import get_tick_size
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
@@ -440,7 +440,8 @@ def _log_signal_output(user_id: str, session_id: int, signals: list, below_thres
         "assets": [s["asset"] for s in signals],
     })
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",

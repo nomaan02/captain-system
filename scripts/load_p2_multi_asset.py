@@ -247,7 +247,7 @@ def register_asset_in_d00(
 ) -> None:
     """Insert asset row into P3-D00 (asset_universe)."""
     sys.path.insert(0, str(_PROJECT_ROOT))
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
 
     locked_strategy = json.dumps({
         "model": d06["m"],
@@ -278,7 +278,8 @@ def register_asset_in_d00(
             session_hours["APAC"] = {"open": "20:00", "close": "04:00"}
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d00_asset_universe (
                 asset_id, p1_status, p2_status, captain_status,
                 warm_up_progress, aim_warmup_progress, locked_strategy,
@@ -317,7 +318,8 @@ def register_asset_in_d00(
     # Seed Tier 1 AIMs
     for aim_id in TIER1_AIMS:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d01_aim_model_states
                    (aim_id, asset_id, status, warmup_progress, last_updated)
                    VALUES (%s, %s, 'INSTALLED', 0.0, now())""",

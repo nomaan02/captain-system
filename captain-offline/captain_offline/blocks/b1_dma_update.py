@@ -21,7 +21,7 @@ import json
 import logging
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client
 from shared.decimal_boundary import to_float
 
@@ -250,7 +250,8 @@ def run_dma_update(trade_outcome: dict, forgetting_factor: float = DEFAULT_LAMBD
             else:
                 days_below = 0
 
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d02_aim_meta_weights
                    (aim_id, asset_id, inclusion_probability, inclusion_flag,
                     recent_effectiveness, days_below_threshold, last_updated)

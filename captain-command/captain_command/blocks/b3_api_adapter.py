@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.vault import get_api_key
 from shared.journal import write_checkpoint
 from shared.redis_client import get_redis_client, CH_ALERTS
@@ -690,7 +690,7 @@ def _log_api_health(account_id: str, status: str, latency_ms: float):
     """Insert a single health check result into P3-D14."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d14_api_connection_states(
                        account_id, adapter_type, connection_status,
                        latency_ms, last_updated
@@ -707,7 +707,7 @@ def _log_api_health_batch():
         with get_cursor() as cur:
             for ac_id, state in _active_connections.items():
                 status = "CONNECTED" if state["connected"] else "DISCONNECTED"
-                cur.execute(
+                qexecute(cur,
                     """INSERT INTO p3_d14_api_connection_states(
                            account_id, adapter_type, connection_status,
                            latency_ms, last_updated

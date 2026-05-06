@@ -29,7 +29,7 @@ from datetime import datetime
 
 from shared.constants import now_et
 from shared.decimal_json import dumps_decimal
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 from captain_offline.blocks.b3_pseudotrader import run_pseudotrader
 
@@ -122,7 +122,8 @@ def _store_injection(asset_id: str, candidate: dict, current: dict,
                       pseudo_results: dict, recommendation: str):
     """Store injection comparison to P3-D06."""
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d06_injection_history
                (injection_id, asset, candidate, current_strategy,
                 expected_new, expected_current, pseudo_results,
@@ -313,7 +314,8 @@ class TransitionPhaser:
     def save(self):
         """Persist transition state to p3_d06b_active_transitions."""
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d06b_active_transitions
                    (asset_id, mode, new_strategy, old_strategy, current_day,
                     total_days, completed, started_at, last_updated)

@@ -28,7 +28,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS
 from shared.constants import NOTIFICATION_PRIORITY_VALUES, SYSTEM_TIMEZONE, now_et
 
@@ -430,7 +430,7 @@ def save_user_preferences(user_id: str, prefs: dict):
     """Persist notification preferences for a user to P3-D17."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -529,7 +529,7 @@ def _log_notification_full(
     """
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d10_notification_log(
                        notification_id, user_id, priority,
                        event_type, asset, message, action_required,
@@ -563,7 +563,7 @@ def log_notification_response(notif_id: str, user_id: str,
     ts = now_et().isoformat()
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d10_notification_log(
                        notification_id, user_id, priority,
                        event_type, asset, message, action_required,
@@ -588,7 +588,7 @@ def mark_gui_read(notif_id: str, user_id: str):
     ts = now_et().isoformat()
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d10_notification_log(
                        notification_id, user_id, priority,
                        event_type, asset, message, action_required,

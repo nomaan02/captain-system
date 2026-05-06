@@ -21,7 +21,7 @@ import logging
 import pickle
 from collections import deque
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -223,7 +223,8 @@ def _save_drift_states(asset_id: str):
     states_json = json.dumps({"adwin": adwin_d, "autoencoder": ae_d})
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 "INSERT INTO p3_d04_decay_detector_states "
                 "(asset_id, adwin_states, last_updated) "
                 "VALUES (%s, %s, now())",
@@ -274,7 +275,8 @@ def _renormalise_weights(asset_id: str):
     with get_cursor() as cur:
         for aid, prob in by_aim.items():
             new_prob = prob / total
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d02_aim_meta_weights
                    (aim_id, asset_id, inclusion_probability, inclusion_flag,
                     recent_effectiveness, days_below_threshold, last_updated)
@@ -343,7 +345,8 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
                 row = cur.fetchone()
                 if row:
                     new_prob = row[0] * DRIFT_REDUCTION_FACTOR
-                    cur.execute(
+                    qexecute(
+                        cur,
                         """INSERT INTO p3_d02_aim_meta_weights
                            (aim_id, asset_id, inclusion_probability, inclusion_flag,
                             recent_effectiveness, days_below_threshold, last_updated)
@@ -353,7 +356,8 @@ def run_drift_detection(asset_id: str, aim_features: dict[int, list[float]]):
 
             # Flag AIM for retraining in P3-D01 (Doc 32 PG-04)
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d01_aim_model_states
                        (aim_id, asset_id, status, model_object, last_updated)
                        VALUES (%s, %s, 'ACTIVE', %s, now())""",

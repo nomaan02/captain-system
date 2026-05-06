@@ -18,7 +18,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.decimal_json import loads_decimal
 from shared.decimal_boundary import as_money, to_float
 from shared.journal import write_checkpoint
@@ -683,7 +683,7 @@ def _archive_report(report_id: str, report_type: str, user_id: str, result: dict
     """Store report metadata in P3-D09 report_archive."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d09_report_archive(
                        timestamp, report_id, report_type, user_id,
                        name, format, generated_at

@@ -31,7 +31,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.constants import SYSTEM_TIMEZONE, SESSION_IDS, now_et
 from shared.contract_resolver import resolve_contract_id
 from shared.topstep_client import get_topstep_client, TopstepXClientError
@@ -738,7 +738,8 @@ def _create_incident(incident_type: str, severity: str, component: str, details:
     """Create incident in P3-D21."""
     incident_id = f"INC-{uuid.uuid4().hex[:8].upper()}"
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d21_incident_log
                (incident_id, incident_type, severity, component, details, status, timestamp)
                VALUES (%s, %s, %s, %s, %s, 'OPEN', now())""",
@@ -757,7 +758,8 @@ def _log_data_quality_summary(session_id: int, total: int, clean: int, flagged: 
         "held": held,
     })
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",

@@ -94,7 +94,7 @@ def test_d03_signal_id_round_trip():
     trade_id = f"TEST-SIGID-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     sig_id = f"SIG-{uuid.uuid4()}"
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema/type roundtrip exercise
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, signal_id, user_id, account_id, asset, direction,
                 outcome, ts)
@@ -120,7 +120,7 @@ def test_d03_signal_id_nullable_for_legacy_rows():
     from tests._qdb_helpers import wait_for_row
     trade_id = f"LEGACY-NULL-SIG-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema/type roundtrip exercise
             """INSERT INTO p3_d03_trade_outcome_log
                (trade_id, user_id, account_id, asset, direction,
                 outcome, ts)
@@ -153,7 +153,7 @@ def test_legacy_backfill_assigns_legacy_prefix():
         for i in range(5):
             tid = f"BACKFILL-TEST-{int(time.time())}-{i}-{uuid.uuid4().hex[:6]}"
             seeded_ids.append(tid)
-            cur.execute(
+            cur.execute(  # qexecute: ok — test fixture: schema/type roundtrip exercise
                 """INSERT INTO p3_d03_trade_outcome_log
                    (trade_id, user_id, account_id, asset, direction,
                     outcome, ts) VALUES (%s, 'backfill_test', 'acct', 'ES', 1,
@@ -211,7 +211,7 @@ def test_d11_pair_series_round_trip():
     rid = f"TEST-D11-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     pair = '[{"signal_id": "SIG-1", "pnl": 12.5}]'
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema/type roundtrip exercise
             """INSERT INTO p3_d11_pseudotrader_results
                (result_id, update_type, sharpe_baseline, sharpe_updated,
                 sharpe_improvement, drawdown_change, winrate_delta, pbo, dsr,
@@ -239,7 +239,7 @@ def test_d06_phase7_columns_round_trip():
     from tests._qdb_helpers import wait_for_row
     iid = f"TEST-D06-{int(time.time())}-{uuid.uuid4().hex[:6]}"
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: schema/type roundtrip exercise
             """INSERT INTO p3_d06_injection_history
                (injection_id, asset, candidate, current_strategy, expected_new,
                 expected_current, pseudo_results, recommendation, status,

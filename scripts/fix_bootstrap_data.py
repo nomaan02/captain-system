@@ -67,7 +67,7 @@ def fix_ewma(dry_run=False):
     print("\n  FIX 1: Convert EWMA values from r_mi to dollars")
     print("  " + "─" * 50)
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
 
     # Read current EWMA (latest per key)
     with get_cursor() as cur:
@@ -109,7 +109,8 @@ def fix_ewma(dry_run=False):
 
     for entry in to_fix:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d05_ewma_states
                    (asset_id, regime, session, win_rate, avg_win, avg_loss, n_trades, last_updated)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
@@ -125,7 +126,7 @@ def fix_aim_status(dry_run=False):
     print("\n  FIX 2: Activate Tier 1 AIMs")
     print("  " + "─" * 50)
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     count = 0
 
     for asset_id in ACTIVE_ASSETS:
@@ -134,7 +135,8 @@ def fix_aim_status(dry_run=False):
                 count += 1
                 continue
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d01_aim_model_states
                        (aim_id, asset_id, status, warmup_progress, last_updated)
                        VALUES (%s, %s, 'ACTIVE', 1.0, now())""",
@@ -161,10 +163,11 @@ def fix_tsm_daily_loss(dry_run=False):
         return
 
     import json as _json
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     with get_cursor() as cur:
         # Must insert COMPLETE row — QuestDB append-only, partial row overwrites all fields
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d08_tsm_state (
                 account_id, user_id, name, classification,
                 starting_balance, current_balance, current_drawdown, daily_loss_used,

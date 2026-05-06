@@ -14,7 +14,7 @@ the one with the highest recent_effectiveness to maintain ensemble diversity.
 
 import logging
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 from captain_offline.blocks.version_snapshot import snapshot_before_update
 
@@ -80,7 +80,8 @@ def _reactivate_aim(aim_id: int, asset_id: str, num_active: int):
     snapshot_before_update("P3-D01", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         # Update status to ACTIVE
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d01_aim_model_states
                (aim_id, asset_id, status, warmup_progress, last_updated)
                VALUES (%s, %s, 'ACTIVE', 1.0, now())""",
@@ -89,7 +90,8 @@ def _reactivate_aim(aim_id: int, asset_id: str, num_active: int):
     snapshot_before_update("P3-D02", "AIM_LIFECYCLE")
     with get_cursor() as cur:
         # Set equal weight
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d02_aim_meta_weights
                (aim_id, asset_id, inclusion_probability, inclusion_flag,
                 recent_effectiveness, days_below_threshold, last_updated)

@@ -30,7 +30,7 @@ import numpy as np
 from scipy import stats as sp_stats
 
 from captain_offline.blocks.b2_cusum import CUSUMDetector
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import REDIS_KEY_BOCPD, get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -247,7 +247,8 @@ def persist_combined_detector_state(
     state = bocpd_det.to_dict()
     cusum_state = cusum_det.to_dict()
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d04_decay_detector_states
                (asset_id, bocpd_run_length_posterior, bocpd_cp_probability,
                 bocpd_cp_history, cusum_c_up_prev, cusum_c_down_prev,

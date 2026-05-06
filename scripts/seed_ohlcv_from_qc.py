@@ -18,7 +18,7 @@ import sys
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 # Active assets
 ACTIVE_ASSETS = {"ES", "MES", "NQ", "MNQ", "M2K", "MYM", "NKD", "MGC", "ZB", "ZN"}
@@ -55,7 +55,8 @@ def seed_from_combined(csv_path: str) -> int:
     for asset, rows in sorted(rows_by_asset.items()):
         with get_cursor() as cur:
             for r in rows:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d30_daily_ohlcv
                        (asset_id, trade_date, open, high, low, close, volume, ts)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
@@ -98,7 +99,8 @@ def seed_from_per_asset(data_dir: str) -> int:
 
         with get_cursor() as cur:
             for r in rows:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d30_daily_ohlcv
                        (asset_id, trade_date, open, high, low, close, volume, ts)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",

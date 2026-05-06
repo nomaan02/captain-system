@@ -733,9 +733,10 @@ def compute_all_features(
             # Persist current spread to history for future z-score lookups
             if f["current_spread"] is not None:
                 try:
-                    from shared.questdb_client import get_cursor as _gc
+                    from shared.questdb_client import get_cursor as _gc, qexecute
                     with _gc() as _cur:
-                        _cur.execute(
+                        qexecute(
+                            _cur,
                             """INSERT INTO p3_spread_history
                                (asset_id, session_id, spread, timestamp)
                                VALUES (%s, %s, %s, now())""",
@@ -1417,14 +1418,15 @@ def store_opening_volume(asset_id: str, session_type: str, or_minutes: int,
     average via `_get_historical_or_range`. Pre-Phase 2 callers can omit
     `or_range`; the column is NULL-tolerant in the schema.
     """
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     from datetime import datetime
     import pytz
     et = pytz.timezone("America/New_York")
     today_str = datetime.now(et).strftime("%Y-%m-%d")
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d29_opening_volumes
                    (asset_id, session_date, session_type, or_minutes,
                     volume_first_m_min, or_range_first_m_min, ts)
@@ -1450,13 +1452,14 @@ def store_opening_volatility(asset_id: str):
     vol = _get_recent_5min_vol(asset_id)
     if vol is None:
         return
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     import pytz
     et = pytz.timezone("America/New_York")
     today_str = datetime.now(et).strftime("%Y-%m-%d")
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(
+                cur,
                 """INSERT INTO p3_d33_opening_volatility
                    (asset_id, session_date, opening_range_pct)
                    VALUES (%s, to_timestamp(%s, 'yyyy-MM-dd'), %s)""",
@@ -1474,7 +1477,7 @@ def store_daily_ohlcv(asset_id: str):
     from TopstepX and inserts into p3_d30_daily_ohlcv. This keeps the
     table self-sustaining after the initial QC bootstrap.
     """
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     contract_id = resolve_contract_id(asset_id)
     if not contract_id:
         return
@@ -1497,7 +1500,8 @@ def store_daily_ohlcv(asset_id: str):
             close = bar.get("c") if bar.get("c") is not None else bar.get("close")
             volume = bar.get("v") if bar.get("v") is not None else bar.get("volume", 0)
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d30_daily_ohlcv
                        (asset_id, trade_date, open, high, low, close, volume, ts)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",

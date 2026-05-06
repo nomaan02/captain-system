@@ -32,7 +32,7 @@ import numpy as np
 from hmmlearn.hmm import GaussianHMM
 
 from shared.aim16_observation_panel import build_observation_panel
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,8 @@ def save_hmm_state(state: dict):
         pa_s = json.dumps(state.get("prior_alpha") or {})
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d26_hmm_opportunity_state
                (hmm_params, current_state_probs, opportunity_weights,
                 prior_alpha, last_trained, training_window, n_observations,

@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime
 from typing import Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import publish_to_stream, STREAM_COMMANDS
 from shared.journal import write_checkpoint
 from shared.constants import now_et
@@ -244,7 +244,7 @@ def _log_injection_decision(candidate_id: str, decision: str, user_id: str):
     """Log injection decision to P3-D17 session_log."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",

@@ -73,12 +73,55 @@ NOOP_TERNARY_RE = re.compile(
 
 SUPPRESSION_MARKER = "# decimal-boundary: ok"
 
+# --------------------------------------------------------------------- #
+# Phase 5 (2026-05) — qexecute() compliance check                        #
+# --------------------------------------------------------------------- #
+#
+# Refuses any raw `cur.execute("INSERT INTO p[23]_…", …)` or
+# `cur.execute("UPDATE p[23]_…", …)` site that is not routed through
+# `qexecute()` from shared/questdb_client.py.
+#
+# The Phase 1-3 migration converted production INSERT call sites to
+# qexecute and suppressed the remaining intentional bypasses (debug
+# utilities, test fixtures that exercise the schema directly) with
+# `# qexecute: ok`. This lint prevents new code from re-introducing the
+# bypass.
+#
+# The matcher works line-by-line PLUS a 2-line lookahead, since SQL is
+# usually on the line(s) following the `cur.execute(` call:
+#
+#   cur.execute(                         # candidate (line N)
+#       """INSERT INTO p3_d03_trade_…    # match (line N+1)
+#          VALUES (%s)""",
+#       (…))
+#
+# Suppression: add `# qexecute: ok` to ANY of the 3 lookahead lines.
+QEXECUTE_BYPASS_RE = re.compile(
+    r"\b(?:cur|_cur|c|cursor)\.execute\s*\(",
+)
+QEXECUTE_TARGET_RE = re.compile(
+    r"\b(?:INSERT\s+INTO|UPDATE)\s+p[23]_",
+    re.IGNORECASE,
+)
+QEXECUTE_SUPPRESSION_MARKER = "# qexecute: ok"
+QEXECUTE_LOOKAHEAD_LINES = 2
+
+# TODO[Phase 5 follow-up]: Check 2 — bare-string Decimal in json.dumps.
+# Heuristic-driven check refusing `json.dumps(..., str(decimal_var), ...)`.
+# Deferred because the false-positive rate is high and Phase 4's marker
+# rewrite already eliminates the silent precision-loss path. Re-evaluate
+# once a regression appears.
+_TODO_BARE_DECIMAL_DUMP = None  # noqa: F841 — placeholder anchor
+
 # Files / directories to skip — lint script itself, tests of the boundary,
 # canonical schema (DDL strings), and the migration docs.
 SKIP_GLOBS = {
     "scripts/lint_decimal_boundary.py",
     "tests/test_decimal_boundary.py",
     "tests/test_decimal_boundary_lint.py",
+    # Phase 5 meta-test contains literal `cur.execute(...)` strings inside
+    # test-fixture source code; lint must not police its own self-tests.
+    "tests/test_qexecute_lint.py",
     "shared/decimal_boundary.py",
     "shared/canonical_schemas.py",
     "MONETARY_DECIMAL_MIGRATION_PLAN.md",
@@ -121,17 +164,35 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
     except (UnicodeDecodeError, OSError):
         return findings
 
-    for i, line in enumerate(content.splitlines(), start=1):
+    lines = content.splitlines()
+    for idx, line in enumerate(lines):
+        line_num = idx + 1
         if SUPPRESSION_MARKER in line:
             continue
         # No-op ternary check is universally bad (no scope filter needed)
         if NOOP_TERNARY_RE.search(line):
-            findings.append((i, line.rstrip()))
+            findings.append((line_num, line.rstrip()))
             continue
+
+        # qexecute compliance check: candidate `cur.execute(` line + a
+        # 2-line lookahead window so multi-line INSERTs are caught at the
+        # call site (line N), not at the SQL string (line N+1). The
+        # suppression marker may appear on any of those 3 lines.
+        if QEXECUTE_BYPASS_RE.search(line):
+            window = lines[idx : idx + 1 + QEXECUTE_LOOKAHEAD_LINES]
+            window_text = "\n".join(window)
+            if (
+                QEXECUTE_TARGET_RE.search(window_text)
+                and QEXECUTE_SUPPRESSION_MARKER not in window_text
+            ):
+                findings.append((line_num, line.rstrip()))
+                # Don't `continue` — the same line may also match the
+                # falsy-zero antipattern, and we want both findings.
+
         if not _line_in_scope(line):
             continue
         if OR_NUMBER_RE.search(line):
-            findings.append((i, line.rstrip()))
+            findings.append((line_num, line.rstrip()))
     return findings
 
 
@@ -166,15 +227,31 @@ def iter_python_files(root: Path):
             yield full
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the lint over the repo (default) or a caller-supplied root.
+
+    The optional positional argument lets the Phase 5 meta-test point the
+    scanner at `tmp_path` instead of the actual repo root, so test
+    probes are evaluated in isolation. With no argv the script behaves
+    exactly like before — scans `REPO_ROOT`.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv:
+        root = Path(argv[0]).resolve()
+    else:
+        root = REPO_ROOT
+
     total = 0
     files_with_findings = 0
-    for fp in iter_python_files(REPO_ROOT):
+    for fp in iter_python_files(root):
         findings = lint_file(fp)
         if not findings:
             continue
         files_with_findings += 1
-        rel = fp.relative_to(REPO_ROOT)
+        try:
+            rel = fp.relative_to(root)
+        except ValueError:
+            rel = fp
         for lineno, snippet in findings:
             print(f"{rel}:{lineno}: {snippet}")
             total += 1
@@ -193,6 +270,12 @@ def main() -> int:
     print("  2. `float(x) if not isinstance(x, T) else float(x)` no-op ternary — "
           "replace with `shared.decimal_boundary.to_float(x)` "
           "(None-safe). Same shape with Decimal — use `as_money(x)`.")
+    print("  3. raw `cur.execute(\"INSERT INTO p3_…\", …)` — replace with "
+          "`qexecute(cur, sql, params)` from shared.questdb_client. The "
+          "helper auto-coerces Decimal params to the right Python type for "
+          "DOUBLE / SYMBOL / INT columns. For test fixtures or debug-only "
+          "utilities, suppress with `# qexecute: ok` on the call line "
+          "or any of the 2 following lines.")
     print()
     print("For legitimate non-monetary defaults (probability, divisor, "
           "dimensionless ratio) add suffix marker:")

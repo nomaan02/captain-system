@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import (
     CH_ALERTS,
     CH_STATUS,
@@ -411,7 +411,7 @@ def _log_signal_received(signal_id: str, user_id: str, signal: dict):
     try:
         with get_cursor() as cur:
             ctx = signal.get("_context") or {}
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id,
                        asset, details
@@ -442,7 +442,7 @@ def mark_signals_cleared(user_id: str, signal_ids: list[str]):
     try:
         with get_cursor() as cur:
             for sid in signal_ids:
-                cur.execute(
+                qexecute(cur,
                     """INSERT INTO p3_session_event_log(
                            ts, user_id, event_type, event_id,
                            asset, details
@@ -464,7 +464,7 @@ def _log_trade_confirmation(signal_id: str, user_id: str, action: str, data: dic
     """Log TAKEN/SKIPPED to P3-D17."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id,
                        asset, details
@@ -491,7 +491,7 @@ def _log_notification(notif_id: str, user_id: str, priority: str,
     """Insert into P3-D10 notification_log."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d10_notification_log(
                        notification_id, user_id, priority,
                        message, gui_delivered, ts
@@ -510,7 +510,7 @@ def _handle_tsm_switch(data: dict):
     logger.info("TSM switch: account=%s tsm=%s user=%s", account_id, tsm_name, user_id)
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -528,7 +528,7 @@ def _handle_concentration_response(event_id: str, decision: str, user_id: str):
     logger.info("Concentration %s for event %s by %s", decision, event_id, user_id)
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -547,7 +547,7 @@ def _confirm_contract_roll(asset: str, new_contract: str, user_id: str):
     logger.info("Roll confirmed: asset=%s contract=%s user=%s", asset, new_contract, user_id)
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -566,7 +566,7 @@ def _update_action_item(user_id: str, action_id: str, new_status: str, notes: st
     logger.info("Action item %s → %s by %s", action_id, new_status, user_id)
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -591,7 +591,7 @@ def _set_asset_pause(asset: str, paused: bool, user_id: str):
     logger.info("Asset %s %s by %s", asset, "PAUSED" if paused else "RESUMED", user_id)
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",

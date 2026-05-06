@@ -30,7 +30,7 @@ from decimal import Decimal
 import numpy as np
 from collections import defaultdict
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,8 @@ def estimate_cb_params(account_id: str, model_m: int):
 def _save_params(account_id: str, model_m: int, params: dict):
     """Save circuit breaker parameters to P3-D25."""
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d25_circuit_breaker_params
                (account_id, model_m, r_bar, beta_b, sigma, rho_bar,
                 n_observations, p_value, l_star, cold_start, last_updated)

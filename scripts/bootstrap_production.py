@@ -139,7 +139,7 @@ def phase1_update_d00(dry_run: bool = False):
     print("  " + "─" * 50)
 
     if not dry_run:
-        from shared.questdb_client import get_cursor, read_d00_row, update_d00_fields, D00_COLUMNS
+        from shared.questdb_client import get_cursor, qexecute, read_d00_row, update_d00_fields, D00_COLUMNS
 
     for asset_id in ACTIVE_ASSETS:
         spec = ASSET_SPECS[asset_id]
@@ -181,9 +181,12 @@ def phase1_update_d00(dry_run: bool = False):
                 cols = D00_COLUMNS + ["last_updated"]
                 placeholders = ", ".join(["%s"] * len(D00_COLUMNS) + ["now()"])
                 col_names = ", ".join(cols)
-                cur.execute(
+                qexecute(
+                    cur,
                     f"INSERT INTO p3_d00_asset_universe ({col_names}) VALUES ({placeholders})",
                     tuple(row[k] for k in D00_COLUMNS),
+                    table="p3_d00_asset_universe",
+                    columns=list(D00_COLUMNS),
                 )
                 print(f"    [NEW] {asset_id}: row inserted with full spec")
             else:
@@ -226,7 +229,7 @@ def phase2_update_capital_silo(dry_run: bool = False):
               f"accounts=[{ACCOUNT_ID}], max_pos={MAX_SIMULTANEOUS_POSITIONS}")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     existing_accounts: list[str] = []
     existing_capital_history: str | None = None
     with get_cursor() as cur:
@@ -288,7 +291,8 @@ def phase2_update_capital_silo(dry_run: bool = False):
         })
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d16_user_capital_silos (
                 user_id, status, role,
                 starting_capital, total_capital, accounts,
@@ -332,7 +336,7 @@ def phase3_seed_aim_weights(dry_run: bool = False):
               f"({len(ACTIVE_ASSETS)} assets x {len(TIER1_AIMS)} AIMs)")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     with get_cursor() as cur:
         cur.execute("SELECT count() FROM p3_d02_aim_meta_weights")
         existing = cur.fetchone()[0]
@@ -345,7 +349,8 @@ def phase3_seed_aim_weights(dry_run: bool = False):
     for asset_id in ACTIVE_ASSETS:
         for aim_id in TIER1_AIMS:
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d02_aim_meta_weights (
                         aim_id, asset_id, inclusion_probability, inclusion_flag,
                         recent_effectiveness, days_below_threshold, last_updated
@@ -375,7 +380,7 @@ def phase4_seed_circuit_breaker(dry_run: bool = False):
         print(f"    [DRY-RUN] {ACCOUNT_ID}: cold-start (beta_b=0, layers 3-4 disabled)")
         return
 
-    from shared.questdb_client import get_cursor
+    from shared.questdb_client import get_cursor, qexecute
     with get_cursor() as cur:
         cur.execute(
             "SELECT count() FROM p3_d25_circuit_breaker_params WHERE account_id = %s",
@@ -386,7 +391,8 @@ def phase4_seed_circuit_breaker(dry_run: bool = False):
             return
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d25_circuit_breaker_params (
                 account_id, model_m, r_bar, beta_b, sigma, rho_bar,
                 n_observations, p_value, l_star, cold_start, last_updated

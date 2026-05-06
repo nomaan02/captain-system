@@ -18,7 +18,7 @@ import os
 import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 
 # System parameters with defaults from spec
@@ -93,7 +93,8 @@ def seed_system_params():
         for key, spec in SYSTEM_PARAMS.items():
             value = json.dumps(spec["value"]) if not isinstance(spec["value"], str) else spec["value"]
             try:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d17_system_monitor_state
                        (param_key, param_value, category, last_updated)
                        VALUES (%s, %s, %s, now())""",

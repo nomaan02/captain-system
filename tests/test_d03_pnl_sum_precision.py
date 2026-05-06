@@ -31,7 +31,7 @@ def test_d03_sum_pnl_many_fractional_trades():
 
     with get_cursor() as cur:
         for i in range(n_rows):
-            cur.execute(
+            cur.execute(  # qexecute: ok — test fixture: directly exercises DECIMAL roundtrip
                 """INSERT INTO p3_d03_trade_outcome_log
                    (trade_id, signal_id, user_id, account_id, asset, direction,
                     outcome, pnl, gross_pnl, commission, contracts, ts)

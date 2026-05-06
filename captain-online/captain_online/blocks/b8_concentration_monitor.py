@@ -19,7 +19,7 @@ import json
 import logging
 from datetime import datetime
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS
 from shared.constants import now_et
 
@@ -131,7 +131,8 @@ def _notify_admins(message: str):
 
 def _log_concentration_event(event: dict):
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",
@@ -155,7 +156,8 @@ def _get_recent_alert_count(days: int = 30) -> int:
 
 def _log_capacity_recommendation(rec_type: str, message: str, severity: str):
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d17_system_monitor_state
                (param_key, param_value, category, last_updated)
                VALUES (%s, %s, %s, now())""",

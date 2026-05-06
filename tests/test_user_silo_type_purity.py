@@ -43,7 +43,7 @@ def test_load_user_silo_type_purity():
     user_id = f"silo-type-purity-{int(time.time())}"
 
     with get_cursor() as cur:
-        cur.execute(
+        cur.execute(  # qexecute: ok — test fixture: directly exercises type-purity
             """INSERT INTO p3_d16_user_capital_silos (
                 user_id, status, role, starting_capital, total_capital,
                 accounts, max_simultaneous_positions, max_portfolio_risk_pct,

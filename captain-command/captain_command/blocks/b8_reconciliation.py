@@ -27,7 +27,7 @@ import math
 from datetime import datetime
 from typing import Any, Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.journal import write_checkpoint
 from shared.constants import SOD_RESET_HOUR, SOD_RESET_MINUTE, now_et
 from shared.json_helpers import parse_json, parse_json_decimal
@@ -577,7 +577,7 @@ def _reset_daily_counters():
     try:
         with get_cursor() as cur:
             # Forensic audit trail (kept from prior impl).
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -615,7 +615,7 @@ def _reset_daily_counters():
                 # and the row is type-pure.
                 params[7] = Decimal("0")
                 params.append(now_et().isoformat())  # last_updated
-                cur.execute(
+                qexecute(cur,
                     """INSERT INTO p3_d08_tsm_state(
                            account_id, user_id, name, classification,
                            starting_balance, current_balance, current_drawdown,
@@ -654,7 +654,7 @@ def _reset_daily_counters():
             # actually opens.
             for ac_id in accounts:
                 for sid in _TRADING_DAY_SESSION_ORDER:
-                    cur.execute(
+                    qexecute(cur,
                         """INSERT INTO p3_d23_circuit_breaker_intraday(
                                account_id, session_id, l_t, n_t,
                                l_b, n_b,
@@ -822,7 +822,7 @@ def _update_account_balance(ac_id: str, new_balance: Any):
             params[5] = new_bal  # current_balance is column index 5
             params.append(now_et().isoformat())  # last_updated
 
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d08_tsm_state(
                        account_id, user_id, name, classification,
                        starting_balance, current_balance, current_drawdown,
@@ -854,7 +854,7 @@ def _update_account_balance(ac_id: str, new_balance: Any):
             )
 
             # 3. Audit trail in session event log
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -914,7 +914,7 @@ def _persist_topstep_state_to_d08(ac_id: str, topstep_state_json: str):
             params[26] = topstep_state_json  # topstep_state
             params.append(now_et().isoformat())  # last_updated
 
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d08_tsm_state(
                        account_id, user_id, name, classification,
                        starting_balance, current_balance, current_drawdown,
@@ -946,7 +946,7 @@ def _persist_topstep_state_to_d08(ac_id: str, topstep_state_json: str):
             )
 
             # 3. Forensic audit trail in session event log (kept from prior impl)
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",
@@ -967,7 +967,7 @@ def _log_reconciliation(ac_id: str, user_id: str, method: str,
     """Insert reconciliation result into P3-D19."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_d19_reconciliation_log(
                        recon_id, account_id, user_id, source,
                        mismatches, corrected, status, ts

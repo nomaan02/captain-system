@@ -27,7 +27,7 @@ import random
 import logging
 
 from shared.constants import now_et
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.redis_client import get_redis_client, CH_ALERTS
 from shared.decimal_boundary import as_money_or_none, to_float
 
@@ -129,7 +129,8 @@ def _write_pass_probability(
                 )
             return
         p = list(row)
-        cur.execute(
+        qexecute(
+            cur,
             """INSERT INTO p3_d08_tsm_state(
                    account_id, user_id, name, classification,
                    starting_balance, current_balance, current_drawdown,

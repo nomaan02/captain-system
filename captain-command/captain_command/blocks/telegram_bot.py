@@ -27,7 +27,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Callable
 
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 from shared.constants import SYSTEM_TIMEZONE, now_et
 
 logger = logging.getLogger(__name__)
@@ -649,7 +649,7 @@ def _log_bot_interaction(chat_id: str, interaction_type: str, details: str):
     """Log all bot interactions to P3-D17 session_event_log (spec §3.3)."""
     try:
         with get_cursor() as cur:
-            cur.execute(
+            qexecute(cur,
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
                    ) VALUES(%s, %s, %s, %s, %s, %s)""",

@@ -20,7 +20,7 @@ from shared.hmm_online_inference import (
     probs_to_ny_lon_apac,
     smooth_probability_vector,
 )
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -118,7 +118,8 @@ def persist_online_hmm_inference(session_id: int, asset_universe: list[str]) -> 
     hmm_store = hmm_blob if isinstance(hmm_blob, str) else json.dumps(hp)
 
     with get_cursor() as cur:
-        cur.execute(
+        qexecute(
+            cur,
             """
             INSERT INTO p3_d26_hmm_opportunity_state
             (hmm_params, current_state_probs, opportunity_weights,

@@ -38,7 +38,7 @@ from shared.redis_client import (
     publish_to_stream,
     STREAM_TRADE_OUTCOMES,
 )
-from shared.questdb_client import get_cursor
+from shared.questdb_client import get_cursor, qexecute
 
 logging.basicConfig(
     level=logging.INFO,
@@ -396,7 +396,8 @@ class PaperTrader:
         model_m = _get_locked_m("ES")
         try:
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d03_trade_outcome_log (
                         trade_id, signal_id, user_id, account_id, asset, direction,
                         entry_price, contracts, outcome, entry_time,
@@ -422,7 +423,8 @@ class PaperTrader:
         net_d = Decimal(str(round(net_pnl, 2)))
         try:
             with get_cursor() as cur:
-                cur.execute(
+                qexecute(
+                    cur,
                     """INSERT INTO p3_d03_trade_outcome_log (
                         trade_id, signal_id, user_id, account_id, asset, direction,
                         entry_price, exit_price, contracts,
