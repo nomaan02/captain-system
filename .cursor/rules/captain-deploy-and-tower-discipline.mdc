@@ -68,27 +68,31 @@ all of:
    type -q dco; or function dco
        docker compose -f docker-compose.yml -f docker-compose.local.yml $argv
    end
-   type -q cap-run; or function cap-run
-       set -l script $argv[1]
-       set -l rest $argv[2..-1]
-       docker compose -f docker-compose.yml -f docker-compose.local.yml \
-           exec -T -e PYTHONPATH=/app captain-offline \
-           python /captain/scripts/$script $rest
-   end
-   type -q online-run; or function online-run
-       set -l script $argv[1]
-       set -l rest $argv[2..-1]
-       docker compose -f docker-compose.yml -f docker-compose.local.yml \
-           exec -T -e PYTHONPATH=/app captain-online \
-           python3 /app/$script $rest
-   end
-   type -q cmd-run; or function cmd-run
-       set -l script $argv[1]
-       set -l rest $argv[2..-1]
-       docker compose -f docker-compose.yml -f docker-compose.local.yml \
-           exec -T -e PYTHONPATH=/app captain-command \
-           python3 /app/$script $rest
-   end
+ type -q cap-run; or function cap-run
+ set -l script $argv[1]
+ set -l rest $argv[2..-1]
+ docker compose -f docker-compose.yml -f docker-compose.local.yml \
+ exec -T -e PYTHONPATH=/app captain-offline \
+ python /captain/scripts/$script $rest
+ end
+ type -q online-run; or function online-run
+ set -l script $argv[1]
+ set -l rest $argv[2..-1]
+ docker compose -f docker-compose.yml -f docker-compose.local.yml \
+ exec -T -e PYTHONPATH=/app captain-online \
+ python3 /app/$script $rest
+ end
+ type -q cmd-run; or function cmd-run
+ # Try host-mounted ./scripts/ first (/captain/scripts/), fall back to
+ # built-in container scripts at /app/. This lets ad-hoc scripts in
+ # repo ./scripts/ run via cmd-run without re-baking the image, while
+ # preserving cmd-run for container-internal scripts like dry_run_command.py.
+ set -l script $argv[1]
+ set -l rest $argv[2..-1]
+ docker compose -f docker-compose.yml -f docker-compose.local.yml \
+ exec -T -e PYTHONPATH=/app captain-command \
+ sh -c "if [ -f /captain/scripts/$script ]; then exec python3 /captain/scripts/$script $rest; else exec python3 /app/$script $rest; fi"
+ end
 
    # Tower-side packages (apt or snap)
    command -v jq        > /dev/null 2>&1; or sudo apt install -y jq
@@ -117,18 +121,26 @@ already defined and a safety net when they aren't.
 
 The four helpers and their semantics:
 
-| Helper      | Container         | What it runs                                                        |
-|-------------|-------------------|---------------------------------------------------------------------|
-| `dco`       | host docker CLI   | `docker compose -f docker-compose.yml -f docker-compose.local.yml`  |
-| `cap-run`   | `captain-offline` | `python /captain/scripts/<script>` with `PYTHONPATH=/app`           |
-| `online-run`| `captain-online`  | `python3 /app/<script>` with `PYTHONPATH=/app`                      |
-| `cmd-run`   | `captain-command` | `python3 /app/<script>` with `PYTHONPATH=/app`                      |
+| Helper      | Container         | What it runs                                                                         |
+|-------------|-------------------|--------------------------------------------------------------------------------------|
+| `dco`       | host docker CLI   | `docker compose -f docker-compose.yml -f docker-compose.local.yml`                   |
+| `cap-run`   | `captain-offline` | `python /captain/scripts/<script>` with `PYTHONPATH=/app`                            |
+| `online-run`| `captain-online`  | `python3 /app/<script>` with `PYTHONPATH=/app`                                       |
+| `cmd-run`   | `captain-command` | tries `/captain/scripts/<script>` first, falls back to `/app/<script>` (PYTHONPATH=/app) |
 
-Note the path differences: `cap-run` reaches `/captain/scripts/` (the
-host-mounted scripts directory), while `online-run` and `cmd-run` reach
-`/app/` (the container's working directory). This is deliberate — the offline
-container has the scripts dir bind-mounted; the other two run scripts that
-were copied in at build time.
+Path discipline:
+
+- `cap-run` and `cmd-run` BOTH have `./scripts:/captain/scripts:ro` mounted (per
+  `docker-compose.local.yml`), so any repo-root `./scripts/foo.py` is reachable
+  inside the container at `/captain/scripts/foo.py`. Use this for ad-hoc /
+  diagnostic scripts that you don't want to re-bake into the image.
+- `cmd-run` ALSO falls back to `/app/<script>` so it still finds container-internal
+  scripts like `dry_run_command.py` / `test_gui_order.py` / `test_order_roundtrip.py`
+  that live at `./captain-command/*.py` and get baked in via `COPY . .`.
+- `online-run` ONLY reaches `/app/` because `captain-online` does NOT have a
+  scripts mount — by design (live signal engine, no ad-hoc execution surface).
+  If you need ad-hoc execution against captain-online, prefer running the script
+  via captain-command (with the shared mounts) and have it talk over Redis/QuestDB.
 
 ---
 
@@ -160,6 +172,45 @@ across agent sessions.
 > `docs2/quick-fixes/` for full context.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
+
+### 2026-05-06 — `cmd-run <script>.py`: `No such file or directory` for repo-root scripts
+
+**Original (broken):**
+```fish
+cmd-run diagnose_bracket_settings.py
+```
+
+**Error observed:**
+```
+python3: can't open file '/app/diagnose_bracket_settings.py': [Errno 2] No such file or directory
+```
+
+**Corrected (immediate workaround):**
+```fish
+dco exec -T -e PYTHONPATH=/app captain-command \
+    python3 /captain/scripts/diagnose_bracket_settings.py
+```
+
+**Corrected (permanent — install the smarter `cmd-run`):**
+```fish
+function cmd-run
+    set -l script $argv[1]
+    set -l rest $argv[2..-1]
+    docker compose -f docker-compose.yml -f docker-compose.local.yml \
+        exec -T -e PYTHONPATH=/app captain-command \
+        sh -c "if [ -f /captain/scripts/$script ]; then exec python3 /captain/scripts/$script $rest; else exec python3 /app/$script $rest; fi"
+end
+funcsave cmd-run
+```
+
+**Reason:** the original `cmd-run` ran `python3 /app/<script>` exclusively, which only
+finds scripts baked into the captain-command image at build time (e.g.
+`./captain-command/dry_run_command.py` -> `/app/dry_run_command.py`). Repo-root
+scripts at `./scripts/*.py` are bind-mounted at `/captain/scripts/` (per
+`docker-compose.local.yml` line 62), NOT at `/app/`. The smarter helper checks
+`/captain/scripts/` first and falls back to `/app/`, so both kinds of scripts
+"just work". Update the rule's helper preamble (§3) AND each tower's installed
+function so this stays fixed.
 
 ### 2026-05-06 — `cat >> ~/.config/fish/config.fish <<'HELPERS'` fails in fish
 
