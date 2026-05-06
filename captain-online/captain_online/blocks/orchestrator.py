@@ -958,9 +958,9 @@ class OnlineOrchestrator:
                         }
                         continue
                     completed_state[sess_key] = {
-                        "effective_l_halt": _D(str(row[1] or 0)),
-                        "effective_e_exposure": _D(str(row[2] or 0)),
-                        "l_t_final": _D(str(row[0] or 0)),
+                        "effective_l_halt": _D(str(row[1] or 0)),  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
+                        "effective_e_exposure": _D(str(row[2] or 0)),  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
+                        "l_t_final": _D(str(row[0] or 0)),  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
                     }
 
             # Idempotency: if THIS session already has session_opened_at on

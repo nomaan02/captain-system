@@ -246,17 +246,31 @@ def write_d08_row(d08: dict, new_current_balance: Decimal,
 # ---------------------------------------------------------------------------
 
 def reset_d23_intraday(account_id: str) -> None:
-    """Zero today's L_t, n_t and clear per-basket l_b/n_b."""
+    """Zero today's per-session L_t, n_t and clear per-basket l_b/n_b.
+
+    Per-session-budget update (2026-05-06): D23 is now keyed by
+    (account_id, session_id). Insert one zero row for EVERY session in
+    TRADING_DAY_SESSION_ORDER so the next session-open hook starts clean.
+    effective_l_halt / effective_e_exposure / session_opened_at left NULL —
+    will be populated by the orchestrator's _initialize_session_budget hook
+    when each session actually opens.
+    """
+    from shared.sod_session_budget import (
+        TRADING_DAY_SESSION_ORDER as _ORDER,
+    )
     with get_cursor() as cur:
-        cur.execute(
-            """INSERT INTO p3_d23_circuit_breaker_intraday
-               (account_id, l_t, n_t, l_b, n_b, last_updated)
-               VALUES (%s, %s, %s, %s, %s, now())""",
-            (
-                account_id, Decimal("0"), 0,
-                dumps_decimal({}), json.dumps({}),
-            ),
-        )
+        for sid in _ORDER:
+            cur.execute(
+                """INSERT INTO p3_d23_circuit_breaker_intraday
+                   (account_id, session_id, l_t, n_t, l_b, n_b,
+                    effective_l_halt, effective_e_exposure, session_opened_at,
+                    last_updated)
+                   VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, NULL, now())""",
+                (
+                    account_id, int(sid), Decimal("0"), 0,
+                    dumps_decimal({}), json.dumps({}),
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------

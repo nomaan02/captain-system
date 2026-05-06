@@ -824,7 +824,7 @@ def _get_tsm_status(user_id: str, user_stream=None) -> list[dict]:
                         l_t_raw = sess_row[1]
                         eff_l_halt_raw = sess_row[3]
                         eff_e_raw = sess_row[4]
-                        l_t_d = Decimal(str(l_t_raw or 0))
+                        l_t_d = Decimal(str(l_t_raw or 0))  # decimal-boundary: ok (Decimal(str()) coerces falsy-zero correctly)
                         eff_l_halt_d = (
                             Decimal(str(eff_l_halt_raw))
                             if eff_l_halt_raw is not None else None
