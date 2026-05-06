@@ -383,13 +383,17 @@ DEDUP UPSERT KEYS(last_updated, account_id);
 D23_CIRCUIT_BREAKER_INTRADAY = """
 CREATE TABLE IF NOT EXISTS p3_d23_circuit_breaker_intraday (
     account_id SYMBOL,
+    session_id INT,
     l_t DECIMAL(18, 2),
     n_t INT,
     l_b STRING,
     n_b STRING,
+    effective_l_halt DECIMAL(18, 2),
+    effective_e_exposure DECIMAL(18, 2),
+    session_opened_at TIMESTAMP,
     last_updated TIMESTAMP
 ) TIMESTAMP(last_updated) PARTITION BY DAY WAL
-DEDUP UPSERT KEYS(last_updated, account_id);
+DEDUP UPSERT KEYS(last_updated, account_id, session_id);
 """
 
 
@@ -1019,6 +1023,34 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M042_d30_close_to_decimal",
         "ALTER TABLE p3_d30_daily_ohlcv ALTER COLUMN close TYPE DECIMAL(14, 6)",
+    ),
+    # --- Per-Session Budget Allocation (2026-05-06) ---
+    # D23 partitions intraday CB state per (account_id, session_id) so each session
+    # has its own L_t / n_t / l_b / n_b ledger and SOD-locked effective L_halt / E.
+    # See docs2/audits/2026-05-06_per_session_budget_design.md for the full design.
+    (
+        "M043_d23_add_session_id",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday ADD COLUMN session_id INT",
+    ),
+    (
+        "M044_d23_add_effective_l_halt",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday ADD COLUMN effective_l_halt DECIMAL(18, 2)",
+    ),
+    (
+        "M045_d23_add_effective_e_exposure",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday ADD COLUMN effective_e_exposure DECIMAL(18, 2)",
+    ),
+    (
+        "M046_d23_add_session_opened_at",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday ADD COLUMN session_opened_at TIMESTAMP",
+    ),
+    # M047: extend DEDUP UPSERT KEYS to include session_id so per-(account, session)
+    # rows on the same last_updated nanosecond are not collapsed. Per QuestDB docs
+    # (alter-table-enable-deduplication.md), DEDUP ENABLE on a WAL table that already
+    # has dedup enabled overrides the previously set key column list.
+    (
+        "M047_d23_dedup_include_session_id",
+        "ALTER TABLE p3_d23_circuit_breaker_intraday DEDUP ENABLE UPSERT KEYS(last_updated, account_id, session_id)",
     ),
 ]
 
