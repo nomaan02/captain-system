@@ -297,6 +297,31 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
 
         q6 = Decimal("0.000001")
         q2 = Decimal("0.01")
+
+        # Per-session budget allocation (2026-05-06): partition L_halt and E
+        # across HMM-weighted sessions so a heavy NY day no longer starves
+        # APAC's NKD via the abs(L_t) > L_halt cascade. See
+        # docs2/audits/2026-05-06_per_session_budget_design.md and Isaac's
+        # 15_Topstep_Optimisation_Functions sec 4.4.4.
+        from shared.sod_session_budget import (
+            session_budget_shares as _session_budget_shares,
+        )
+        hmm_state = _load_hmm_opportunity_state_for_sod()
+        shares = _session_budget_shares(hmm_state)
+        # Per-session N_max_trades: floor((alpha_w * E) / (MDD*p + phi))
+        per_session: dict[str, dict] = {}
+        for sess_key, share in shares.items():
+            sess_E = (E * share)
+            sess_L_halt = (L_halt * share)
+            sess_N = (
+                math.floor(sess_E / denom) if denom > 0 else 0
+            )
+            per_session[sess_key] = {
+                "L_halt": sess_L_halt.quantize(q2),
+                "E_daily_exposure": sess_E.quantize(q2),
+                "N_max_trades": sess_N,
+                "share": share.quantize(q6),
+            }
         computed = {
             "topstep_params": ts_params,
             "payout_rules": payout_rules,
@@ -308,6 +333,15 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
                 "N_max_trades": N,
                 "E_daily_exposure": E.quantize(q2),
                 "L_halt": L_halt.quantize(q2),
+                # Per-session breakdown (consumed by Online B5C/B4 + replay)
+                "session": per_session,
+                "session_shares_source": (
+                    "HMM_FULL" if (hmm_state and not hmm_state.get("cold_start", True)
+                                   and hmm_state.get("n_observations", 0) >= 60)
+                    else "HMM_BLENDED" if (hmm_state and not hmm_state.get("cold_start", True)
+                                           and hmm_state.get("n_observations", 0) >= 20)
+                    else "EQUAL_COLD_START"
+                ),
                 "W_max_payout": W.quantize(q2),
                 "g_A_post_payout_mdd": g_A.quantize(q6),
                 "computed_at": now_et().isoformat(),
@@ -324,8 +358,12 @@ def _compute_sod_topstep_params(ac_id: str, user_id: str, ac: dict,
         _persist_topstep_state_to_d08(ac_id, dumps_decimal(computed))
 
         logger.info(
-            "SOD Topstep params computed for %s: f(A)=%.4f N=%d E=%.2f L_halt=%.2f",
+            "SOD Topstep params computed for %s: f(A)=%.4f N=%d E=%.2f L_halt=%.2f "
+            "per-session L_halt: NY=%.2f LON=%.2f APAC=%.2f",
             ac_id, float(f_A), N, float(E), float(L_halt),
+            float(per_session.get("NY", {}).get("L_halt", 0)),
+            float(per_session.get("LON", {}).get("L_halt", 0)),
+            float(per_session.get("APAC", {}).get("L_halt", 0)),
         )
 
         _check_payout_recommendation(
@@ -450,14 +488,39 @@ def _check_payout_recommendation(ac_id: str, user_id: str, ac: dict,
 
 
 def _reset_daily_counters():
-    """Reset daily loss counters and D23 intraday state for all accounts.
+    """Reset daily loss counters and per-session intraday CB state for all accounts.
 
-    Called at 19:00 EST as part of reconciliation.
+    Called at 19:00 EST as part of reconciliation. Two responsibilities:
+
+    1. **D08.daily_loss_used and D08.current_drawdown reset** — historic bug:
+       this used to only write a session_event_log row claiming the reset had
+       happened, while D08 fields stayed monotonically increasing. Fixed by
+       mirroring the read-modify-insert pattern from ``_update_account_balance``
+       and writing a fresh D08 row with ``daily_loss_used = 0``. (Per Isaac's
+       spec: ``current_drawdown`` is a TRAILING peak-to-current metric, NOT a
+       daily counter, so we leave it untouched here. Only ``daily_loss_used``
+       resets daily.)
+
+    2. **D23 intraday CB state reset** — per-session zero rows. After the
+       per-session-budget refactor (2026-05-06), D23 is keyed by
+       ``(account_id, session_id)``. We insert one zero row per (account,
+       session) pair so the next session-open hook starts from a clean slate.
+       The new row carries ``effective_l_halt = NULL`` and
+       ``effective_e_exposure = NULL`` (populated later by the orchestrator's
+       ``_initialize_session_budget`` hook at the actual session-open time).
+
+    Failure of either step does not raise — both steps log + alert and continue
+    so reconciliation does not block on a single account failing.
     """
+    from shared.constants import SESSION_IDS as _SESSION_IDS
+    from shared.sod_session_budget import (
+        TRADING_DAY_SESSION_ORDER as _TRADING_DAY_SESSION_ORDER,
+    )
+
+    accounts: list = []
     try:
         with get_cursor() as cur:
-            # Reset daily_loss_used in P3-D08
-            # QuestDB doesn't support UPDATE, so we track the reset via session log
+            # Forensic audit trail (kept from prior impl).
             cur.execute(
                 """INSERT INTO p3_session_event_log(
                        ts, user_id, event_type, event_id, asset, details
@@ -469,27 +532,92 @@ def _reset_daily_counters():
                 ),
             )
 
-            # Reset P3-D23 intraday circuit breaker state
-            # Insert fresh zero rows for each account
+            # Step 1: actually reset daily_loss_used in D08 for every account.
             cur.execute(
-                "SELECT DISTINCT account_id FROM p3_d08_tsm_state"
+                """SELECT account_id, user_id, name, classification,
+                          starting_balance, current_balance, current_drawdown,
+                          daily_loss_used, profit_target,
+                          max_drawdown_limit, max_daily_loss, max_contracts,
+                          scaling_plan, commission_per_contract,
+                          instrument_permissions, overnight_allowed,
+                          trading_hours, margin_per_contract, margin_buffer_pct,
+                          pass_probability, simulation_date, risk_goal,
+                          evaluation_end_date, evaluation_stages,
+                          topstep_optimisation, topstep_params, topstep_state,
+                          fee_schedule, payout_rules, scaling_plan_active,
+                          scaling_tier_micros
+                   FROM p3_d08_tsm_state
+                   LATEST ON last_updated PARTITION BY account_id"""
             )
-            accounts = cur.fetchall()
-            for (ac_id,) in accounts:
+            d08_rows = cur.fetchall()
+            for d08 in d08_rows:
+                if not d08 or not d08[0]:
+                    continue
+                params = list(d08)
+                # Index 7 = daily_loss_used (per the SELECT order above).
+                # Set to Decimal("0") so the column type stays DECIMAL(18,2)
+                # and the row is type-pure.
+                params[7] = Decimal("0")
+                params.append(now_et().isoformat())  # last_updated
                 cur.execute(
-                    """INSERT INTO p3_d23_circuit_breaker_intraday(
-                           account_id, l_t, n_t,
-                           l_b, n_b, last_updated
-                       ) VALUES(%s, %s, %s, %s, %s, %s)""",
-                    (
-                        ac_id,
-                        Decimal("0"), 0,
-                        dumps_decimal({}), json.dumps({}),
-                        now_et().isoformat(),
-                    ),
+                    """INSERT INTO p3_d08_tsm_state(
+                           account_id, user_id, name, classification,
+                           starting_balance, current_balance, current_drawdown,
+                           daily_loss_used, profit_target,
+                           max_drawdown_limit, max_daily_loss, max_contracts,
+                           scaling_plan, commission_per_contract,
+                           instrument_permissions, overnight_allowed,
+                           trading_hours, margin_per_contract, margin_buffer_pct,
+                           pass_probability, simulation_date, risk_goal,
+                           evaluation_end_date, evaluation_stages,
+                           topstep_optimisation, topstep_params, topstep_state,
+                           fee_schedule, payout_rules, scaling_plan_active,
+                           scaling_tier_micros, last_updated
+                       ) VALUES(
+                           %s, %s, %s, %s,
+                           %s, %s, %s,
+                           %s, %s,
+                           %s, %s, %s,
+                           %s, %s,
+                           %s, %s,
+                           %s, %s, %s,
+                           %s, %s, %s,
+                           %s, %s,
+                           %s, %s, %s,
+                           %s, %s, %s,
+                           %s, %s
+                       )""",
+                    params,
                 )
+                accounts.append(d08[0])
 
-        logger.info("Daily counters reset for %d accounts", len(accounts) if accounts else 0)
+            # Step 2: per-session D23 zero rows. One row per (account, session)
+            # for each session in TRADING_DAY_SESSION_ORDER. The session_open
+            # hook in the orchestrator will populate effective_l_halt /
+            # effective_e_exposure / session_opened_at when each session
+            # actually opens.
+            for ac_id in accounts:
+                for sid in _TRADING_DAY_SESSION_ORDER:
+                    cur.execute(
+                        """INSERT INTO p3_d23_circuit_breaker_intraday(
+                               account_id, session_id, l_t, n_t,
+                               l_b, n_b,
+                               effective_l_halt, effective_e_exposure,
+                               session_opened_at, last_updated
+                           ) VALUES(%s, %s, %s, %s, %s, %s, NULL, NULL, NULL, %s)""",
+                        (
+                            ac_id, int(sid),
+                            Decimal("0"), 0,
+                            dumps_decimal({}), json.dumps({}),
+                            now_et().isoformat(),
+                        ),
+                    )
+
+        logger.info(
+            "Daily counters reset: D08.daily_loss_used=0 for %d accounts; "
+            "D23 zero rows written for %d accounts × %d sessions",
+            len(accounts), len(accounts), len(_TRADING_DAY_SESSION_ORDER),
+        )
 
     except Exception as exc:
         logger.error("Daily counter reset failed: %s", exc, exc_info=True)
@@ -498,6 +626,47 @@ def _reset_daily_counters():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _load_hmm_opportunity_state_for_sod() -> dict | None:
+    """Load HMM opportunity state from P3-D26 for the SOD per-session
+    budget allocator. Returns ``None`` if HMM has never been trained, in
+    which case ``shared.sod_session_budget.session_budget_shares`` will fall
+    back to equal 1/3 weights per session.
+
+    Mirrors ``b5_trade_selection._load_hmm_opportunity_state`` but kept
+    local to B8 so the SOD computation does not import from the Online
+    process tree.
+    """
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT opportunity_weights, n_observations, cold_start
+                   FROM p3_d26_hmm_opportunity_state
+                   ORDER BY last_updated DESC LIMIT 1"""
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        weights_raw = row[0]
+        weights: dict = {}
+        if weights_raw:
+            try:
+                weights = parse_json(weights_raw, {}) or {}
+            except Exception:
+                weights = {}
+        return {
+            "opportunity_weights": weights,
+            "n_observations": int(row[1] or 0),
+            "cold_start": bool(row[2]) if row[2] is not None else True,
+        }
+    except Exception as exc:
+        logger.warning(
+            "CMD-B8: failed to load D26 HMM opportunity state for SOD "
+            "session-budget allocator (%s) — falling back to equal weights",
+            exc,
+        )
+        return None
 
 
 def _get_d17_param(key: str, default: float) -> float:

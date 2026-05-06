@@ -95,6 +95,12 @@ def test_compute_sod_topstep_params_runs_without_signature_error(monkeypatch):
         b8, "_check_payout_recommendation",
         lambda *args, **kwargs: None,
     )
+    # Phase 2: SOD allocator now reads D26 HMM state — stub to None to avoid
+    # touching QuestDB and force the cold-start equal-share path.
+    monkeypatch.setattr(
+        b8, "_load_hmm_opportunity_state_for_sod",
+        lambda: None,
+    )
 
     # Production account dict shape (what b1_data_ingestion._load_tsm_configs returns
     # AFTER Phase 1, and what b8_reconciliation.run_daily_reconciliation passes in)
@@ -121,3 +127,123 @@ def test_compute_sod_topstep_params_runs_without_signature_error(monkeypatch):
         ac_id="20319811", user_id="primary_user", ac=ac,
         gui_push_fn=gui_push, notify_fn=None,
     )
+
+
+def test_compute_sod_writes_per_session_map(monkeypatch):
+    """Phase 2: _compute_sod_topstep_params must write a per-session breakdown
+    under computed_sod.session.{NY,LON,APAC} so Online B5C/B4 can read each
+    session's allocated L_halt and E_daily_exposure independently.
+
+    With c=1.0 and equal cold-start shares (HMM state=None), each session gets
+    one third of the day's L_halt and E (= $500 each on a $150K combine).
+    """
+    from decimal import Decimal
+    from captain_command.blocks import b8_reconciliation as b8
+    from shared.decimal_json import loads_decimal
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        b8, "_persist_topstep_state_to_d08",
+        lambda ac_id, json_str: captured.setdefault("payload", json_str),
+    )
+    monkeypatch.setattr(b8, "_check_payout_recommendation", lambda *a, **k: None)
+    monkeypatch.setattr(b8, "_load_hmm_opportunity_state_for_sod", lambda: None)
+
+    # 150K combine with c=1.0 → L_halt total = 1500, E total = 1500.
+    # max_daily_loss/MDD = 4500 (Topstep eval).
+    ac = {
+        "account_id": "20319811",
+        "user_id": "primary_user",
+        "current_balance": "150000.00",
+        "starting_balance": "150000.00",
+        "max_drawdown_limit": "4500.00",
+        "topstep_state": "{}",
+        "topstep_params": '{"c": 1.0, "e": 0.01, "p": 0.005}',
+        "payout_rules": "{}",
+        "fee_schedule": '{"fees_by_instrument": {"ES": {"round_turn": 2.80}}}',
+        "scaling_plan_active": False,
+    }
+
+    b8._compute_sod_topstep_params(
+        ac_id="20319811", user_id="primary_user", ac=ac,
+        gui_push_fn=lambda *a, **k: None, notify_fn=None,
+    )
+
+    payload = captured.get("payload")
+    assert payload is not None, "_persist_topstep_state_to_d08 was not called"
+    parsed = loads_decimal(payload)
+    sod = parsed["computed_sod"]
+
+    # Legacy flat keys remain for backwards-compat.
+    assert "L_halt" in sod and "E_daily_exposure" in sod
+    assert sod["L_halt"] == Decimal("1500.00")
+    assert sod["E_daily_exposure"] == Decimal("1500.00")
+
+    # Per-session map is the new structure consumers read.
+    assert "session" in sod, "computed_sod.session map is missing"
+    sess = sod["session"]
+    for key in ("NY", "LON", "APAC"):
+        assert key in sess, f"computed_sod.session is missing {key}"
+        entry = sess[key]
+        assert "L_halt" in entry and "E_daily_exposure" in entry and "N_max_trades" in entry
+        # Equal cold-start shares of 1/3 give $500 each (with rounding).
+        # Tolerate sub-cent rounding from the share Decimal arithmetic.
+        assert abs(entry["L_halt"] - Decimal("500")) < Decimal("0.01")
+        assert abs(entry["E_daily_exposure"] - Decimal("500")) < Decimal("0.01")
+
+    # Source attribution
+    assert sod.get("session_shares_source") == "EQUAL_COLD_START"
+
+
+def test_compute_sod_uses_hmm_weights_when_warm(monkeypatch):
+    """Phase 2: when HMM has 60+ observations and is warm, per-session L_halt
+    is allocated by HMM weights (not equal thirds)."""
+    from decimal import Decimal
+    from captain_command.blocks import b8_reconciliation as b8
+    from shared.decimal_json import loads_decimal
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        b8, "_persist_topstep_state_to_d08",
+        lambda ac_id, json_str: captured.setdefault("payload", json_str),
+    )
+    monkeypatch.setattr(b8, "_check_payout_recommendation", lambda *a, **k: None)
+    # HMM warm with NY-heavy weights (NY: 60%, LON: 25%, APAC: 15%)
+    monkeypatch.setattr(
+        b8, "_load_hmm_opportunity_state_for_sod",
+        lambda: {
+            "opportunity_weights": {"NY": 0.60, "LON": 0.25, "APAC": 0.15},
+            "n_observations": 100,
+            "cold_start": False,
+        },
+    )
+
+    ac = {
+        "account_id": "20319811", "user_id": "primary_user",
+        "current_balance": "150000.00", "starting_balance": "150000.00",
+        "max_drawdown_limit": "4500.00",
+        "topstep_state": "{}",
+        "topstep_params": '{"c": 1.0, "e": 0.01, "p": 0.005}',
+        "payout_rules": "{}",
+        "fee_schedule": '{"fees_by_instrument": {"ES": {"round_turn": 2.80}}}',
+        "scaling_plan_active": False,
+    }
+    b8._compute_sod_topstep_params(
+        ac_id="20319811", user_id="primary_user", ac=ac,
+        gui_push_fn=lambda *a, **k: None, notify_fn=None,
+    )
+
+    parsed = loads_decimal(captured["payload"])
+    sod = parsed["computed_sod"]
+    sess = sod["session"]
+
+    # NY has more allocation than APAC (HMM-warm)
+    assert sess["NY"]["L_halt"] > sess["APAC"]["L_halt"]
+    assert sess["NY"]["L_halt"] > sess["LON"]["L_halt"]
+
+    # Total L_halt across sessions ~= total day L_halt (within sub-cent rounding).
+    total_session_l_halt = (
+        sess["NY"]["L_halt"] + sess["LON"]["L_halt"] + sess["APAC"]["L_halt"]
+    )
+    assert abs(total_session_l_halt - Decimal("1500.00")) < Decimal("0.01")
+    assert sod.get("session_shares_source") == "HMM_FULL"
