@@ -44,3 +44,20 @@ def test_build_trade_closed_ws_payload_full():
 
 def test_build_trade_closed_ws_payload_rejects_missing_user():
     assert build_trade_closed_ws_payload({"trade_id": "TRD-X"}) is None
+
+
+def test_normalize_hub_payload_unwraps_action_data_envelope():
+    raw = {"data": {"id": 1, "balance": 99.5}, "action": 0}
+    out = _normalize_hub_payload(raw)
+    assert out == {"id": 1, "balance": 99.5}
+    assert "action" not in out
+    assert "data" not in out
+
+
+def test_normalize_hub_payload_unwraps_pascal_envelope():
+    raw = {"Data": {"Id": 1, "Balance": 99.5}, "Action": 1}
+    out = _normalize_hub_payload(raw)
+    assert out["id"] == 1
+    assert out["balance"] == 99.5
+    assert "Action" not in out
+    assert "Data" not in out

@@ -26,6 +26,12 @@ from pysignalr.client import SignalRClient
 
 logger = logging.getLogger(__name__)
 
+# One-shot per-event diagnostic: logs raw SignalR args the first time each User Hub
+# event fires so we can confirm the wire shape (envelope vs flat) without rebuilding.
+_LOGGED_FIRST: dict[str, bool] = {
+    "account": False, "order": False, "position": False, "trade": False,
+}
+
 import json as _json
 
 MARKET_HUB_URL = "wss://rtc.topstepx.com/hubs/market"
@@ -55,14 +61,30 @@ def _extract_dict(data) -> Any:
 
 
 def _normalize_hub_payload(data) -> Any:
-    """Fold PascalCase Gateway keys (Id, AccountId) to camelCase for Python handlers.
+    """Unwrap ProjectX User Hub envelope then fold PascalCase keys to camelCase.
 
-    ProjectX hubs may serialize C# POCOs as PascalCase JSON; our callbacks use
-    camelCase (.get(\"id\"), .get(\"contractId\")).
+    The TopstepX User Hub wraps every event payload in a two-key envelope:
+        {"data": <entity>, "action": 0/1/2}
+    Per admin.docs.projectx.com — 0=create, 1=update, 2=delete.
+    We detect and strip the envelope before fold-casing so downstream handlers
+    receive the flat entity dict they expect (id, balance, contractId, …).
+
+    ProjectX hubs may also serialize C# POCOs as PascalCase JSON; our callbacks
+    use camelCase (.get("id"), .get("contractId")).
     """
     extracted = _extract_dict(data)
     if not isinstance(extracted, dict):
         return extracted
+
+    # Detect and unwrap the ProjectX/TopstepX User Hub envelope.
+    # Guard: both "data" (dict) AND "action" (int/str/float) must be present.
+    inner = extracted.get("data") or extracted.get("Data")
+    action = extracted.get("action")
+    if action is None:
+        action = extracted.get("Action")
+    if isinstance(inner, dict) and isinstance(action, (int, float, str)):
+        extracted = inner
+
     out: dict[str, Any] = {}
     for k, v in extracted.items():
         nk = k
@@ -504,6 +526,46 @@ class MarketStream:
         return client
 
 
+def _alias_account(data: dict) -> dict:
+    """Map Admin-schema account fields to Gateway-schema names (additive, no overwrites)."""
+    if "name" not in data and "accountName" in data:
+        data["name"] = data["accountName"]
+    if "id" not in data and "tradingAccountId" in data:
+        data["id"] = data["tradingAccountId"]
+    return data
+
+
+def _alias_position(data: dict) -> dict:
+    """Map Admin-schema position fields to Gateway-schema names (additive, no overwrites)."""
+    if "size" not in data and "positionSize" in data:
+        data["size"] = data["positionSize"]
+    if "accountId" not in data and "tradingAccountId" in data:
+        data["accountId"] = data["tradingAccountId"]
+    return data
+
+
+def _alias_order(data: dict) -> dict:
+    """Map Admin-schema order fields to Gateway-schema names (additive, no overwrites)."""
+    if "size" not in data and "positionSize" in data:
+        data["size"] = data["positionSize"]
+    if "filledPrice" not in data and "executedPrice" in data:
+        data["filledPrice"] = data["executedPrice"]
+    if "accountId" not in data and "tradingAccountId" in data:
+        data["accountId"] = data["tradingAccountId"]
+    return data
+
+
+def _alias_trade(data: dict) -> dict:
+    """Map Admin-schema trade fields to Gateway-schema names (additive, no overwrites)."""
+    if "size" not in data and "lots" in data:
+        data["size"] = data["lots"]
+    if "profitAndLoss" not in data and "pnl" in data:
+        data["profitAndLoss"] = data["pnl"]
+    if "accountId" not in data and "tradingAccountId" in data:
+        data["accountId"] = data["tradingAccountId"]
+    return data
+
+
 # ---------------------------------------------------------------------------
 # User Hub Stream
 # ---------------------------------------------------------------------------
@@ -715,21 +777,37 @@ class UserStream:
         logger.warning("UserStream GatewayLogout received: %s", args)
 
     async def _async_handle_account(self, *args) -> None:
+        if not _LOGGED_FIRST["account"]:
+            logger.warning("UserStream RAW account args=%r type=%s",
+                           args, type(args[0]).__name__ if args else "empty")
+            _LOGGED_FIRST["account"] = True
         data = args[0] if args else None
         if data is not None:
             self._handle_account(data)
 
     async def _async_handle_order(self, *args) -> None:
+        if not _LOGGED_FIRST["order"]:
+            logger.warning("UserStream RAW order args=%r type=%s",
+                           args, type(args[0]).__name__ if args else "empty")
+            _LOGGED_FIRST["order"] = True
         data = args[0] if args else None
         if data is not None:
             self._handle_order(data)
 
     async def _async_handle_position(self, *args) -> None:
+        if not _LOGGED_FIRST["position"]:
+            logger.warning("UserStream RAW position args=%r type=%s",
+                           args, type(args[0]).__name__ if args else "empty")
+            _LOGGED_FIRST["position"] = True
         data = args[0] if args else None
         if data is not None:
             self._handle_position(data)
 
     async def _async_handle_trade(self, *args) -> None:
+        if not _LOGGED_FIRST["trade"]:
+            logger.warning("UserStream RAW trade args=%r type=%s",
+                           args, type(args[0]).__name__ if args else "empty")
+            _LOGGED_FIRST["trade"] = True
         data = args[0] if args else None
         if data is not None:
             self._handle_trade(data)
@@ -737,7 +815,7 @@ class UserStream:
     # -- Business logic handlers (UNCHANGED) --------------------------------
 
     def _handle_account(self, data) -> None:
-        data = _normalize_hub_payload(data)
+        data = _alias_account(_normalize_hub_payload(data))
         if isinstance(data, dict):
             with self._lock:
                 self._account_cache = data
@@ -745,12 +823,12 @@ class UserStream:
             self._on_account_update(data)
 
     def _handle_order(self, data) -> None:
-        data = _normalize_hub_payload(data)
+        data = _alias_order(_normalize_hub_payload(data))
         if self._on_order_update:
             self._on_order_update(data)
 
     def _handle_position(self, data) -> None:
-        data = _normalize_hub_payload(data)
+        data = _alias_position(_normalize_hub_payload(data))
         if isinstance(data, dict):
             pos_id = str(data.get("id", ""))
             with self._lock:
@@ -762,7 +840,7 @@ class UserStream:
             self._on_position_update(data)
 
     def _handle_trade(self, data) -> None:
-        data = _normalize_hub_payload(data)
+        data = _alias_trade(_normalize_hub_payload(data))
         if self._on_trade_update:
             self._on_trade_update(data)
 
