@@ -140,50 +140,63 @@ def apply_hmm_session_allocation(
     accounts: list[str],
     session_id: int,
 ) -> dict:
-    """V3: HMM session-partitioned budget allocation from P3-D26.
+    """OBSERVABILITY-ONLY (2026-05-06): logs the HMM session weight but does
+    NOT mutate ``final_contracts``.
 
-    Replaces FCFS with OO-ranked allocation within HMM session windows.
-    Cold start: <20 days → equal weights; 20-59 → blended 50/50; 60+ → full HMM.
-    Floor = 0.05 per session.
+    PRE-2026-05-06: scaled contracts by ``session_weight = 1/3`` (cold start)
+    or HMM-weighted shares, with a floor that always kept at least 1 contract
+    if Kelly recommended any. This was a soft allocation layer.
+
+    POST-2026-05-06: the per-session budget is enforced END-TO-END as a dollar
+    pool (L_halt and E_daily_exposure SCOPED to the session) at three points:
+
+        - B4 ``_compute_topstep_daily_cap`` reads per-session E (Phase 5).
+        - B5C L1 reads per-session ``effective_l_halt`` (Phase 4).
+        - B5C L2 reads per-session ``effective_e_exposure`` (Phase 4).
+
+    Multiplying contracts here by 1/3 ON TOP of those caps would double-count
+    the session budget — Kelly already produced a contract count that fits
+    within the day-total; the per-session caps then trim further if the
+    session-share is smaller. Multiplying by 1/3 again would shrink contracts
+    well below what the session budget can actually support.
+
+    This function is kept as an observability hook so log lines about the
+    HMM session weight remain in production logs (useful for tuning).
+
+    Returns ``final_contracts`` unchanged.
     """
     hmm_state = _load_hmm_opportunity_state()
+    session_key = {1: "NY", 2: "LON", 3: "APAC"}.get(session_id, "NY")
+
     if hmm_state is None:
-        return final_contracts  # No HMM data — keep as-is
+        logger.info(
+            "ON-B5 HMM: session=%s no D26 state — equal-weight fallback "
+            "(observability-only; per-session enforcement at B4/B5C)",
+            session_key,
+        )
+        return final_contracts
 
     opp_weights = parse_json(hmm_state.get("opportunity_weights"), {})
     n_obs = hmm_state.get("n_observations", 0)
     cold_start = hmm_state.get("cold_start", True)
 
-    session_key = {1: "NY", 2: "LON", 3: "APAC"}.get(session_id, "NY")
-
-    # Determine weight for this session
     if cold_start or n_obs < 20:
-        # Equal weights across sessions
         session_weight = 1.0 / 3.0
+        regime = "EQUAL_COLD_START"
     elif n_obs < 60:
-        # Blended 50/50: equal + HMM
         hmm_weight = opp_weights.get(session_key, 1.0 / 3.0)
-        equal_weight = 1.0 / 3.0
-        session_weight = 0.5 * equal_weight + 0.5 * hmm_weight
+        session_weight = 0.5 * (1.0 / 3.0) + 0.5 * hmm_weight
+        regime = "BLENDED"
     else:
-        # Full HMM weights
         session_weight = opp_weights.get(session_key, 1.0 / 3.0)
-
-    # Floor at 0.05
+        regime = "HMM_FULL"
     session_weight = max(session_weight, 0.05)
 
-    # Apply session weight as a multiplier on contracts
-    # (contracts were computed without session budgeting; now scale by session share)
-    import math
-    for u in selected_trades:
-        for ac in accounts:
-            current = final_contracts.get(u, {}).get(ac, 0)
-            final_contracts.setdefault(u, {})[ac] = max(1, math.floor(current * session_weight)) \
-                if current > 0 else 0
-
-    logger.info("ON-B5 HMM: Session %s weight=%.3f (n_obs=%d, cold=%s)",
-                session_key, session_weight, n_obs, cold_start)
-
+    logger.info(
+        "ON-B5 HMM: session=%s weight=%.3f regime=%s n_obs=%d "
+        "(observability-only; budget enforcement at B4/B5C)",
+        session_key, session_weight, regime, n_obs,
+    )
     return final_contracts
 
 
