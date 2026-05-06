@@ -283,11 +283,43 @@ class TopstepXAdapter(APIAdapter):
                     )
                     return result
                 else:
-                    logger.warning(
-                        "Bracket order FAILED: %s — falling back to "
-                        "separate orders",
-                        bracket_resp.get("errorMessage"),
+                    err_code = bracket_resp.get("errorCode")
+                    err_msg = bracket_resp.get("errorMessage", "unknown")
+                    logger.error(
+                        "Bracket order FAILED (errorCode=%s): %s "
+                        "[asset=%s account=%s side=%s size=%d "
+                        "SL_ticks=%d TP_ticks=%d entry_est=%s] "
+                        "\u2014 falling back to NON-OCO separate orders. "
+                        "Orphan SL/TP cleanup will be attempted by B7 on resolution.",
+                        err_code, err_msg, asset_id, self._account_id,
+                        order.get("direction"), size, sl_ticks, tp_ticks, entry_est,
                     )
+                    try:
+                        get_redis_client().publish(CH_ALERTS, json.dumps({
+                            "notif_id": f"BRACKET-FAIL-{uuid.uuid4().hex[:12].upper()}",
+                            "priority": "CRITICAL",
+                            "event_type": "BRACKET_ORDER_REJECTED",
+                            "message": (
+                                f"Bracket order REJECTED for {asset_id} "
+                                f"({order.get('direction')} x{size}): {err_msg} "
+                                f"(errorCode={err_code}). Falling back to separate "
+                                f"SL/TP orders \u2014 these are NOT OCO-linked. "
+                                f"B7 will attempt orphan cleanup on resolution."
+                            ),
+                            "source": "B3_API_ADAPTER",
+                            "asset": asset_id,
+                            "account_id": str(self._account_id),
+                            "error_code": err_code,
+                            "error_message": err_msg,
+                            "sl_ticks": sl_ticks,
+                            "tp_ticks": tp_ticks,
+                            "timestamp": now_et().isoformat(),
+                        }))
+                    except Exception as alert_exc:
+                        logger.error(
+                            "Failed to publish bracket-fail CRITICAL alert: %s",
+                            alert_exc,
+                        )
 
             # ── Fallback: Separate entry + SL + TP orders ────────────
             # Used when bracket fails or when entry_price is unknown.

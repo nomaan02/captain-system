@@ -336,6 +336,18 @@ def resolve_position(pos: dict, outcome: str, exit_price: float, tsm_configs: di
     now raises and is escalated to the user — no silent default.
     """
     asset = pos["asset"]
+    # NY-Open-May-5 fix: when bracket=False (separate non-OCO orders), cancel
+    # the surviving SL/TP leg FIRST so a price retracement during this
+    # function's QuestDB / Redis writes cannot trigger an unintended new
+    # position. This is a no-op for bracket=True (broker handles OCO).
+    try:
+        _cancel_orphan_bracket_leg(pos, outcome)
+    except Exception as exc:
+        logger.error(
+            "ON-B7: orphan-cancel helper raised for %s (%s): %s \u2014 "
+            "continuing with resolution",
+            asset, outcome, exc,
+        )
     pv = _resolve_point_value(asset)
     direction = pos.get("direction", 1)
     contracts = pos.get("contracts", 0)
@@ -773,6 +785,125 @@ def _resolve_actual_entry_price(pos: dict) -> float | None:
 
 # account-name -> integer Topstep account_id, populated lazily.
 _ACCOUNT_ID_CACHE: dict[str, int] = {}
+
+
+def _cancel_orphan_bracket_leg(pos: dict, outcome: str) -> None:
+    """Cancel the surviving SL or TP order when its sibling fills.
+
+    Used when ``pos["bracket"] is False`` — i.e. the original bracket order
+    was rejected by TopstepX and B3 fell back to placing entry/SL/TP as
+    three SEPARATE non-OCO orders. Without this, the broker leaves the
+    surviving leg working and a price retracement re-opens an unintended
+    new position in the opposite direction.
+
+    Strategy:
+      - SL_HIT  -> cancel ``tp_order_id`` (TP is the orphan)
+      - TP_HIT  -> cancel ``sl_order_id`` (SL is the orphan)
+      - other   -> cancel both (defensive)
+
+    Failures are logged + alerted at HIGH priority but never raise — the
+    trade outcome write must still complete so the offline learning loop
+    is not blocked on an exchange-side cleanup error.
+    """
+    if pos.get("bracket"):
+        return  # broker handles OCO
+
+    sl_oid = pos.get("sl_order_id")
+    tp_oid = pos.get("tp_order_id")
+
+    targets: list[tuple[str, int]] = []
+    if outcome == "SL_HIT" and tp_oid and tp_oid != "BRACKET":
+        targets.append(("TP", int(tp_oid)))
+    elif outcome == "TP_HIT" and sl_oid and sl_oid != "BRACKET":
+        targets.append(("SL", int(sl_oid)))
+    else:
+        if sl_oid and sl_oid != "BRACKET":
+            targets.append(("SL", int(sl_oid)))
+        if tp_oid and tp_oid != "BRACKET":
+            targets.append(("TP", int(tp_oid)))
+
+    if not targets:
+        return
+
+    account_id = _resolve_topstep_account_id(pos.get("account"))
+    if account_id is None:
+        logger.error(
+            "ON-B7: cannot cancel orphan brackets for %s \u2014 account_id "
+            "unresolved (account=%s)", pos.get("asset"), pos.get("account"),
+        )
+        return
+
+    try:
+        from shared.topstep_client import get_topstep_client
+        client = get_topstep_client()
+    except Exception as exc:
+        logger.error(
+            "ON-B7: TopstepX client unavailable for orphan cancel: %s", exc,
+        )
+        return
+
+    for leg, oid in targets:
+        try:
+            resp = client.cancel_order(account_id, oid)
+            if resp.get("success"):
+                logger.warning(
+                    "ON-B7: cancelled orphan %s order %d for %s after %s",
+                    leg, oid, pos.get("asset"), outcome,
+                )
+            else:
+                err = resp.get("errorMessage", "unknown")
+                logger.error(
+                    "ON-B7: orphan %s cancel FAILED for %s order=%d: %s",
+                    leg, pos.get("asset"), oid, err,
+                )
+                try:
+                    get_redis_client().publish(CH_ALERTS, json.dumps({
+                        "notif_id": f"ORPHAN-{uuid.uuid4().hex[:12].upper()}",
+                        "priority": "CRITICAL",
+                        "event_type": "ORPHAN_BRACKET_CANCEL_FAILED",
+                        "message": (
+                            f"Failed to cancel orphan {leg} order {oid} for "
+                            f"{pos.get('asset')} after {outcome}: {err}. "
+                            f"Working order may trigger an UNINTENDED new "
+                            f"position. Manual cancel required."
+                        ),
+                        "source": "B7_POSITION_MONITOR",
+                        "asset": pos.get("asset"),
+                        "account_id": str(account_id),
+                        "order_id": oid,
+                        "leg": leg,
+                        "timestamp": now_et().isoformat(),
+                    }))
+                except Exception as alert_exc:
+                    logger.error(
+                        "ON-B7: failed to publish orphan-cancel alert: %s",
+                        alert_exc,
+                    )
+        except Exception as exc:
+            logger.error(
+                "ON-B7: orphan %s cancel raised for %s order=%d: %s",
+                leg, pos.get("asset"), oid, exc,
+            )
+            try:
+                get_redis_client().publish(CH_ALERTS, json.dumps({
+                    "notif_id": f"ORPHAN-{uuid.uuid4().hex[:12].upper()}",
+                    "priority": "CRITICAL",
+                    "event_type": "ORPHAN_BRACKET_CANCEL_FAILED",
+                    "message": (
+                        f"EXCEPTION cancelling orphan {leg} order {oid} for "
+                        f"{pos.get('asset')} after {outcome}: {exc}. "
+                        f"Working order may trigger an UNINTENDED new "
+                        f"position. Manual cancel required."
+                    ),
+                    "source": "B7_POSITION_MONITOR",
+                    "asset": pos.get("asset"),
+                    "account_id": str(account_id),
+                    "order_id": oid,
+                    "leg": leg,
+                    "timestamp": now_et().isoformat(),
+                }))
+            except Exception:
+                pass
 
 
 def _resolve_topstep_account_id(account_name: str | None) -> int | None:

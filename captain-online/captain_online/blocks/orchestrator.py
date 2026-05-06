@@ -972,6 +972,11 @@ class OnlineOrchestrator:
                 # lastPrice (which can drift from the stop fill on fast moves).
                 "bracket": bool(data.get("bracket", False)),
                 "entry_order_id": data.get("entry_order_id"),
+                # NY-Open-May-5 fix: when bracket=False the SL/TP were placed
+                # as separate non-OCO orders. B7 must cancel the orphan when
+                # the other one fills. For bracket=True these are "BRACKET".
+                "sl_order_id": data.get("sl_order_id"),
+                "tp_order_id": data.get("tp_order_id"),
             }
             with self._position_lock:
                 self.open_positions.append(position)

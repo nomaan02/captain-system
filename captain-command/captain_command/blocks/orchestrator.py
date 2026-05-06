@@ -639,6 +639,12 @@ class CommandOrchestrator:
                 # price (rather than relying on the polled lastPrice as exit).
                 "bracket": bool(result.get("bracket", False)),
                 "entry_order_id": result.get("entry_order_id") or result.get("order_id"),
+                # NY-Open-May-5 fix: forward separate SL/TP order ids when the
+                # bracket fell back to non-OCO separate orders, so B7 can
+                # cancel the orphan when the other one fills. For successful
+                # bracket orders these are the sentinel "BRACKET" string.
+                "sl_order_id": result.get("sl_order_id"),
+                "tp_order_id": result.get("tp_order_id"),
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)
