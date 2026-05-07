@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -72,6 +73,7 @@ def main():
 
         if args.apply:
             update_d00_fields(asset_id, {"captain_status": target})
+            time.sleep(1.5)  # WAL commit lag (QDB_CAIRO_COMMIT_LAG=1000ms)
             verify = read_d00_row(asset_id)
             actual = verify["captain_status"] if verify else "???"
             ok = "OK" if actual == target else "FAILED"
