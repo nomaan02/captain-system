@@ -139,10 +139,12 @@ def get_current_state(component_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _enforce_max_versions(component_id: str):
-    """Prune snapshots exceeding MAX_VERSIONS_PER_COMPONENT.
+    """Log when snapshots exceed MAX_VERSIONS_PER_COMPONENT.
 
-    Versions older than COLD_STORAGE_AGE_DAYS are logged as cold-storage
-    migrations. Oldest excess versions are deleted from D18.
+    QuestDB is append-only (no DELETE support), so this function only
+    monitors overflow for observability.  The version history table grows
+    slowly (~few rows/day across 5 components) and unbounded retention is
+    acceptable.
     """
     with get_cursor() as cur:
         cur.execute(
@@ -155,28 +157,11 @@ def _enforce_max_versions(component_id: str):
     if len(versions) <= MAX_VERSIONS_PER_COMPONENT:
         return
 
-    to_prune = versions[MAX_VERSIONS_PER_COMPONENT:]
-    logger.info("Cold-storage migration: pruning %d excess versions for %s "
-                "(oldest=%s, newest=%s)",
-                len(to_prune), component_id, to_prune[-1][1], to_prune[0][1])
-    for vid, ts in to_prune:
-        logger.debug("  pruning version %s (component=%s, ts=%s)",
-                      vid, component_id, ts)
-
-    # Batch delete by timestamp cutoff
-    cutoff_ts = versions[MAX_VERSIONS_PER_COMPONENT - 1][1]
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                """DELETE FROM p3_d18_version_history
-                   WHERE component = %s AND ts < %s""",
-                (component_id, cutoff_ts),
-            )
-        logger.info("Pruned %d versions for %s (MAX_VERSIONS=%d)",
-                     len(to_prune), component_id, MAX_VERSIONS_PER_COMPONENT)
-    except Exception as e:
-        logger.warning("Could not prune old versions for %s: %s "
-                       "(manual cleanup needed)", component_id, e)
+    oldest_excess_ts = versions[-1][1]
+    logger.info("Version overflow for %s: %d versions (MAX=%d) "
+                "— oldest retained: %s (append-only, no pruning)",
+                component_id, len(versions), MAX_VERSIONS_PER_COMPONENT,
+                oldest_excess_ts)
 
 
 def snapshot_before_update(component_id: str, trigger_reason: str,
