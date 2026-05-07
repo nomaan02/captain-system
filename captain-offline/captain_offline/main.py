@@ -99,8 +99,28 @@ def _seed_aim_states():
         logger.error("AIM seeding failed: %s", exc, exc_info=True)
 
 
+def _verify_shared_freshness() -> None:
+    """Fail fast at startup if critical shared/ symbols are stale or missing.
+
+    Prevents silent runtime ImportErrors from killing individual trade outcomes
+    for an entire session. If this raises, recreate the container.
+    """
+    from shared.questdb_client import qexecute, get_cursor  # noqa: F401
+    from shared.decimal_json import dumps_decimal, loads_decimal
+    from decimal import Decimal as _D
+    sample = {"pnl": _D("12.34")}
+    rt = loads_decimal(dumps_decimal(sample))
+    if rt.get("pnl") != _D("12.34"):
+        raise RuntimeError(
+            f"shared.decimal_json marker round-trip broken: "
+            f"sent {sample} got {rt}. Recreate the container."
+        )
+    logger.info("[OFFLINE] shared/ freshness check passed: qexecute + marker decoder live")
+
+
 def main():
     logger.info("Starting Captain Offline...")
+    _verify_shared_freshness()
     plog = ProcessLogger("OFFLINE", get_redis_client())
 
     # Wait for QuestDB to be reachable before any DB operation

@@ -30,7 +30,7 @@ import os
 import threading
 import time
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from shared.constants import now_et
 from shared.redis_client import (
@@ -48,12 +48,35 @@ logger = logging.getLogger(__name__)
 
 
 def _stream_numeric_float(v) -> float:
-    """Normalize Redis stream / D03 monetary values for float-only algorithms."""
+    """Normalize Redis stream / D03 monetary values for float-only algorithms.
+
+    Defensive: accepts Decimal, int, float, str, None, AND the structural
+    Decimal marker dict ({"__type__": "Decimal", "value": "<digits>"}) produced
+    by shared.decimal_json — so a stale-cached decoder cannot crash the listener.
+    Anything uninterpretable is logged and returns 0.0 (worst case: one block
+    update is a no-op; the trade outcome is still acknowledged).
+    """
     if v is None:
         return 0.0
     if isinstance(v, Decimal):
         return float(v)
-    return float(v)
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, dict) and v.get("__type__") == "Decimal" and "value" in v:
+        try:
+            return float(Decimal(str(v["value"])))
+        except (InvalidOperation, ValueError, TypeError):
+            logger.warning("_stream_numeric_float: bad Decimal marker %r → 0.0", v)
+            return 0.0
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            logger.warning("_stream_numeric_float: unparseable string %r → 0.0", v)
+            return 0.0
+    logger.warning("_stream_numeric_float: unexpected type %s value=%r → 0.0",
+                   type(v).__name__, v)
+    return 0.0
 
 # Pseudotrader gate: skip replay when max absolute param change < epsilon
 PSEUDOTRADER_EPSILON = 1e-4
@@ -264,18 +287,18 @@ class OfflineOrchestrator:
         Triggers: DMA, BOCPD, CUSUM, Level escalation, Kelly, TSM sim, CB params.
         """
         asset_id = outcome.get("asset", "")
-        pnl = _stream_numeric_float(outcome.get("pnl", 0))
-        logger.info("Trade outcome received: %s pnl=%.2f", asset_id, pnl)
-        self.plog.info(
-            f"Trade outcome received: {asset_id} {'+'if pnl>=0 else ''}"
-            f"${pnl:.2f}",
-            source="orchestrator",
-        )
-
         write_checkpoint("OFFLINE", "TRADE_OUTCOME", "processing",
                          "dma_bocpd_cusum_kelly", {"asset": asset_id})
 
         try:
+            pnl = _stream_numeric_float(outcome.get("pnl", 0))
+            logger.info("Trade outcome received: %s pnl=%.2f", asset_id, pnl)
+            self.plog.info(
+                f"Trade outcome received: {asset_id} {'+'if pnl>=0 else ''}"
+                f"${pnl:.2f}",
+                source="orchestrator",
+            )
+
             # 1. DMA meta-weight update (gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
             dma_proposed = run_dma_update(outcome, commit=False)
@@ -382,14 +405,14 @@ class OfflineOrchestrator:
         instance's risk management to adapt to its own account state.
         """
         asset_id = outcome.get("asset", "")
-        pnl = _stream_numeric_float(outcome.get("pnl", 0))
-        logger.info("Theoretical signal outcome: %s pnl=%.2f (Category A learning)",
-                     asset_id, pnl)
-
         write_checkpoint("OFFLINE", "SIGNAL_OUTCOME", "processing",
                          "category_a_only", {"asset": asset_id, "theoretical": True})
 
         try:
+            pnl = _stream_numeric_float(outcome.get("pnl", 0))
+            logger.info("Theoretical signal outcome: %s pnl=%.2f (Category A learning)",
+                         asset_id, pnl)
+
             # 1. DMA meta-weight update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
             dma_proposed = run_dma_update(outcome, commit=False)
