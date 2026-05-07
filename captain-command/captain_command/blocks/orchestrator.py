@@ -55,6 +55,10 @@ from captain_command.blocks.b1_core_routing import (
     handle_status_message,
     _log_trade_confirmation,
 )
+from captain_command.blocks.parity import (
+    build_parity_key,
+    compute_parity_decision,
+)
 from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
     build_system_overview,
@@ -425,11 +429,15 @@ class CommandOrchestrator:
     def _handle_signal(self, data: dict):
         """Route signal batch from Online B6 to GUI + API (if auto-execute).
 
-        When INSTANCE_PARITY is set (multi-instance mode), each signal
-        increments a daily Redis counter. Only signals matching this
-        instance's parity are executed; others are shown in GUI as
-        PARITY_SKIPPED but still tracked by the shadow monitor for
-        theoretical outcome learning.
+        When INSTANCE_PARITY is set (multi-instance mode), parity for each
+        batch is computed via a deterministic content hash of
+        (date, session_id, user_id, sorted-asset-set) — see
+        ``_check_parity_skip``. Both towers compute the same parity for the
+        same batch, so drift between instances is impossible regardless of
+        startup ordering, missed signals, or PEL recovery. Batches that
+        mismatch this tower's parity are shown in the GUI as PARITY_SKIPPED
+        but still tracked by the shadow monitor for theoretical outcome
+        learning.
         """
         user_id = data.get("user_id", "")
         ts = data.get("timestamp", now_et().isoformat())
@@ -498,35 +506,77 @@ class CommandOrchestrator:
                       user_id, ts, auto_execute, parity_skip)
 
     def _check_parity_skip(self, my_parity: int, data: dict) -> bool:
-        """Check if this signal batch should be skipped based on instance parity.
+        """Decide whether this signal batch should be skipped under multi-instance parity.
 
-        Uses a daily Redis counter (reset at midnight ET) to deterministically
-        assign each signal batch to parity 0 or 1. Both instances see the same
-        signals in the same order, so the counter stays synchronized without
-        any network connection between them.
+        Uses a content-addressed deterministic hash of the batch — NOT a counter.
+        Both towers compute the same parity for the same (date, session, user,
+        sorted-asset-set) batch, so they always agree on which one of them takes
+        a given batch and drift is mathematically impossible.
+
+        Why no counter: a per-tower Redis ``INCR`` counter desynchronizes
+        permanently the moment one tower misses (or duplicates) a signal —
+        e.g. a late startup that misses the LON open, or a PEL recovery that
+        replays a previously-acked batch. With drift = 1 the result is the
+        worst of both worlds: alternating BOTH-SKIP (lost trade) and BOTH-TAKE
+        (duplicated execution defeating the splitting design entirely). See
+        ``docs2/quick-fixes/NY_OPEN_06-05_logs+fixes/`` for the May 5/6
+        incident analysis.
+
+        Self-consistency check: each tower also tracks the set of parity keys
+        it has already processed today (Redis ``SET`` with 2-day TTL). If the
+        same key is processed twice on this tower, that's a clear signal of
+        PEL replay or duplicate delivery — we log it and raise a P1_CRITICAL
+        incident so the operator catches it immediately. Note this does NOT
+        affect correctness (the hash is idempotent), it's purely diagnostic.
 
         Returns True if this batch should be skipped (parity mismatch).
         """
         today = now_et().strftime("%Y-%m-%d")
-
-        counter_key = f"captain:signal_counter:{today}"
-        try:
-            client = get_redis_client()
-            trade_number = client.incr(counter_key)
-            client.expire(counter_key, 86400 * 2)  # TTL: 2 days
-        except Exception as exc:
-            logger.error("Parity counter failed: %s — defaulting to TAKE", exc)
-            return False
-
-        # trade_number starts at 1. Parity 0 takes odd (1,3,5), parity 1 takes even (2,4,6)
-        signal_parity = (trade_number - 1) % 2  # 0 for odd, 1 for even
-        skip = signal_parity != my_parity
-
         signals = data.get("signals", [])
         assets = [s.get("asset", "?") for s in signals]
-        logger.info("PARITY CHECK: trade_number=%d, signal_parity=%d, my_parity=%d, skip=%s, assets=%s",
-                     trade_number, signal_parity, my_parity, skip, assets)
 
+        if not assets:
+            return False
+
+        key = build_parity_key(
+            today,
+            data.get("session_id"),
+            data.get("user_id", ""),
+            assets,
+        )
+
+        try:
+            client = get_redis_client()
+            seen_set = f"captain:parity_keys_seen:{today}"
+            added = client.sadd(seen_set, key)
+            client.expire(seen_set, 86400 * 2)
+            if added == 0:
+                logger.error(
+                    "PARITY DUPLICATE: same batch key processed twice on this tower — "
+                    "likely PEL replay or re-delivery (key=%r)", key,
+                )
+                try:
+                    create_incident(
+                        "OPERATIONAL", "P1_CRITICAL", "COMMAND",
+                        f"Duplicate parity batch processed on this tower: {key}. "
+                        f"Likely cause: signal stream PEL replay or re-delivery. "
+                        f"Correctness preserved (hash is idempotent); investigate "
+                        f"captain-command logs for stream errors / restarts.",
+                        notify_fn=lambda n: notify_route(n, gui_push, telegram_bot=self.telegram_bot),
+                    )
+                except Exception as inc_exc:
+                    logger.error(
+                        "PARITY DUPLICATE incident dispatch failed: %s", inc_exc,
+                    )
+        except Exception as exc:
+            logger.error("PARITY self-check failed (proceeding): %s", exc)
+
+        signal_parity, skip = compute_parity_decision(my_parity, key)
+
+        logger.info(
+            "PARITY CHECK: key=%r signal_parity=%d my_parity=%d skip=%s",
+            key, signal_parity, my_parity, skip,
+        )
         return skip
 
     def _auto_execute_signal(self, account_id: str, sanitised_order: dict):

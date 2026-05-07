@@ -196,7 +196,7 @@ grep '^INSTANCE_PARITY=' .env
 
 - [ ] Tower 1: `INSTANCE_PARITY=0`
 - [ ] Tower 2: `INSTANCE_PARITY=1`
-- [ ] `redis-cli get captain:signal_counter:$(date +%Y-%m-%d)` returns same monotonic value when probed simultaneously from both towers (the daily counter both instances increment to alternate signals — `orchestrator._check_parity_skip`).
+- [ ] After the first session of the day, tail one PARITY CHECK line from each tower's captain-command logs and verify the `key=` field is identical for the same batch (e.g. `key='2026-05-07|4|primary_user|NKD'`) — both towers must compute the same content-hash key, with opposite `signal_parity` values, so exactly one of them takes the batch (`orchestrator._check_parity_skip`). The legacy `captain:signal_counter:{date}` Redis key was retired in May 2026 — the partition is now drift-proof via content hashing of (date, session_id, user_id, sorted-asset-set).
 
 If `INSTANCE_PARITY` is empty on both, both towers will execute every signal — **double the size, double the slippage**. If set to the same value on both, half the signals will be dropped on both towers — zero trades.
 

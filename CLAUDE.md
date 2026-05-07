@@ -329,13 +329,16 @@ Captain System supports running two independent instances on separate machines w
 
 ```
 Instance A (PARITY=0, Nomaan)            Instance B (PARITY=1, client)
-Takes signals 1, 3, 5...                 Takes signals 2, 4, 6...
+Each batch deterministically partitioned via content hash of
+(date, session_id, user_id, sorted-asset-set):
+  parity = sha256(key)[0] & 1
+  → tower whose INSTANCE_PARITY matches takes; the other skips
      |                                        |
      |--- Both see ALL signals ---|           |
      |                            |           |
   Shadow monitor tracks           Shadow monitor tracks
   theoretical outcomes for        theoretical outcomes for
-  signals 2, 4, 6...              signals 1, 3, 5...
+  batches assigned to other       batches assigned to other
      |                                        |
   Category A learning (ALL signals):  DMA, EWMA, Kelly, BOCPD  <- SYNCHRONIZED
   Category B learning (OWN trades):   CB params, TSM            <- INDEPENDENT
@@ -347,7 +350,7 @@ No network connection between instances. Zero cloud linkage. Compliant with Tops
 
 | File | Purpose |
 |------|---------|
-| `captain-command/.../orchestrator.py` | Parity filter (`_check_parity_skip`) — daily Redis counter, deterministic trade splitting |
+| `captain-command/.../orchestrator.py` | Parity filter (`_check_parity_skip`) — content-hash splitting (no shared state, drift-proof) + per-tower duplicate-batch detector |
 | `captain-online/.../b7_shadow_monitor.py` | Tracks theoretical TP/SL outcomes for signals not executed |
 | `captain-offline/.../orchestrator.py` | `_handle_signal_outcome()` — Category A learning from theoretical outcomes |
 | `scripts/captain-setup.sh` | Interactive setup wizard for fresh machine deployment |
