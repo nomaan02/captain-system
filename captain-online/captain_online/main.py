@@ -46,6 +46,24 @@ logger = logging.getLogger(__name__)
 _TOPSTEP_MAX_ATTEMPTS = 3
 _TOPSTEP_RETRY_DELAY_S = 5
 
+# Token refresh wiring (H-27 fix).
+#
+# TopstepX JWTs expire ~24h after issue. The REST client (shared/topstep_client.py)
+# auto-refreshes via /Auth/validate when token_age_seconds > 20h, but doing so
+# INVALIDATES the previously-issued token server-side. The SignalR streams
+# (MarketStream, UserStream) embed the token in the connect URL and never see
+# the new one — so the next reconnect attempt comes back as HTTP 401 from
+# wss://rtc.topstepx.com/hubs/{market,user}, and pysignalr raises
+# NegotiationFailure. The streams then enter a permanent reconnect-fail loop
+# and stay dead until the captain-online container is restarted.
+#
+# Fix: refresh proactively every 18h (well before the 20h REST threshold) so
+# WE drive the refresh and immediately push the new token to both streams via
+# their existing update_token() method (which stop/sleep(1)/start). This
+# guarantees streams' tokens stay in sync with REST's token at all times.
+_TOKEN_REFRESH_INTERVAL_S = 18 * 3600
+_TOKEN_REFRESH_RETRY_DELAY_S = 300  # 5 min on failure
+
 
 def _start_market_streams():
     """Authenticate TopstepX and start a single multi-contract MarketStream.
@@ -252,6 +270,66 @@ def _start_user_stream():
         return None
 
 
+def _token_refresh_loop(stop_event: threading.Event,
+                        market_stream, user_stream) -> None:
+    """Background thread: refresh JWT every 18h and push to both streams.
+
+    Sleeps in 60-second chunks so that container shutdown is responsive
+    (stop_event is set in shutdown_handler). On any failure logs and waits
+    _TOKEN_REFRESH_RETRY_DELAY_S before retrying — never raises out of the
+    thread (would silently kill the daemon).
+    """
+    from shared.topstep_client import get_topstep_client
+
+    next_refresh_at = time.time() + _TOKEN_REFRESH_INTERVAL_S
+    logger.info(
+        "Token refresh loop started — next refresh in %dh",
+        _TOKEN_REFRESH_INTERVAL_S // 3600,
+    )
+
+    while not stop_event.is_set():
+        # Sleep in 60s chunks so SIGTERM is observed within ~1 minute.
+        if stop_event.wait(timeout=60):
+            break
+        if time.time() < next_refresh_at:
+            continue
+
+        try:
+            client = get_topstep_client()
+            logger.info("Refreshing TopstepX JWT (proactive H-27 wiring)")
+            new_token = client.validate_token()
+            if not new_token:
+                raise RuntimeError("validate_token returned empty token")
+
+            if market_stream is not None:
+                try:
+                    market_stream.update_token(new_token)
+                    logger.info("MarketStream token updated")
+                except Exception:
+                    logger.exception("MarketStream.update_token failed")
+
+            if user_stream is not None:
+                try:
+                    user_stream.update_token(new_token)
+                    logger.info("UserStream token updated")
+                except Exception:
+                    logger.exception("UserStream.update_token failed")
+
+            next_refresh_at = time.time() + _TOKEN_REFRESH_INTERVAL_S
+            logger.info(
+                "Token refresh complete — next refresh in %dh",
+                _TOKEN_REFRESH_INTERVAL_S // 3600,
+            )
+        except Exception:
+            logger.exception(
+                "Token refresh failed — retrying in %ds",
+                _TOKEN_REFRESH_RETRY_DELAY_S,
+            )
+            next_refresh_at = time.time() + _TOKEN_REFRESH_RETRY_DELAY_S
+
+    logger.info("Token refresh loop exiting")
+
+
 def main():
     logger.info("Starting Captain Online...")
     plog = ProcessLogger("ONLINE", get_redis_client())
@@ -306,12 +384,28 @@ def main():
 
     write_checkpoint(ROLE, "STREAMS_STARTED", "streams_ready", "starting_orchestrator")
 
+    # Start JWT refresh background thread (H-27 fix). Refreshes the TopstepX
+    # token every 18h and pushes it to both streams via update_token() so
+    # MarketStream/UserStream don't end up holding a token that REST has
+    # silently invalidated. Without this, streams die with HTTP 401 from the
+    # SignalR hub after ~20h of uptime and never recover.
+    token_refresh_stop = threading.Event()
+    token_refresh_thread = threading.Thread(
+        target=_token_refresh_loop,
+        args=(token_refresh_stop, market_stream, user_stream),
+        daemon=True,
+        name="topstep-token-refresh",
+    )
+    token_refresh_thread.start()
+    plog.info("Token refresh loop started (18h interval)", source="auth")
+
     # Start the 24/7 session orchestrator (with OR tracker reference)
     from captain_online.blocks.orchestrator import OnlineOrchestrator
     orchestrator = OnlineOrchestrator(or_tracker=or_tracker)
 
     def shutdown_handler(signum, frame):
         logger.info("Shutdown signal received")
+        token_refresh_stop.set()
         orchestrator.stop()
         if user_stream:
             user_stream.stop()
