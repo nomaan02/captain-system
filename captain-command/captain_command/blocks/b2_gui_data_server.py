@@ -617,8 +617,18 @@ def _get_aim_states(user_id: str) -> list[dict]:
 def get_aim_detail(aim_id: int) -> dict:
     """Fetch enriched AIM detail for the modal overlay.
 
-    Joins P3-D01 (model states) and P3-D02 (meta weights) per asset
-    for the given aim_id.  For AIM-16, also checks P3-D26.
+    Joins P3-D01 (model states) and P3-D02 (meta weights) per asset for
+    ``aim_id``. For AIM-16, also checks P3-D26.
+
+    Both D01 and D02 use ``LATEST ON last_updated PARTITION BY asset_id``
+    after ``WHERE aim_id = %s`` so each asset gets its true latest row.
+    Never use ``ORDER BY last_updated DESC LIMIT N`` plus first-row dedup:
+    heavy write volume on a subset of (aim_id, asset_id) pairs fills the
+    window and hides every other asset (same failure mode documented on
+    ``_get_aim_states``, but scoped to one aim in the modal).
+
+    D01 and D02 run on a single cursor (one pool checkout); failures are
+    logged separately so a broken D01 query does not skip D02.
     """
     name = _AIM_NAMES.get(aim_id, f"AIM-{aim_id:02d}")
     tier = _AIM_TIERS.get(aim_id, 0)
@@ -628,60 +638,56 @@ def get_aim_detail(aim_id: int) -> dict:
     d01_populated = False
     d02_populated = False
 
-    # --- D01: model states ---
     d01_by_asset: dict[str, dict] = {}
-    try:
-        with get_cursor() as cur:
-            cur.execute(
-                """SELECT asset_id, status, current_modifier, warmup_progress,
-                          last_retrained
-                   FROM p3_d01_aim_model_states
-                   WHERE aim_id = %s
-                   ORDER BY last_updated DESC
-                   LIMIT 500""",
-                (aim_id,),
-            )
-            for r in cur.fetchall():
-                asset = r[0]
-                if asset in d01_by_asset:
-                    continue
-                d01_by_asset[asset] = {
-                    "status": r[1],
-                    "modifier": r[2],
-                    "warmup_progress": r[3],
-                    "last_retrained": r[4],
-                }
-            if d01_by_asset:
-                d01_populated = True
-    except Exception as exc:
-        logger.error("AIM detail D01 query failed: %s", exc, exc_info=True)
-
-    # --- D02: meta weights ---
     d02_by_asset: dict[str, dict] = {}
+
     try:
         with get_cursor() as cur:
-            cur.execute(
-                """SELECT asset_id, inclusion_flag, inclusion_probability,
-                          recent_effectiveness, days_below_threshold
-                   FROM p3_d02_aim_meta_weights
-                   WHERE aim_id = %s
-                   ORDER BY last_updated DESC""",
-                (aim_id,),
-            )
-            for r in cur.fetchall():
-                asset = r[0]
-                if asset in d02_by_asset:
-                    continue
-                d02_by_asset[asset] = {
-                    "inclusion_flag": r[1],
-                    "inclusion_probability": r[2],
-                    "recent_effectiveness": r[3],
-                    "days_below_threshold": r[4],
-                }
-            if d02_by_asset:
-                d02_populated = True
+            try:
+                cur.execute(
+                    """SELECT asset_id, status, current_modifier, warmup_progress,
+                              last_retrained
+                       FROM p3_d01_aim_model_states
+                       WHERE aim_id = %s
+                       LATEST ON last_updated PARTITION BY asset_id
+                       ORDER BY asset_id""",
+                    (aim_id,),
+                )
+                for r in cur.fetchall():
+                    d01_by_asset[r[0]] = {
+                        "status": r[1],
+                        "modifier": r[2],
+                        "warmup_progress": r[3],
+                        "last_retrained": r[4],
+                    }
+                if d01_by_asset:
+                    d01_populated = True
+            except Exception as exc:
+                logger.error("AIM detail D01 query failed: %s", exc, exc_info=True)
+
+            try:
+                cur.execute(
+                    """SELECT asset_id, inclusion_flag, inclusion_probability,
+                              recent_effectiveness, days_below_threshold
+                       FROM p3_d02_aim_meta_weights
+                       WHERE aim_id = %s
+                       LATEST ON last_updated PARTITION BY asset_id
+                       ORDER BY asset_id""",
+                    (aim_id,),
+                )
+                for r in cur.fetchall():
+                    d02_by_asset[r[0]] = {
+                        "inclusion_flag": r[1],
+                        "inclusion_probability": r[2],
+                        "recent_effectiveness": r[3],
+                        "days_below_threshold": r[4],
+                    }
+                if d02_by_asset:
+                    d02_populated = True
+            except Exception as exc:
+                logger.error("AIM detail D02 query failed: %s", exc, exc_info=True)
     except Exception as exc:
-        logger.error("AIM detail D02 query failed: %s", exc, exc_info=True)
+        logger.error("AIM detail DB session failed: %s", exc, exc_info=True)
 
     # --- D26 check (AIM-16 only) ---
     d26_populated = False
