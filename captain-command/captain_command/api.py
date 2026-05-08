@@ -1258,12 +1258,15 @@ def api_pseudotrader_coldstart_status(user_id: str = "primary_user"):
     try:
         from shared.questdb_client import get_cursor
         with get_cursor() as cur:
+            # LATEST ON dedupes append-only D00 rows so we get one row per
+            # asset (D00 has DEDUP UPSERT KEYS(last_updated, asset_id) but
+            # every status change inserts a new row).
             cur.execute(
                 """SELECT asset_id FROM p3_d00_asset_universe
                    WHERE captain_status IN ('ACTIVE', 'WARM_UP')
-                   ORDER BY asset_id"""
+                   LATEST ON last_updated PARTITION BY asset_id"""
             )
-            assets = [row[0] for row in cur.fetchall()]
+            assets = sorted({row[0] for row in cur.fetchall()})
 
             cur.execute(
                 """SELECT asset, count(*) AS n_trades, max(ts) AS latest_ts
