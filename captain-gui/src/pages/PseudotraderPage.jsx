@@ -7,6 +7,7 @@ import GateActivityFeed from "../components/pseudotrader/GateActivityFeed";
 import MetricTrends from "../components/pseudotrader/MetricTrends";
 import ForecastComparison from "../components/pseudotrader/ForecastComparison";
 import VersionTimeline from "../components/pseudotrader/VersionTimeline";
+import WarmupStatus from "../components/pseudotrader/WarmupStatus";
 import StatBox from "../components/shared/StatBox";
 
 const PanelCard = ({ title, children, headerRight }) => (
@@ -21,7 +22,7 @@ const PanelCard = ({ title, children, headerRight }) => (
 
 const PseudotraderPage = () => {
   const {
-    decisions, parameters, health, trends, versions, forecasts,
+    decisions, parameters, health, trends, versions, forecasts, coldStart,
     loading, error, fetchAll, fetchHealth,
   } = usePseudotraderStore();
 
@@ -48,10 +49,18 @@ const PseudotraderPage = () => {
   }
 
   // Summary stats
+  // Adopt rate is over genuine replay decisions only (ADOPT vs REJECT) —
+  // SKIP_COLD_START / SKIP_TRIVIAL rows are auto-approves with no replay,
+  // so including them in the denominator would understate the true rate
+  // during warm-up.
   const adoptCount = decisions.filter((d) => d.recommendation === "ADOPT").length;
   const rejectCount = decisions.filter((d) => d.recommendation === "REJECT").length;
-  const adoptRate = decisions.length > 0
-    ? ((adoptCount / decisions.length) * 100).toFixed(1)
+  const skippedCount = decisions.filter(
+    (d) => d.recommendation === "SKIP_COLD_START" || d.recommendation === "SKIP_TRIVIAL"
+  ).length;
+  const replayedCount = adoptCount + rejectCount;
+  const adoptRate = replayedCount > 0
+    ? ((adoptCount / replayedCount) * 100).toFixed(1)
     : null;
 
   return (
@@ -76,10 +85,11 @@ const PseudotraderPage = () => {
       )}
 
       {/* Summary stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
         <StatBox label="Total Decisions" value={decisions.length} />
         <StatBox label="Adopted" value={adoptCount} color="text-[#10b981]" />
         <StatBox label="Rejected" value={rejectCount} color="text-[#ef4444]" />
+        <StatBox label="Skipped" value={skippedCount} color="text-[#f59e0b]" />
         <StatBox
           label="Adopt Rate"
           value={adoptRate != null ? `${adoptRate}%` : "\u2014"}
@@ -100,6 +110,7 @@ const PseudotraderPage = () => {
               </span>
             }
           >
+            <WarmupStatus coldStart={coldStart} />
             <DecisionLog decisions={decisions} />
           </PanelCard>
         </div>

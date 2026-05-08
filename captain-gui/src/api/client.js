@@ -107,6 +107,8 @@ const api = {
     fetchJson(`${BASE}/pseudotrader/versions?limit=${limit}`),
   pseudotraderForecasts: () =>
     fetchJson(`${BASE}/pseudotrader/forecasts`),
+  pseudotraderColdStartStatus: (userId = "primary_user") =>
+    fetchJson(`${BASE}/pseudotrader/coldstart_status?user_id=${encodeURIComponent(userId)}`),
 };
 
 export default api;

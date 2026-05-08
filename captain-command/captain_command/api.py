@@ -1239,6 +1239,70 @@ def api_pseudotrader_versions(limit: int = 50):
         return JSONResponse({"error": "Internal server error"})
 
 
+@app.get("/api/pseudotrader/coldstart_status")
+def api_pseudotrader_coldstart_status(user_id: str = "primary_user"):
+    """Per-asset D03 trade count vs cold-start threshold.
+
+    The offline orchestrator's pseudotrader gate auto-approves DMA / Kelly
+    updates when an asset has fewer than ``COLD_START_MIN_TRADES`` rows in
+    P3-D03 — see ``captain-offline/.../orchestrator.py``. This endpoint
+    surfaces that state to the GUI so the user can see why the Decision
+    Log only contains ``SKIP_COLD_START`` rows during warm-up, and
+    estimate when each asset will graduate.
+
+    The threshold is a constant from the orchestrator module and is
+    duplicated here so the API has no captain-offline dependency. If the
+    constant changes, update both sites.
+    """
+    cold_start_min_trades = 5  # Mirror of orchestrator.COLD_START_MIN_TRADES
+    try:
+        from shared.questdb_client import get_cursor
+        with get_cursor() as cur:
+            cur.execute(
+                """SELECT asset_id FROM p3_d00_asset_universe
+                   WHERE captain_status IN ('ACTIVE', 'WARM_UP')
+                   ORDER BY asset_id"""
+            )
+            assets = [row[0] for row in cur.fetchall()]
+
+            cur.execute(
+                """SELECT asset, count(*) AS n_trades, max(ts) AS latest_ts
+                   FROM p3_d03_trade_outcome_log
+                   WHERE user_id = %s
+                   GROUP BY asset""",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+
+        counts = {row[0]: {"n_trades": int(row[1]), "latest_ts": row[2]}
+                  for row in rows}
+
+        per_asset = []
+        for asset in assets:
+            entry = counts.get(asset, {"n_trades": 0, "latest_ts": None})
+            n = entry["n_trades"]
+            per_asset.append({
+                "asset": asset,
+                "n_trades": n,
+                "min_required": cold_start_min_trades,
+                "warm": n >= cold_start_min_trades,
+                "latest_ts": entry["latest_ts"],
+            })
+
+        warm_count = sum(1 for a in per_asset if a["warm"])
+        return JSONResponse(_make_json_safe({
+            "min_required": cold_start_min_trades,
+            "user_id": user_id,
+            "total_assets": len(per_asset),
+            "warm_assets": warm_count,
+            "cold_assets": len(per_asset) - warm_count,
+            "per_asset": per_asset,
+        }))
+    except Exception as exc:
+        logger.error("Pseudotrader coldstart_status failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "Internal server error"})
+
+
 @app.get("/api/pseudotrader/forecasts")
 def api_pseudotrader_forecasts():
     """D27 latest pseudotrader forecasts (Forecast A and B)."""

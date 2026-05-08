@@ -8,6 +8,7 @@ const usePseudotraderStore = create((set) => ({
   trends: [],
   versions: [],
   forecasts: [],
+  coldStart: null,
   loading: true,
   error: null,
 
@@ -65,10 +66,19 @@ const usePseudotraderStore = create((set) => ({
     }
   },
 
+  fetchColdStart: async () => {
+    try {
+      const data = await api.pseudotraderColdStartStatus();
+      set({ coldStart: data || null });
+    } catch (err) {
+      console.warn("Failed to fetch pseudotrader cold-start status:", err);
+    }
+  },
+
   fetchAll: async () => {
     set({ loading: true, error: null });
     try {
-      const [decData, paramData, healthData, trendsData, versionsData, forecastsData] =
+      const [decData, paramData, healthData, trendsData, versionsData, forecastsData, coldStartData] =
         await Promise.allSettled([
           api.pseudotraderDecisions(),
           api.pseudotraderParameters(),
@@ -76,6 +86,7 @@ const usePseudotraderStore = create((set) => ({
           api.pseudotraderTrends(),
           api.pseudotraderVersions(),
           api.pseudotraderForecasts(),
+          api.pseudotraderColdStartStatus(),
         ]);
       set({
         decisions: decData.status === "fulfilled" ? decData.value.decisions || [] : [],
@@ -84,6 +95,7 @@ const usePseudotraderStore = create((set) => ({
         trends: trendsData.status === "fulfilled" ? trendsData.value.trends || [] : [],
         versions: versionsData.status === "fulfilled" ? versionsData.value.versions || [] : [],
         forecasts: forecastsData.status === "fulfilled" ? forecastsData.value.forecasts || [] : [],
+        coldStart: coldStartData.status === "fulfilled" ? coldStartData.value || null : null,
         loading: false,
       });
     } catch (err) {

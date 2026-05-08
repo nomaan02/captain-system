@@ -134,6 +134,17 @@ class OfflineOrchestrator:
                     f"— {d03_count}/{COLD_START_MIN_TRADES} trades",
                     source="b3_pseudotrader",
                 )
+                # Audit row so the GUI Decision Log shows every gate firing
+                # during cold-start, not just the rare counterfactual replays.
+                self._persist_gate_decision(
+                    asset_id, update_type, "SKIP_COLD_START",
+                    pair_payload={
+                        "asset": asset_id,
+                        "reason": "cold_start_insufficient_d03_history",
+                        "d03_count": d03_count,
+                        "min_required": COLD_START_MIN_TRADES,
+                    },
+                )
                 return True
 
             proposed_params: dict = {}
@@ -179,6 +190,71 @@ class OfflineOrchestrator:
                 source="b3_pseudotrader",
             )
             return False
+
+    def _persist_gate_decision(
+        self,
+        asset_id: str,
+        update_type: str,
+        recommendation: str,
+        *,
+        pair_payload: dict | None = None,
+    ) -> None:
+        """Persist a non-replay gate decision to P3-D11 for audit trail.
+
+        Used for ``SKIP_COLD_START`` (insufficient D03 history) and
+        ``SKIP_TRIVIAL`` (parameter delta below ``PSEUDOTRADER_EPSILON``)
+        decisions. ADOPT/REJECT decisions from real replay runs are persisted
+        by ``b3_pseudotrader.run_pseudotrader`` itself. Without this row the
+        GUI Decision Log silently misses every gate event during cold-start,
+        making it impossible to audit why a DMA/Kelly update was committed.
+
+        D11 columns ``sharpe_*``, ``drawdown_change``, ``winrate_delta``,
+        ``pbo``, ``dsr`` are nullable so we omit them — the GUI's
+        ``DecisionLog.jsx`` already renders ``null`` as ``—``.
+
+        Fail-safe: if the INSERT fails, logs a warning but does not raise —
+        the gate decision is still effective even without the audit row.
+
+        Args:
+            asset_id: Asset being evaluated (e.g. ``"ES"``).
+            update_type: One of ``"AIM_WEIGHT_CHANGE"``, ``"KELLY_UPDATE"``,
+                ``"STRATEGY_INJECTION"``.
+            recommendation: One of ``"SKIP_COLD_START"``, ``"SKIP_TRIVIAL"``.
+            pair_payload: JSON-serialisable context dict (asset, reason,
+                d03_count, min_required, trade_id, signal_id, outcome_pnl,
+                etc.). Stored in ``pair_series`` STRING column.
+        """
+        try:
+            from shared.questdb_client import get_cursor, qexecute
+        except ImportError as exc:
+            logger.warning(
+                "Failed to import qdb client for D11 audit %s/%s/%s: %s",
+                asset_id, update_type, recommendation, exc,
+            )
+            return
+
+        prefix = "COLD" if recommendation == "SKIP_COLD_START" else "TRIV"
+        # Millisecond suffix gives uniqueness across rapid successive events;
+        # D11's DEDUP UPSERT KEYS(ts, result_id) handles any residual race.
+        result_id = (
+            f"{prefix}-{asset_id}-{update_type[:3]}-{int(time.time() * 1000)}"
+        )
+        payload_str = json.dumps(pair_payload or {}, default=str)
+
+        try:
+            with get_cursor() as cur:
+                qexecute(
+                    cur,
+                    """INSERT INTO p3_d11_pseudotrader_results
+                       (result_id, update_type, recommendation, pair_series, ts)
+                       VALUES (%s, %s, %s, %s, now())""",
+                    (result_id, update_type, recommendation, payload_str),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist gate decision to D11 (%s/%s/%s): %s",
+                asset_id, update_type, recommendation, exc,
+            )
 
     @staticmethod
     def _is_trivial_dma_change(current: dict, proposed: dict) -> bool:
@@ -310,6 +386,18 @@ class OfflineOrchestrator:
                     # Trivial change \u2014 skip pseudotrader, commit directly
                     run_dma_update(outcome, commit=True)
                     self.plog.info(f"B1: DMA update (trivial) \u2014 {asset_id}", source="b1_dma")
+                    self._persist_gate_decision(
+                        asset_id, "AIM_WEIGHT_CHANGE", "SKIP_TRIVIAL",
+                        pair_payload={
+                            "asset": asset_id,
+                            "reason": "delta_below_epsilon",
+                            "epsilon": PSEUDOTRADER_EPSILON,
+                            "trade_id": outcome.get("trade_id"),
+                            "signal_id": outcome.get("signal_id"),
+                            "outcome_pnl": pnl,
+                            "trigger": "trade_outcome",
+                        },
+                    )
                 elif self._pseudotrader_gate(
                     asset_id, "AIM_WEIGHT_CHANGE",
                     proposed_aim_weights=dma_proposed["proposed_weights"],
@@ -368,6 +456,18 @@ class OfflineOrchestrator:
                     # Trivial change \u2014 skip pseudotrader, commit directly
                     run_kelly_update(outcome, commit=True)
                     self.plog.info(f"B8: Kelly update (trivial) \u2014 {asset_id}", source="b8_kelly")
+                    self._persist_gate_decision(
+                        asset_id, "KELLY_UPDATE", "SKIP_TRIVIAL",
+                        pair_payload={
+                            "asset": asset_id,
+                            "reason": "delta_below_epsilon",
+                            "epsilon": PSEUDOTRADER_EPSILON,
+                            "trade_id": outcome.get("trade_id"),
+                            "signal_id": outcome.get("signal_id"),
+                            "outcome_pnl": pnl,
+                            "trigger": "trade_outcome",
+                        },
+                    )
                 elif self._pseudotrader_gate(
                     asset_id, "KELLY_UPDATE",
                     proposed_kelly_params=kelly_proposed["proposed_kelly"],
@@ -422,6 +522,18 @@ class OfflineOrchestrator:
                     dma_proposed["proposed_weights"],
                 ):
                     run_dma_update(outcome, commit=True)
+                    self._persist_gate_decision(
+                        asset_id, "AIM_WEIGHT_CHANGE", "SKIP_TRIVIAL",
+                        pair_payload={
+                            "asset": asset_id,
+                            "reason": "delta_below_epsilon",
+                            "epsilon": PSEUDOTRADER_EPSILON,
+                            "trade_id": outcome.get("trade_id"),
+                            "signal_id": outcome.get("signal_id"),
+                            "outcome_pnl": pnl,
+                            "trigger": "signal_outcome",
+                        },
+                    )
                 elif self._pseudotrader_gate(
                     asset_id, "AIM_WEIGHT_CHANGE",
                     proposed_aim_weights=dma_proposed["proposed_weights"],
@@ -475,6 +587,18 @@ class OfflineOrchestrator:
                     kelly_proposed["proposed_ewma"],
                 ):
                     run_kelly_update(outcome, commit=True)
+                    self._persist_gate_decision(
+                        asset_id, "KELLY_UPDATE", "SKIP_TRIVIAL",
+                        pair_payload={
+                            "asset": asset_id,
+                            "reason": "delta_below_epsilon",
+                            "epsilon": PSEUDOTRADER_EPSILON,
+                            "trade_id": outcome.get("trade_id"),
+                            "signal_id": outcome.get("signal_id"),
+                            "outcome_pnl": pnl,
+                            "trigger": "signal_outcome",
+                        },
+                    )
                 elif self._pseudotrader_gate(
                     asset_id, "KELLY_UPDATE",
                     proposed_kelly_params=kelly_proposed["proposed_kelly"],

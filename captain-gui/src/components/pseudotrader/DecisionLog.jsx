@@ -8,6 +8,9 @@ const columnHelper = createColumnHelper();
 const REC_COLORS = {
   ADOPT: { bg: "bg-[rgba(16,185,129,0.15)]", border: "border-[rgba(16,185,129,0.3)]", text: "text-[#10b981]" },
   REJECT: { bg: "bg-[rgba(239,68,68,0.15)]", border: "border-[rgba(239,68,68,0.3)]", text: "text-[#ef4444]" },
+  SKIP_COLD_START: { bg: "bg-[rgba(245,158,11,0.12)]", border: "border-[rgba(245,158,11,0.3)]", text: "text-[#f59e0b]" },
+  SKIP_TRIVIAL: { bg: "bg-[rgba(100,116,139,0.12)]", border: "border-[rgba(100,116,139,0.3)]", text: "text-[#94a3b8]" },
+  ACCOUNT_AWARE_REPLAY: { bg: "bg-[rgba(59,130,246,0.12)]", border: "border-[rgba(59,130,246,0.3)]", text: "text-[#3b82f6]" },
 };
 const DEFAULT_REC = { bg: "bg-[rgba(100,116,139,0.1)]", border: "border-[#374151]", text: "text-[#64748b]" };
 
