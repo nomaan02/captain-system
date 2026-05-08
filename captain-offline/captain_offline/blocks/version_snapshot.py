@@ -16,6 +16,7 @@ Max 50 versions per component in hot storage.
 import json
 import os
 import secrets
+import time
 import uuid
 import hashlib
 import logging
@@ -35,6 +36,10 @@ COLD_STORAGE_AGE_DAYS = 90
 # Redis STRING value = JSON blob; survives offline restarts until TTL.
 ROLLBACK_PROPOSAL_KEY_PREFIX = "captain:rollback_proposal:"
 _PROPOSAL_TTL_SEC = int(os.environ.get("CAPTAIN_ROLLBACK_PROPOSAL_TTL_SEC", "604800"))
+
+# Rate-limit version-overflow INFO lines when snapshots stay hot (append-only D18).
+_OVERFLOW_LOG_INTERVAL_SEC = 300.0
+_last_overflow_log_mono: dict[str, float] = {}
 
 VERSIONED_COMPONENTS = [
     "P3-D01",  # AIM model states
@@ -148,20 +153,31 @@ def _enforce_max_versions(component_id: str):
     """
     with get_cursor() as cur:
         cur.execute(
-            """SELECT version_id, ts FROM p3_d18_version_history
-               WHERE component = %s ORDER BY ts DESC""",
+            """SELECT count(), min(ts) FROM p3_d18_version_history
+               WHERE component = %s""",
             (component_id,),
         )
-        versions = cur.fetchall()
+        row = cur.fetchone()
 
-    if len(versions) <= MAX_VERSIONS_PER_COMPONENT:
+    total = int(row[0]) if row and row[0] is not None else 0
+    if total <= MAX_VERSIONS_PER_COMPONENT:
         return
 
-    oldest_excess_ts = versions[-1][1]
-    logger.info("Version overflow for %s: %d versions (MAX=%d) "
-                "— oldest retained: %s (append-only, no pruning)",
-                component_id, len(versions), MAX_VERSIONS_PER_COMPONENT,
-                oldest_excess_ts)
+    oldest_ts = row[1]
+    now_m = time.monotonic()
+    last_m = _last_overflow_log_mono.get(component_id, 0.0)
+    if now_m - last_m < _OVERFLOW_LOG_INTERVAL_SEC:
+        return
+    _last_overflow_log_mono[component_id] = now_m
+
+    logger.info(
+        "Version overflow for %s: %d versions (MAX=%d) "
+        "— oldest retained: %s (append-only, no pruning)",
+        component_id,
+        total,
+        MAX_VERSIONS_PER_COMPONENT,
+        oldest_ts,
+    )
 
 
 def snapshot_before_update(component_id: str, trigger_reason: str,

@@ -107,3 +107,24 @@ def test_no_dual_gate_residue():
     text = LIFECYCLE_PY.read_text(encoding="utf-8")
     assert "feat_progress" not in text
     assert "learn_progress" not in text
+
+
+def test_warmup_skips_snapshot_when_progress_unchanged():
+    """Same obs/progress as last D01 row — no _update_warmup_progress (no D01 snapshot)."""
+    with patch(
+        "captain_offline.blocks.b1_aim_lifecycle._load_aim_states",
+        return_value=[{**_WARMUP_STATE_BASE, "status": "WARM_UP", "warmup_progress": 0.9}],
+    ), patch(
+        "captain_offline.blocks.b1_aim_lifecycle.warmup_required",
+        return_value=10,
+    ), patch(
+        "captain_offline.blocks.b1_aim_lifecycle.observations_collected",
+        return_value=9,
+    ), patch(
+        "captain_offline.blocks.b1_aim_lifecycle._update_warmup_progress",
+    ) as mock_wu, patch(
+        "captain_offline.blocks.b1_aim_lifecycle._update_aim_status",
+    ) as mock_st:
+        run_aim_lifecycle("ES")
+    mock_wu.assert_not_called()
+    assert not any(c[0][2] == "ELIGIBLE" for c in mock_st.call_args_list)

@@ -196,7 +196,13 @@ def run_aim_lifecycle(asset_id: str, user_activated_aims: set[int] | None = None
             obs = observations_collected(aim_id, asset_id)
             required = warmup_required(aim_id)
             progress = obs / required if required > 0 else 1.0
-            _update_warmup_progress(aim_id, asset_id, min(progress, 1.0))
+            clamped = min(progress, 1.0)
+            prev_progress = float(state["warmup_progress"] or 0.0)
+            # Full D01 version snapshot on every noop warmup tick was burning QuestDB
+            # and logging overflow every ~snapshot interval when D18 is huge; only write
+            # when progress actually moves (or first float normalization).
+            if abs(clamped - prev_progress) > 1e-6:
+                _update_warmup_progress(aim_id, asset_id, clamped)
 
             if progress >= 1.0:
                 _update_aim_status(aim_id, asset_id, "ELIGIBLE")
