@@ -753,11 +753,20 @@ def _get_current_vix() -> float | None:
 
 
 def _get_data_hold_count() -> int:
-    """Count assets in DATA_HOLD status."""
+    """Count assets whose latest D00 row is DATA_HOLD.
+
+    p3_d00_asset_universe is append-only (each update inserts a full row).
+    A naive ``WHERE captain_status = 'DATA_HOLD'`` counts every historical
+    snapshot, not distinct assets — that trips the session CB (threshold 3)
+    incorrectly when the table has many legacy DATA_HOLD rows.
+    """
     with get_cursor() as cur:
         cur.execute(
-            """SELECT count() FROM p3_d00_asset_universe
-               WHERE captain_status = 'DATA_HOLD'"""
+            """SELECT count() FROM (
+                   SELECT captain_status
+                   FROM p3_d00_asset_universe
+                   LATEST ON last_updated PARTITION BY asset_id
+               ) WHERE captain_status = 'DATA_HOLD'"""
         )
         row = cur.fetchone()
     return row[0] if row and row[0] else 0
