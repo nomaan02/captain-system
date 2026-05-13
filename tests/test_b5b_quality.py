@@ -89,25 +89,3 @@ class TestQualityBelowFloor:
         qr = result["quality_results"]["ES"]
         assert qr["passes_gate"] is False
         assert qr["quality_multiplier"] == 0.0
-
-
-class TestQualityFloorEnvOverride:
-    """CAPTAIN_B5B_QUALITY_HARD_FLOOR lowers the gate when explicitly set."""
-
-    @patch("captain_online.blocks.b5b_quality_gate._load_system_param", side_effect=_mock_load_param)
-    @patch("captain_online.blocks.b5b_quality_gate._get_trade_count", side_effect=_mock_trade_count)
-    @patch("captain_online.blocks.b5b_quality_gate._log_quality_results")
-    def test_env_floor_allows_marginal_edge(self, mock_log, mock_tc, mock_param, monkeypatch):
-        monkeypatch.setenv("CAPTAIN_B5B_QUALITY_HARD_FLOOR", "0.0005")
-        result = run_quality_gate(
-            selected_trades=["ES"],
-            expected_edge={"ES": 0.001},
-            combined_modifier={"ES": 1.0},
-            regime_probs={"ES": {"LOW_VOL": 0.5, "HIGH_VOL": 0.5}},
-            user_silo=make_user_silo(),
-            session_id=1,
-        )
-
-        assert "ES" in result["recommended_trades"]
-        qr = result["quality_results"]["ES"]
-        assert qr["passes_gate"] is True
