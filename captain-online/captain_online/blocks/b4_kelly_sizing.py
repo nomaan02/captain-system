@@ -31,6 +31,7 @@ Writes: nothing (pure computation — signals written by B6)
 import json
 import logging
 import math
+import os
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -168,6 +169,18 @@ def run_kelly_sizing(
             override_val = float(override) if not isinstance(override, float) else override
             kelly_with_aim *= override_val
 
+        # Emergency override (tower .env only): floor Kelly fraction before contract math.
+        # Default unset = spec behaviour. Use sparingly when D12 Kelly is stuck at 0 but
+        # you accept extra risk to keep the session active.
+        min_kelly = _env_float_optional("CAPTAIN_B4_MIN_KELLY_FRACTION")
+        if min_kelly is not None and min_kelly > 0 and kelly_with_aim < min_kelly:
+            logger.warning(
+                "ON-B4: %s CAPTAIN_B4_MIN_KELLY_FRACTION=%s raising kelly "
+                "from %.6f to %.6f (EMERGENCY OVERRIDE)",
+                u, min_kelly, kelly_with_aim, min_kelly,
+            )
+            kelly_with_aim = min_kelly
+
         # Step 6: Per-account sizing
         asset_detail = assets_detail.get(u, {})
         strategy = locked_strategies.get(u, {})
@@ -286,6 +299,17 @@ def run_kelly_sizing(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _env_float_optional(name: str) -> float | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("ON-B4: invalid %s=%r — ignoring", name, raw)
+        return None
+
 
 def _get_kelly_for_regime(asset_id: str, regime: str, kelly_params: dict, session_id: int) -> float:
     """Get Kelly fraction for asset/regime. Falls back to any session."""

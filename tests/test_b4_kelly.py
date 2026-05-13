@@ -198,6 +198,33 @@ class TestZeroKelly:
         assert result["final_contracts"]["ES"]["acc_eval_1"] == 0
 
 
+class TestEmergencyKellyFloor:
+    """CAPTAIN_B4_MIN_KELLY_FRACTION can lift zero-Kelly assets (tower override)."""
+
+    def test_env_floor_produces_contracts(self, monkeypatch):
+        monkeypatch.setenv("CAPTAIN_B4_MIN_KELLY_FRACTION", "0.01")
+        zero_kelly = {
+            ("ES", "LOW_VOL", 1): {"kelly_full": 0.0, "shrinkage_factor": 1.0},
+            ("ES", "HIGH_VOL", 1): {"kelly_full": 0.0, "shrinkage_factor": 1.0},
+        }
+        result = run_kelly_sizing(
+            active_assets=["ES"],
+            regime_probs={"ES": {"LOW_VOL": 0.5, "HIGH_VOL": 0.5}},
+            regime_uncertain={"ES": False},
+            combined_modifier={"ES": 1.0},
+            kelly_params=zero_kelly,
+            ewma_states=make_ewma_states("ES", win_rate=0.30, avg_win=100.0, avg_loss=100.0),
+            tsm_configs=make_tsm_configs(["acc_eval_1"]),
+            sizing_overrides={},
+            user_silo=make_user_silo(accounts=["acc_eval_1"]),
+            locked_strategies=make_locked_strategy("ES"),
+            assets_detail=make_assets_detail("ES"),
+            session_id=1,
+        )
+
+        assert result["final_contracts"]["ES"]["acc_eval_1"] >= 1
+
+
 class TestKellyHelpers:
     """Unit tests for Kelly helper functions."""
 

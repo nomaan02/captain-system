@@ -18,6 +18,7 @@ Writes: P3-D17 (session_log)
 
 import json
 import logging
+import os
 from datetime import datetime
 
 from shared.questdb_client import get_cursor, qexecute
@@ -44,6 +45,15 @@ def run_quality_gate(
     # Load quality thresholds from P3-D17
     hard_floor = _load_system_param("quality_hard_floor", 0.003)
     quality_ceiling = _load_system_param("quality_ceiling", 0.010)
+
+    env_floor = _env_float_optional("CAPTAIN_B5B_QUALITY_HARD_FLOOR")
+    if env_floor is not None:
+        logger.warning(
+            "ON-B5B: CAPTAIN_B5B_QUALITY_HARD_FLOOR=%s overrides D17 value %.6f "
+            "(EMERGENCY OVERRIDE)",
+            env_floor, hard_floor,
+        )
+        hard_floor = env_floor
 
     quality_results = {}
 
@@ -115,6 +125,17 @@ def run_quality_gate(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _env_float_optional(name: str) -> float | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("ON-B5B: invalid %s=%r — ignoring", name, raw)
+        return None
+
 
 def _get_trade_count(asset_id: str) -> int:
     """Count trades for an asset in P3-D03."""
