@@ -11,7 +11,7 @@ Session: **NY Open, Monday May 5 2026**
 | 1 | [OCO Bracket Fail](#1-oco-bracket-order-failure) | HIGH | :white_check_mark: Resolved (mitigation + safety net) |
 | 2 | [Pseudotrader Crash — missing `requests`](#2-pseudotrader-crash--missing-requests-module) | HIGH | :white_check_mark: Resolved |
 | 3 | [Pseudotrader Rejections — zero sharpe_delta](#3-pseudotrader-rejections--zero-sharpe_delta) | MEDIUM | :white_check_mark: Resolved |
-| 4 | [UserStream returning all Nones](#4-userstream-returning-all-nones) | HIGH | :x: Open |
+| 4 | [UserStream returning all Nones](#4-userstream-returning-all-nones) | HIGH | :mag: Audited — fix gated on Stage-A diagnostic |
 | 5 | [Decimal → DOUBLE conversion error in B7](#5-decimal--double-conversion-error-in-b7-position-monitor) | HIGH | :white_check_mark: Resolved |
 | 6 | [Remove ZB and ZN from NY session](#6-remove-zb-and-zn-from-ny-session) | MEDIUM | :x: Open |
 
@@ -108,6 +108,8 @@ captain-online-1  | [ONLINE] 2026-05-05 09:38:23,167 INFO __main__:
 ```
 
 **Notes:** Either the SignalR message schema has changed (field names shifted), the auth token is invalid/expired so the stream connects but returns empty payloads, or pysignalr is not parsing the hub response correctly. Check `shared/topstep_stream.py` message handler field mappings.
+
+**Audit (2026-05-06):** See [`2026-05-06_issue4_userstream_none_root_cause_audit.md`](./2026-05-06_issue4_userstream_none_root_cause_audit.md). Root cause: TopstepX User Hub wraps each event in a `{"data": {...}, "action": 0/1/2}` envelope (per `admin.docs.projectx.com`) but `_normalize_hub_payload` reads the wrapper, never unwrapping to the inner entity — so every `data.get("balance")`, `.get("id")`, `.get("contractId")`, etc. returns `None`. The captain code was written against the Gateway-product docs which omit the envelope entirely. Two-stage remediation: **(A)** ship a one-shot raw-args logger to confirm the wire shape, **(B)** add an `{data, action}` unwrap branch in `_normalize_hub_payload` (~10 lines, two regression tests). Field-name aliasing (e.g. `positionSize`→`size`, `pnl`→`profitAndLoss`) gated on what Stage A captures. No code changes yet.
 
 ---
 
