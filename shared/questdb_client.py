@@ -12,13 +12,22 @@ import re
 import threading
 import time
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import psycopg2
 import psycopg2.extensions
 from contextlib import contextmanager
 
 from shared.canonical_schemas import COLUMN_TYPES
+
+# DECIMAL(p,s) as stored in COLUMN_TYPES — used to quantize values before the
+# global Decimal adapter builds cast(..., DECIMAL(p_inner, s_inner)). QuestDB
+# rejects DECIMAL(11,8) → DECIMAL(18,2) assignment when s_inner > column scale
+# (session-budget carryover was 551.18400000 → cast as DECIMAL(11,8) into
+# effective_l_halt DECIMAL(18,2) -> inconvertible).
+_DECIMAL_COL_RE = re.compile(
+    r"^DECIMAL\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*$", re.IGNORECASE
+)
 
 # QuestDB maps psycopg2's NUMERIC wire type to DOUBLE, then rejects
 # DOUBLE→DECIMAL casts on assignment.  Quoted-string DECIMAL literals
@@ -35,14 +44,18 @@ from shared.canonical_schemas import COLUMN_TYPES
 #
 # Solution: introspect each Decimal's representation and emit
 # `cast('<value>' as DECIMAL(<precision>, <scale>))` with the minimal
-# (p, s) that fits the value losslessly. QuestDB widens or narrows on
-# assignment, so the same adapter works for every DECIMAL(p,s) column.
+# (p, s) that fits the value losslessly after any consumer-side rounding.
+# Typed INSERTs also run ``qexecute`` column-scale quantization (see
+# ``_coerce_for_column``): QuestDB rejects some cast-to-column assignments
+# when the cast's scale exceeds the column's (e.g. DECIMAL(11,8) value
+# into DECIMAL(18,2)), so we must not rely on implicit narrowing.
 def _decimal_to_cast_sql(d: Decimal) -> str:
     """Render a Decimal as `cast('<value>' as DECIMAL(<p>, <s>))`.
 
     The precision/scale are derived from the Decimal's own digits so the
-    cast expression always fits the value.  QuestDB then widens or
-    narrows at column-assignment time as needed.
+    cast fits the (possibly pre-quantized) value. Column assignment is not
+    guaranteed to narrow cast scale to the column; ``qexecute`` quantizes
+    Decimals to each column's declared scale before this runs.
     """
     s = format(d, "f")  # expand any scientific notation: 5E-7 -> '0.0000005'
     sign = ""
@@ -123,7 +136,9 @@ def _parse_table_columns_from_sql(sql: str) -> tuple[str, list[str]] | None:
 def _coerce_for_column(value: object, col_type: str) -> object:
     """Coerce a single param to the right Python type for col_type.
 
-    DECIMAL columns: leave Decimal as-is (existing global adapter handles it).
+    DECIMAL columns: Decimal -> quantize to the column's declared scale
+        (ROUND_HALF_UP) so psycopg2's cast DECIMAL(p,s) matches QuestDB's
+        DECIMAL(18,2) / DECIMAL(14,6) etc.; other types pass through.
     DOUBLE / FLOAT:   Decimal -> float; None stays None.
     SYMBOL / VARCHAR / STRING / CHAR: Decimal -> str; None stays None.
     INT / LONG / SHORT / BYTE:       Decimal -> int; None stays None.
@@ -133,7 +148,15 @@ def _coerce_for_column(value: object, col_type: str) -> object:
     """
     if value is None:
         return None
-    if col_type.startswith("DECIMAL"):
+    if col_type.strip().upper().startswith("DECIMAL"):
+        m = _DECIMAL_COL_RE.match(col_type.strip())
+        if m and isinstance(value, Decimal):
+            scale = int(m.group(2))
+            step = Decimal(1).scaleb(-scale)
+            try:
+                return value.quantize(step, rounding=ROUND_HALF_UP)
+            except InvalidOperation:
+                return value
         return value
     if col_type in ("DOUBLE", "FLOAT"):
         if isinstance(value, Decimal):
