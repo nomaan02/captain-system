@@ -212,3 +212,34 @@ def compliance_check(signal: dict, account_id: str) -> dict:
         return {"approved": False, "reason": "INSTRUMENT_NOT_PERMITTED"}
 
     return {"approved": True}
+
+
+def compliance_modify_check(
+    account_id: str,
+    asset: str,
+    execution_mode: str,
+) -> tuple[bool, str | None]:
+    """Gate for /Order/modify calls issued by the NKD trailing-stop loop (B7B).
+
+    Returns (allowed: bool, reason: str | None).
+
+    Called before every client.modify_order in b7b_nkd_trail.scan_nkd_trails.
+    Halts trail modifications (but does NOT flatten the position) when:
+    - execution_mode is not "AUTO" (e.g. operator switched to MANUAL mid-position)
+    - the asset is no longer in D00's active universe (instrument removed)
+
+    Non-blocking: if the TSM lookup fails, defaults to ALLOW so that a DB
+    hiccup does not silently freeze the trail stop.
+    """
+    if execution_mode != "AUTO":
+        reason = f"execution_mode={execution_mode!r} — trail modify halted (position unchanged)"
+        logger.warning("compliance_modify_check BLOCKED: %s", reason)
+        return (False, reason)
+
+    tsm = _get_account_tsm(account_id)
+    if tsm is not None and not instrument_permitted(asset, tsm):
+        reason = f"instrument {asset!r} no longer permitted for account {account_id!r}"
+        logger.warning("compliance_modify_check BLOCKED: %s", reason)
+        return (False, reason)
+
+    return (True, None)
