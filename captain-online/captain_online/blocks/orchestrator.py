@@ -784,7 +784,13 @@ class OnlineOrchestrator:
         self._all_signals.extend(signals)
 
     def _run_position_monitor(self):
-        """Run B7 position monitoring pass."""
+        """Run B7 position monitoring pass.
+
+        Order matters: B7 monitor_positions runs FIRST so any TP/SL/TIME_EXIT
+        resolutions remove their positions from the open set before B7B scans
+        for NKD trail updates — we never want to issue a /Order/modify on a
+        position whose SL just fired and which the broker has already closed.
+        """
         from captain_online.blocks.b7_position_monitor import monitor_positions
         from captain_online.blocks.b1_data_ingestion import _load_tsm_configs
         tsm_configs = _load_tsm_configs()
@@ -801,6 +807,28 @@ class OnlineOrchestrator:
                         get_redis_client().hdel(REDIS_KEY_OPEN_POSITIONS, sig_id)
                     except Exception as exc:
                         logger.error("Failed to remove position %s from Redis: %s", sig_id, exc)
+
+            # ── B7B: NKD trailing-stop ratchet ──
+            # Runs after monitor_positions so we never modify a freshly-closed
+            # position. Only fires when there is at least one open NKD trail
+            # position; non-NKD towers pay zero cost.
+            if any(p.get("is_nkd_trail") for p in self.open_positions):
+                try:
+                    from captain_online.blocks.b7b_nkd_trail import scan_nkd_trails
+                    from shared.topstep_client import get_topstep_client
+                    from captain_command.blocks.b12_compliance_gate import (
+                        check_compliance_gate,
+                    )
+                    gate = check_compliance_gate()
+                    execution_mode = gate.get("execution_mode", "MANUAL")
+                    scan_nkd_trails(
+                        open_positions=self.open_positions,
+                        client=get_topstep_client(),
+                        redis_client=get_redis_client(),
+                        execution_mode=execution_mode,
+                    )
+                except Exception as e:
+                    logger.error("ON-B7B-NKD scan error: %s", e, exc_info=True)
 
     def _run_shadow_monitor(self):
         """Run shadow position monitoring pass for theoretical outcomes."""
