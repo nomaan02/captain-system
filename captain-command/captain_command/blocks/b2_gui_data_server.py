@@ -464,6 +464,11 @@ def _get_open_positions_from_redis(user_id: str) -> list[dict]:
             "session": pos.get("session"),
             "regime_state": pos.get("regime_state"),
             "bracket": pos.get("bracket", False),
+            "current_phase": pos.get("current_phase"),
+            "current_buffer": _gui_money_json(pos.get("current_buffer")),
+            "current_stop_price": _gui_money_json(pos.get("current_stop_price")),
+            "jitter_j": _gui_money_json(pos.get("jitter_j")),
+            "modify_seq": pos.get("modify_seq"),
         })
     return out
 
