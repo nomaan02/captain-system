@@ -120,7 +120,7 @@ def run_signal_output(
                            u, asset_features.get("or_direction"),
                            strategy.get("default_direction"))
             continue
-        tp_level = _compute_tp(strategy, asset_features, direction, u)
+        tp_level = _compute_tp(strategy, asset_features, direction, u, asset_detail=asset_detail)
         sl_level = _compute_sl(strategy, asset_features, direction, u)
 
         # Aggregate size across accounts for this asset
@@ -256,11 +256,56 @@ def _determine_direction(strategy: dict, features: dict) -> int:
     return strategy.get("default_direction", 0)
 
 
-def _compute_tp(strategy: dict, features: dict, direction: int, asset_id: str = "") -> float | None:
-    """Compute take-profit level from strategy params."""
+def _tp_from_dollars(
+    dollars: float,
+    entry: float,
+    direction: int,
+    point_value: float,
+    size: int,
+    asset_id: str,
+) -> float:
+    """Compute take-profit level from a dollar-denominated target.
+
+    Converts a dollar amount to price distance, then snaps INWARD (same semantics
+    as the existing OR-range TP rounding in _compute_tp): LONG → floor (at or below
+    dollar ceiling); SHORT → ceil (at or above dollar ceiling).
+
+    Used when locked_strategy contains a 'tp_dollars' key (NKD pivot path).
+    """
+    tp_distance_points = dollars / (point_value * max(1, size))
+    tp_raw = entry + (tp_distance_points * direction)
+    tick = get_tick_size(asset_id)
+    ndigits = max(0, len(str(tick).rstrip('0').split('.')[-1])) if '.' in str(tick) else 0
+    if direction == 1:
+        return round(math.floor(tp_raw / tick) * tick, ndigits)
+    elif direction == -1:
+        return round(math.ceil(tp_raw / tick) * tick, ndigits)
+    return tp_raw
+
+
+def _compute_tp(
+    strategy: dict,
+    features: dict,
+    direction: int,
+    asset_id: str = "",
+    size: int = 1,
+    asset_detail: dict | None = None,
+) -> float | None:
+    """Compute take-profit level from strategy params.
+
+    When strategy contains 'tp_dollars', delegates to _tp_from_dollars (NKD
+    pivot path). Otherwise falls through to the existing OR-range formula.
+    The 'size' and 'asset_detail' params are only consumed by the tp_dollars
+    branch; passing them for non-NKD assets is a no-op.
+    """
     tp_multiple = strategy.get("tp_multiple", 0.70)
     or_range = features.get("or_range")
     entry = features.get("entry_price")
+
+    tp_dollars = strategy.get("tp_dollars")
+    if tp_dollars is not None and entry is not None:
+        point_value = float((asset_detail or {}).get("point_value", 50.0))
+        return _tp_from_dollars(float(tp_dollars), float(entry), direction, point_value, size, asset_id)
 
     if or_range and entry:
         tp_dist = tp_multiple * or_range
