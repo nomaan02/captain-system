@@ -45,7 +45,10 @@ P2_STRATEGIES = {
     "MNQ": {"m": 5,  "k": 32,  "feature_threshold": -0.031505,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8236, "complexity_tier": "C1"},
     "M2K": {"m": 5,  "k": 32,  "feature_threshold": -0.015674,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.9245, "complexity_tier": "C3"},
     "MYM": {"m": 9,  "k": 115, "feature_threshold": 65.873016,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.7705, "complexity_tier": "C1"},
-    "NKD": {"m": 6,  "k": 6,   "feature_threshold": 0.174242,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8533, "complexity_tier": "C1"},
+    "NKD": {"m": 6,  "k": 6,   "feature_threshold": 0.174242,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8533, "complexity_tier": "C1",
+            "tp_dollars": 4450, "is_nkd_trail": True, "trail_step_dollars": 500,
+            "trail_phase_b_start_dollars": 1500, "trail_phase_c_start_dollars": 4000,
+            "trail_phase_c_buffer_dollars": 450},
     "MGC": {"m": 2,  "k": 29,  "feature_threshold": -0.543427,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8892, "complexity_tier": "C1"},
     "ZB":  {"m": 10, "k": 113, "feature_threshold": 0.759294,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8054, "complexity_tier": "C1"},
     "ZN":  {"m": 4,  "k": 37,  "feature_threshold": 2.678498,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.9058, "complexity_tier": "C1"},
@@ -112,6 +115,16 @@ def _build_locked_strategy(asset_id: str) -> str:
         "threshold": spec["sl_distance"],  # SL distance in points (B4 Kelly fallback)
         "entry_conditions": {},
     }
+    # NKD pivot: forward optional trail-control fields when present in P2_STRATEGIES.
+    # These are additive; all other assets retain the base strategy unchanged.
+    _NKD_TRAIL_KEYS = (
+        "tp_dollars", "is_nkd_trail", "trail_step_dollars",
+        "trail_phase_b_start_dollars", "trail_phase_c_start_dollars",
+        "trail_phase_c_buffer_dollars",
+    )
+    for k in _NKD_TRAIL_KEYS:
+        if k in p2:
+            strategy[k] = p2[k]
     return json.dumps(strategy)
 
 
