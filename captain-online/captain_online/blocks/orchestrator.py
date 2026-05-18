@@ -1216,6 +1216,38 @@ class OnlineOrchestrator:
             # which already coerces back to float on recovery (line 116).
             pos_for_redis = dict(position)
             pos_for_redis["entry_time"] = position["entry_time"].isoformat()
+            # C5: consume staged bracket children (race: UserStream delivered
+            # SL/TP child order IDs before this TAKEN message was processed).
+            if position.get("bracket"):
+                _entry_oid = data.get("entry_order_id")
+                _acct = data.get("account_id")
+                if _entry_oid and _acct:
+                    _children_key = (
+                        f"bracket:children:{_acct}:{_entry_oid}"
+                    )
+                    try:
+                        _children_raw = get_redis_client().get(_children_key)
+                        if _children_raw:
+                            _children = json.loads(_children_raw)
+                            if _children.get("sl_order_id"):
+                                pos_for_redis["sl_order_id"] = _children["sl_order_id"]
+                                position["sl_order_id"] = _children["sl_order_id"]
+                            if _children.get("tp_order_id"):
+                                pos_for_redis["tp_order_id"] = _children["tp_order_id"]
+                                position["tp_order_id"] = _children["tp_order_id"]
+                            get_redis_client().delete(_children_key)
+                            logger.info(
+                                "Applied staged bracket children for %s:"
+                                " sl=%s tp=%s",
+                                signal_id,
+                                pos_for_redis.get("sl_order_id"),
+                                pos_for_redis.get("tp_order_id"),
+                            )
+                    except Exception as _stage_exc:
+                        logger.warning(
+                            "Failed to apply staged bracket children: %s",
+                            _stage_exc,
+                        )
             try:
                 from shared.decimal_json import dumps_decimal
                 get_redis_client().hset(REDIS_KEY_OPEN_POSITIONS, signal_id,

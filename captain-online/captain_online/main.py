@@ -129,6 +129,128 @@ def _start_market_streams():
 # Redis hash key — same constant as in online orchestrator (captain:open_positions)
 _REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
 
+# ---------------------------------------------------------------------------
+# R1: Bracket child-order capture (defence-in-depth for SL/TP ID resolution)
+# ---------------------------------------------------------------------------
+
+_BRACKET_CHILDREN_TTL_S = 30
+
+
+def _try_capture_bracket_child(
+    order_data: dict,
+    account_id: int,
+    redis_client,
+    open_positions_key: str = _REDIS_KEY_OPEN_POSITIONS,
+) -> bool:
+    """Match a UserStream order to a pending bracket entry and write real IDs.
+
+    Called from _on_order_update for every incoming order.  Only acts on
+    LIMIT (type=1, TP child) and STOP (type=4, SL child) orders whose side
+    is OPPOSITE to the recorded entry direction.
+
+    Two paths:
+    - Position already in Redis  → update sl_order_id / tp_order_id inline.
+    - Race (TAKEN not processed) → stage in bracket:children:{acct}:{entry}
+      with 30 s TTL; _handle_taken_skipped in the orchestrator applies them.
+
+    Returns True if the order was matched as a bracket child, False otherwise.
+    Never raises.
+    """
+    # Only LIMIT (TP) and STOP (SL) child orders carry real bracket IDs.
+    order_type = order_data.get("type")
+    if order_type not in (1, 4):
+        return False
+
+    if order_data.get("accountId") != account_id:
+        return False
+
+    order_id = str(order_data.get("id", ""))
+    order_side = order_data.get("side")  # 0=Bid/Buy, 1=Ask/Sell
+
+    pending_key = f"bracket:pending:{account_id}"
+    try:
+        pending_entries = redis_client.hgetall(pending_key)
+    except Exception as exc:
+        logger.warning("bracket:pending hgetall failed: %s", exc)
+        return False
+
+    if not pending_entries:
+        return False
+
+    for entry_oid_str, entry_json in pending_entries.items():
+        try:
+            entry = json.loads(entry_json)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        entry_side = entry.get("side")  # "BUY" or "SELL"
+        # Entry BUY → child orders are SELL (side=1 Ask/Sell)
+        # Entry SELL → child orders are BUY  (side=0 Bid/Buy)
+        expected_child_side = 1 if entry_side == "BUY" else 0
+        if order_side != expected_child_side:
+            continue
+
+        signal_id = entry.get("signal_id")
+        # type=4 STOP → SL;  type=1 LIMIT → TP
+        child_field = "sl_order_id" if order_type == 4 else "tp_order_id"
+
+        try:
+            pos_raw = redis_client.hget(open_positions_key, signal_id)
+        except Exception:
+            pos_raw = None
+
+        if pos_raw is not None:
+            # Position exists — update it directly.
+            try:
+                pos = json.loads(pos_raw)
+                pos[child_field] = order_id
+                redis_client.hset(open_positions_key, signal_id,
+                                  json.dumps(pos, default=str))
+                logger.info(
+                    "Bracket child captured: signal=%s %s=%s",
+                    signal_id, child_field, order_id,
+                )
+                # Clear pending entry when both children are resolved.
+                try:
+                    pos2_raw = redis_client.hget(open_positions_key, signal_id)
+                    if pos2_raw:
+                        pos2 = json.loads(pos2_raw)
+                        if (pos2.get("sl_order_id") not in ("BRACKET", None)
+                                and pos2.get("tp_order_id") not in ("BRACKET", None)):
+                            redis_client.hdel(pending_key, entry_oid_str)
+                            logger.info(
+                                "Both bracket children resolved for signal=%s"
+                                " — pending cleared",
+                                signal_id,
+                            )
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update position with bracket child: %s", exc,
+                )
+        else:
+            # Race: position not yet in Redis — stage for _handle_taken_skipped.
+            children_key = (
+                f"bracket:children:{account_id}:{entry_oid_str}"
+            )
+            try:
+                existing_raw = redis_client.get(children_key)
+                children = json.loads(existing_raw) if existing_raw else {}
+                children[child_field] = order_id
+                redis_client.set(children_key, json.dumps(children),
+                                 ex=_BRACKET_CHILDREN_TTL_S)
+                logger.info(
+                    "Bracket child staged (race): signal=%s %s=%s key=%s",
+                    signal_id, child_field, order_id, children_key,
+                )
+            except Exception as exc:
+                logger.warning("Failed to stage bracket child: %s", exc)
+
+        return True  # Matched — no need to check further pending entries
+
+    return False
+
 
 def _start_user_stream():
     """Start UserStream for real-time order/position/trade updates.
@@ -233,6 +355,11 @@ def _start_user_stream():
             if status in (6, "REJECTED"):
                 logger.warning("UserStream ORDER REJECTED: id=%s data=%s",
                                data.get("id"), data)
+            # R1: capture SL/TP child order IDs from UserStream callbacks.
+            try:
+                _try_capture_bracket_child(data, account_id, redis)
+            except Exception as exc:
+                logger.warning("bracket child capture failed (non-fatal): %s", exc)
             try:
                 redis.publish(CH_USER_EVENTS, json.dumps(
                     {"type": "order_update", "data": data}, default=str))

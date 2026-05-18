@@ -470,3 +470,59 @@ class TestBracketOrder:
         adapter._client.place_market_order.assert_called_once()
         assert result["status"] == "PLACED"
         assert result.get("bracket") is None
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=0.25)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_bracket_pushes_pending_to_redis(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """Successful bracket: HSET called on bracket:pending:{account_id} with entry_oid field."""
+        adapter = _make_adapter()
+        adapter._client.place_bracket_order.return_value = {
+            "success": True,
+            "orderId": "BRK-PEND",
+        }
+
+        order = _base_order(
+            entry_price=5500.0, sl=5490.0, tp=5520.0,
+            signal_id="SIG-TESTPEND",
+        )
+        result = adapter.send_signal(order)
+
+        assert result["status"] == "PLACED"
+        assert result["sl_order_id"] == "BRACKET"
+
+        # HSET must have been called with bracket:pending:{account_id}
+        hset_calls = redis_mock.hset.call_args_list
+        assert len(hset_calls) >= 1
+        pending_calls = [
+            c for c in hset_calls
+            if str(c[0][0]).startswith("bracket:pending:")
+        ]
+        assert len(pending_calls) == 1, (
+            f"Expected exactly 1 bracket:pending HSET call, got {hset_calls}"
+        )
+        _key, field, value_json = pending_calls[0][0]
+        assert field == "BRK-PEND"
+        payload = json.loads(value_json)
+        assert payload["signal_id"] == "SIG-TESTPEND"
+        assert payload["asset"] == "ES"
+        assert payload["side"] == "BUY"
+        assert "timestamp" in payload
+
+        # EXPIRE must also be called on the same key
+        expire_calls = redis_mock.expire.call_args_list
+        pending_expire_calls = [
+            c for c in expire_calls
+            if str(c[0][0]).startswith("bracket:pending:")
+        ]
+        assert len(pending_expire_calls) == 1
+        ttl = pending_expire_calls[0][0][1]
+        assert ttl == 10

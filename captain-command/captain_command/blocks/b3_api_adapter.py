@@ -42,6 +42,42 @@ from shared.topstep_client import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# R1: Bracket-pending helper (defence-in-depth for SL/TP order-ID capture)
+# ---------------------------------------------------------------------------
+
+_BRACKET_PENDING_TTL_S = 10
+
+
+def _push_bracket_pending(
+    account_id: "int | str",
+    entry_oid: "int | str",
+    signal_id: "str | None",
+    asset_id: str,
+    direction: str,
+) -> None:
+    """Push a pending-bracket entry to Redis for UserStream child-order matching.
+
+    Key  : bracket:pending:{account_id}  (Redis hash, TTL=10s)
+    Field: str(entry_oid)
+    Value: JSON {"signal_id", "asset", "side", "timestamp"}
+
+    Called only after a successful place_bracket_order.  If Redis is
+    unavailable the caller logs a warning and falls through — the
+    "BRACKET" sentinel path remains as a fallback.
+    """
+    key = f"bracket:pending:{account_id}"
+    value = json.dumps({
+        "signal_id": signal_id,
+        "asset": asset_id,
+        "side": direction,
+        "timestamp": int(time.time() * 1000),
+    })
+    rc = get_redis_client()
+    rc.hset(key, str(entry_oid), value)
+    rc.expire(key, _BRACKET_PENDING_TTL_S)
+
+
+# ---------------------------------------------------------------------------
 # 3.1 — API Adapter Interface
 # ---------------------------------------------------------------------------
 
@@ -281,6 +317,19 @@ class TopstepXAdapter(APIAdapter):
                         entry_oid, fill_price, sl_ticks, tp_ticks,
                         order.get("direction"), size, contract_id,
                     )
+                    # R1: push pending entry so _on_order_update can resolve
+                    # the real SL/TP broker order IDs from the UserStream.
+                    try:
+                        _push_bracket_pending(
+                            self._account_id, entry_oid,
+                            order.get("signal_id"), asset_id,
+                            order.get("direction", "BUY"),
+                        )
+                    except Exception as _push_exc:
+                        logger.warning(
+                            "bracket:pending push failed (non-fatal): %s",
+                            _push_exc,
+                        )
                     return result
                 else:
                     err_code = bracket_resp.get("errorCode")
