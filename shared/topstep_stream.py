@@ -315,6 +315,14 @@ class MarketStream:
         """List of subscribed contract IDs."""
         return list(self._contract_ids)
 
+    def is_subscribed(self, contract_id: str) -> bool:
+        """Return True if *contract_id* is in the active subscription set.
+
+        Used by the NKD persistence guard (C10) to check whether NKD's contract
+        is still subscribed at session rollover before re-adding it.
+        """
+        return contract_id in self._contract_ids
+
     def add_contract(self, contract_id: str) -> None:
         """Subscribe to an additional contract on the live connection."""
         if contract_id not in self._contract_ids:

@@ -36,6 +36,43 @@ ROLE = os.environ.get("CAPTAIN_ROLE", "ONLINE")
 # Module-level OR tracker — shared between MarketStream (writer) and orchestrator (reader)
 or_tracker = ORTracker()
 
+# Module-level MarketStream reference — set by main() after stream startup.
+# Exposed so b7b_nkd_trail.scan_nkd_trails can call ensure_nkd_subscribed()
+# at every poll to retain NKD's quote subscription across session rollovers
+# (C10 guard — NKD_PIVOT_AUDIT §6.2).
+_market_stream = None
+
+
+def ensure_nkd_subscribed(open_positions: list[dict]) -> None:
+    """Retain NKD's MarketStream subscription when an open NKD trail position exists.
+
+    Called from the B7B trail loop. Guards against quote loss at session rollover:
+    if the stream reconnects without NKD's contract_id (e.g., because a future
+    remove_contract call is added for non-active-session assets), NKD's live quote
+    would go stale and the trail loop would fall back to REST 1-min bars.
+
+    No-op when:
+    - No open NKD trail positions (fast path for non-APAC sessions).
+    - _market_stream not yet set (startup race, safe to skip).
+    - NKD already subscribed (is_subscribed() check prevents redundant add_contract).
+    """
+    if _market_stream is None:
+        return
+    if not any(p.get("asset") == "NKD" or p.get("is_nkd_trail") for p in open_positions):
+        return
+    from shared.contract_resolver import resolve_contract_id
+    try:
+        nkd_cid = resolve_contract_id("NKD")
+    except Exception:
+        logger.warning("ensure_nkd_subscribed: could not resolve NKD contract_id")
+        return
+    if nkd_cid and not _market_stream.is_subscribed(nkd_cid):
+        logger.warning(
+            "ensure_nkd_subscribed: NKD contract %s not in MarketStream — re-subscribing",
+            nkd_cid,
+        )
+        _market_stream.add_contract(nkd_cid)
+
 logging.basicConfig(
     level=logging.INFO,
     format=f"[{ROLE}] %(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -496,6 +533,10 @@ def main():
     market_stream = _start_market_streams()
     if market_stream:
         plog.info("MarketStream started \u2014 live quotes active", source="stream")
+        # C10: expose stream reference so ensure_nkd_subscribed() can call
+        # add_contract at session rollover if NKD's subscription is ever dropped.
+        global _market_stream
+        _market_stream = market_stream
     else:
         logger.critical("TopstepX authentication failed — cannot trade without market data")
         plog.error("MarketStream FAILED after retries — exiting", source="stream")

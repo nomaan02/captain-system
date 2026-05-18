@@ -572,6 +572,14 @@ def scan_nkd_trails(
     # Track which signal_ids we touched so we can purge stale prev_pnl
     # entries when a position is no longer in the open set. We need this
     # to run BEFORE the empty-list early-exit so a position that
+    # C10: NKD subscription guard — retain MarketStream quote feed during 22h hold.
+    # Fast path (no NKD positions) is a single any() call and a None check.
+    try:
+        from captain_online.main import ensure_nkd_subscribed
+        ensure_nkd_subscribed(open_positions or [])
+    except Exception:
+        pass  # non-fatal — trail logic continues even if guard fails
+
     # externally closes (UserStream size=0 → orchestrator drops from
     # open_positions) doesn't leak prev_pnl into the module cache forever.
     seen_signal_ids: set[str] = set()
