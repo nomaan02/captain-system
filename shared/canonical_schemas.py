@@ -693,6 +693,35 @@ CREATE TABLE IF NOT EXISTS p3_d33_opening_volatility (
 DEDUP UPSERT KEYS(session_date, asset_id);
 """
 
+D34_NKD_TRAIL_STATE = """
+CREATE TABLE IF NOT EXISTS p3_d34_nkd_trail_state (
+    signal_id          STRING,
+    account_id         SYMBOL,
+    asset              SYMBOL,
+    contract_id        STRING,
+    entry_order_id     STRING,
+    sl_order_id        LONG,
+    tp_order_id        LONG,
+    direction          INT,
+    contracts          INT,
+    entry_price        DOUBLE,
+    snapped_d_init     DOUBLE,
+    tp_dollars         DOUBLE,
+    jitter_x           DOUBLE,
+    jitter_y           INT,
+    jitter_j           DOUBLE,
+    phase              SYMBOL,
+    current_buffer     DOUBLE,
+    current_stop_price DOUBLE,
+    current_pnl        DOUBLE,
+    modify_seq         LONG,
+    last_modify_status STRING,
+    last_modify_error  STRING,
+    last_updated       TIMESTAMP
+) TIMESTAMP(last_updated) PARTITION BY DAY WAL
+DEDUP UPSERT KEYS(last_updated, signal_id, modify_seq);
+"""
+
 SPREAD_HISTORY = """
 CREATE TABLE IF NOT EXISTS p3_spread_history (
     asset_id SYMBOL,
@@ -829,6 +858,7 @@ CANONICAL_DDLS: list[str] = [
     D31_IMPLIED_VOL,
     D32_OPTIONS_SKEW,
     D33_OPENING_VOLATILITY,
+    D34_NKD_TRAIL_STATE,
     SPREAD_HISTORY,
     # Auxiliary
     SESSION_EVENT_LOG,
@@ -1051,6 +1081,14 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M047_d23_dedup_include_session_id",
         "ALTER TABLE p3_d23_circuit_breaker_intraday DEDUP ENABLE UPSERT KEYS(last_updated, account_id, session_id)",
+    ),
+    # M048: NKD trailing-stop pivot — event-log table for per-modify snapshots.
+    # Each row is a complete state snapshot keyed by (signal_id, modify_seq).
+    # Full-row UPSERT design means no version-snapshot-before-update overhead
+    # (compliant with doc I02 pattern; see PLAN.md §3.5).
+    (
+        "M048_create_d34_nkd_trail_state",
+        D34_NKD_TRAIL_STATE,
     ),
 ]
 
