@@ -307,7 +307,16 @@ def monitor_positions(open_positions: list[dict], tsm_configs: dict) -> list[dic
                 resolved.append(pos)
                 continue
 
-        # Time exit — forced close for no-overnight accounts
+        # Time exit — forced close for no-overnight accounts.
+        # NKD pivot 2026-05: NKD positions intentionally span session boundaries
+        # (22h hold). Exempt them BEFORE the gate so that if audit candidate I11
+        # (_parse_close_time accepting dict-form trading_hours) is ever fixed,
+        # NKD will not be force-flattened. This exemption MUST stay in place
+        # until any I11 fix is explicitly reviewed against NKD's cross-session
+        # hold requirement. Check BOTH asset=="NKD" AND is_nkd_trail so the
+        # exemption survives if the trail flag is ever used on a second APAC asset.
+        if pos.get("asset") == "NKD" or pos.get("is_nkd_trail"):
+            continue  # exempted — NKD positions intentionally cross session boundaries
         tsm = tsm_configs.get(pos.get("account"))
         if tsm and not tsm.get("overnight_allowed", True):
             trading_hours = tsm.get("trading_hours", "")
