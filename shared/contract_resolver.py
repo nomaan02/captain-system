@@ -14,6 +14,7 @@ Usage:
 
 import json
 import logging
+import math
 import threading
 from pathlib import Path
 
@@ -103,6 +104,37 @@ def get_tick_size(asset_id: str) -> float:
     if entry:
         return float(entry.get("tick_size", 0.25))
     return 0.25
+
+
+def tick_snap_outward(price: float, asset_id: str, direction: int) -> float:
+    """Snap *price* outward to the nearest tick boundary for a trailing-stop use case.
+
+    "Outward" means the stop is placed MORE conservatively (further from entry),
+    which is opposite to the inward rounding used by _compute_sl in b6_signal_output.
+
+    LONG positions (direction == 1):  floor — stop price moves DOWN (wider stop).
+    SHORT positions (direction == -1): ceil  — stop price moves UP   (wider stop).
+
+    Precision is derived from the tick size string representation, matching the
+    ndigits calculation in b6_signal_output._compute_sl / _compute_tp.
+
+    Raises KeyError if asset_id is not present in contract_ids.json (mirrors
+    get_tick_size behaviour when the config entry is missing entirely — the
+    fallback 0.25 path would silently misround NKD's 5.0-tick prices).
+    """
+    config = _load_config()
+    entry = config.get("contracts", {}).get(asset_id)
+    if entry is None:
+        raise KeyError(f"tick_snap_outward: unknown asset_id {asset_id!r}")
+    tick = float(entry.get("tick_size", 0.25))
+    tick_str = str(tick)
+    ndigits = max(0, len(tick_str.rstrip('0').split('.')[-1])) if '.' in tick_str else 0
+    if direction == 1:
+        return round(math.floor(price / tick) * tick, ndigits)
+    elif direction == -1:
+        return round(math.ceil(price / tick) * tick, ndigits)
+    else:
+        raise ValueError(f"tick_snap_outward: direction must be 1 or -1, got {direction!r}")
 
 
 def invalidate(asset_id: str | None = None):
