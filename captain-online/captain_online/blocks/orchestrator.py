@@ -1201,6 +1201,19 @@ class OnlineOrchestrator:
                 # the other one fills. For bracket=True these are "BRACKET".
                 "sl_order_id": data.get("sl_order_id"),
                 "tp_order_id": data.get("tp_order_id"),
+                # NKD pivot trail-control fields (None for all non-NKD assets).
+                # Populated by B6 → Command orchestrator → here when is_nkd_trail=True.
+                "is_nkd_trail": bool(data.get("is_nkd_trail", False)),
+                "tp_dollars": as_money_or_none(data.get("tp_dollars")),
+                "snapped_d_init": as_money_or_none(data.get("snapped_d_init")),
+                # Trail state fields — None on entry; updated by b7b_nkd_trail on each poll.
+                "jitter_x": None,
+                "jitter_y": None,
+                "jitter_j": None,
+                "current_phase": None,
+                "current_buffer": None,
+                "current_stop_price": None,
+                "modify_seq": 0,
             }
             with self._position_lock:
                 self.open_positions.append(position)

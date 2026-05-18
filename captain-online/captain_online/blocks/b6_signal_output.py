@@ -135,6 +135,22 @@ def run_signal_output(
             )
             continue
 
+        # NKD trail fields — only included when the locked_strategy opts in.
+        # snapped_d_init is the dollar value of the initial stop distance.
+        nkd_trail_fields: dict = {}
+        if strategy.get("is_nkd_trail"):
+            point_value = float(asset_detail.get("point_value", 50.0))
+            entry_price_raw = asset_features.get("entry_price")
+            if entry_price_raw is not None and sl_level is not None:
+                snapped_d_init = abs(float(entry_price_raw) - float(sl_level)) * point_value
+            else:
+                snapped_d_init = None
+            nkd_trail_fields = {
+                "is_nkd_trail": True,
+                "tp_dollars": strategy.get("tp_dollars"),
+                "snapped_d_init": snapped_d_init,
+            }
+
         signal = {
             # 6 spec fields (PG-26)
             "signal_id": f"SIG-{uuid.uuid4().hex[:12].upper()}",
@@ -150,6 +166,9 @@ def run_signal_output(
             "session": session_id,
             "per_account": _build_per_account(u, accounts, final_contracts, account_recommendation,
                                                account_skip_reason, tsm_configs),
+
+            # NKD trail-control fields (absent for all non-NKD assets)
+            **nkd_trail_fields,
 
             # Internal context (separated per PG-26 spec)
             "_context": {

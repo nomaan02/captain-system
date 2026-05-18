@@ -111,6 +111,89 @@ class TestConfidenceClassification:
         assert _classify_confidence(0.001, 0.8, 0.010, 0.003) == "LOW"
 
 
+class TestNKDTrailFieldsInSignal:
+    """C6: When strategy has is_nkd_trail=True, signal payload includes trail fields."""
+
+    @patch("captain_online.blocks.b6_signal_output._publish_signals")
+    @patch("captain_online.blocks.b6_signal_output._log_signal_output")
+    @patch("captain_online.blocks.b6_signal_output._load_system_param", side_effect=lambda k, d: d)
+    @patch("captain_online.blocks.b6_signal_output._get_daily_pnl", return_value=0.0)
+    def test_nkd_signal_includes_trail_fields(self, mock_pnl, mock_param, mock_log, mock_pub):
+        from tests.fixtures.synthetic_data import make_features, make_locked_strategy, make_assets_detail
+        from decimal import Decimal
+        nkd_features = make_features("NKD")
+        nkd_features["NKD"]["entry_price"] = 38000.0
+        nkd_features["NKD"]["or_range"] = 125.0
+
+        nkd_strategy = make_locked_strategy(
+            "NKD",
+            is_nkd_trail=True,
+            tp_dollars=4450,
+            sl_multiple=0.35,
+            tp_multiple=0.70,
+        )
+        nkd_assets_detail = make_assets_detail("NKD", point_value=Decimal("5.0"), tick_size=Decimal("5.0"))
+
+        result = run_signal_output(
+            recommended_trades=["NKD"],
+            available_not_recommended=[],
+            quality_results={"NKD": {"quality_score": 0.015, "quality_multiplier": 1.0, "data_maturity": 1.0}},
+            final_contracts={"NKD": {"acc_eval_1": 1}},
+            account_recommendation={"NKD": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"NKD": {"acc_eval_1": None}},
+            features=nkd_features,
+            ewma_states={},
+            aim_breakdown={"NKD": {}},
+            combined_modifier={"NKD": 1.0},
+            regime_probs={"NKD": {"LOW_VOL": 0.6, "HIGH_VOL": 0.4}},
+            expected_edge={"NKD": 0.02},
+            locked_strategies=nkd_strategy,
+            tsm_configs={},
+            user_silo=make_user_silo(accounts=["acc_eval_1"]),
+            assets_detail=nkd_assets_detail,
+            session_id=3,
+        )
+
+        assert len(result["signals"]) == 1
+        signal = result["signals"][0]
+        assert signal["is_nkd_trail"] is True
+        assert signal["tp_dollars"] == 4450
+        assert signal["snapped_d_init"] is not None
+        assert signal["snapped_d_init"] > 0
+
+    @patch("captain_online.blocks.b6_signal_output._publish_signals")
+    @patch("captain_online.blocks.b6_signal_output._log_signal_output")
+    @patch("captain_online.blocks.b6_signal_output._load_system_param", side_effect=lambda k, d: d)
+    @patch("captain_online.blocks.b6_signal_output._get_daily_pnl", return_value=0.0)
+    def test_non_nkd_signal_has_no_trail_fields(self, mock_pnl, mock_param, mock_log, mock_pub):
+        """Non-NKD signals must NOT have trail fields in the payload."""
+        from tests.fixtures.synthetic_data import make_features, make_locked_strategy, make_assets_detail
+        result = run_signal_output(
+            recommended_trades=["ES"],
+            available_not_recommended=[],
+            quality_results={"ES": {"quality_score": 0.015, "quality_multiplier": 1.0, "data_maturity": 1.0}},
+            final_contracts={"ES": {"acc_eval_1": 2}},
+            account_recommendation={"ES": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"ES": {"acc_eval_1": None}},
+            features=make_features("ES"),
+            ewma_states={},
+            aim_breakdown={"ES": {}},
+            combined_modifier={"ES": 1.0},
+            regime_probs={"ES": {"LOW_VOL": 0.6, "HIGH_VOL": 0.4}},
+            expected_edge={"ES": 0.02},
+            locked_strategies=make_locked_strategy("ES"),
+            tsm_configs={},
+            user_silo=make_user_silo(accounts=["acc_eval_1"]),
+            assets_detail=make_assets_detail("ES"),
+            session_id=1,
+        )
+        assert len(result["signals"]) == 1
+        signal = result["signals"][0]
+        assert "is_nkd_trail" not in signal
+        assert "tp_dollars" not in signal
+        assert "snapped_d_init" not in signal
+
+
 class TestTPSLComputation:
     """TP/SL helpers."""
 

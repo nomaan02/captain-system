@@ -695,6 +695,12 @@ class CommandOrchestrator:
                 # bracket orders these are the sentinel "BRACKET" string.
                 "sl_order_id": result.get("sl_order_id"),
                 "tp_order_id": result.get("tp_order_id"),
+                # NKD pivot: forward trail-control fields from the original signal
+                # so the online orchestrator can wire them into the position dict.
+                # Absent for all non-NKD assets (key not present → None → ignored).
+                "is_nkd_trail": sanitised_order.get("is_nkd_trail"),
+                "tp_dollars": sanitised_order.get("tp_dollars"),
+                "snapped_d_init": sanitised_order.get("snapped_d_init"),
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)
