@@ -471,8 +471,34 @@ class TopstepXAdapter(APIAdapter):
                         except Exception:
                             pass
 
-            # Take profit (separate order — not OCO with SL)
-            if tp_price is not None:
+            # Take profit (separate order — not OCO with SL).
+            # F4 guard: skip TP when the SL attempt failed and the position
+            # has already been resolved (flatten succeeded → FLATTENED_SL_FAIL)
+            # or is known unprotected (flatten also failed →
+            # EMERGENCY_UNPROTECTED). Without this guard the TP becomes an
+            # orphan working LIMIT against a flat position.
+            # Ref: docs2/quick-fixes/NKD_Pivot/day_2/Rejected _orders_issue/
+            #      BATCH_2_F4_ORPHAN_TP.md; audit §1 row #4 (2026-05-18 order
+            #      2994362566, manually cancelled 14 min after placement).
+            # When sl_price is None (SL never attempted) sl_failed is absent
+            # and status is "PLACED", so the TP block still runs as before.
+            # Status strings must match b3_api_adapter.py lines 445 and 455.
+            sl_failed_or_flattened = (
+                result.get("sl_failed") is True
+                or result.get("status") in (
+                    "FLATTENED_SL_FAIL",
+                    "EMERGENCY_UNPROTECTED",
+                )
+            )
+            if sl_failed_or_flattened:
+                logger.info(
+                    "Fallback TP placement SKIPPED for entry %s "
+                    "(sl_failed=%s status=%s) — orphan TP guard (F4).",
+                    entry_oid,
+                    result.get("sl_failed"),
+                    result.get("status"),
+                )
+            if tp_price is not None and not sl_failed_or_flattened:
                 tp_resp = self._client.place_limit_order(
                     self._account_id, contract_id, exit_side, size,
                     float(tp_price),

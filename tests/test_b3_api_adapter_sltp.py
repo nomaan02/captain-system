@@ -113,14 +113,18 @@ class TestSLPlacementFailure:
         # SL order ID should remain None (never set)
         assert result["sl_order_id"] is None
 
-        # TP should succeed normally
-        assert result["tp_order_id"] == "TP-001"
+        # F4 guard: TP must NOT have been attempted after SL-fail flatten.
+        # (Pre-F4 this asserted tp_order_id == "TP-001"; the guard now
+        # short-circuits the TP block, leaving tp_order_id None and
+        # place_limit_order never called.)
+        assert result.get("tp_order_id") is None
         assert result.get("tp_failed") is None
+        adapter._client.place_limit_order.assert_not_called()
 
         # Position was flattened via close_position
         adapter._client.close_position.assert_called_once()
 
-        # CRITICAL alert published to CH_ALERTS
+        # CRITICAL alert published to CH_ALERTS (SL only — no TP alert)
         publish_calls = redis_mock.publish.call_args_list
         alert_calls = [
             c for c in publish_calls
@@ -131,6 +135,9 @@ class TestSLPlacementFailure:
         assert alert_payload["priority"] == "CRITICAL"
         assert alert_payload["event_type"] == "SL_PLACEMENT_FAILED"
         assert "UNPROTECTED" in alert_payload["message"]
+        # No spurious TP_PLACEMENT_FAILED alert
+        event_types = {json.loads(c[0][1])["event_type"] for c in alert_calls}
+        assert "TP_PLACEMENT_FAILED" not in event_types
 
     @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
            return_value="CON.F.US.EP.M26")
@@ -219,8 +226,9 @@ class TestTPPlacementFailure:
         assert alert_payload["event_type"] == "TP_PLACEMENT_FAILED"
 
 
-class TestBothSLAndTPFailure:
-    """Both SL and TP fail -- both flags set, both alerts published."""
+class TestSLFailureSkipsTPAttempt:
+    """When SL fails, the F4 guard short-circuits the TP block entirely.
+    Only the SL CRITICAL alert is published; no TP alert, no tp_failed flag."""
 
     @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
            return_value="CON.F.US.EP.M26")
@@ -228,9 +236,11 @@ class TestBothSLAndTPFailure:
            return_value={"approved": True})
     @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
            return_value={"execution_mode": "AUTO", "allowed": True})
-    def test_both_failures(
+    def test_sl_fail_skips_tp_so_only_sl_alert_published(
         self, _mock_gate, _mock_compliance, _mock_resolve, redis_mock,
     ):
+        """Pre-F4 behaviour: both SL and TP would fail → 2 alerts.
+        Post-F4 behaviour: SL fails → guard fires → TP never attempted → 1 alert."""
         adapter = _make_adapter()
 
         adapter._client.place_market_order.return_value = {
@@ -241,29 +251,29 @@ class TestBothSLAndTPFailure:
             "success": False,
             "errorMessage": "rate limit",
         }
-        adapter._client.place_limit_order.return_value = {
-            "success": False,
-            "errorMessage": "rate limit",
-        }
+        # place_limit_order return value is irrelevant — it must not be called
 
         result = adapter.send_signal(_base_order())
 
         assert result["sl_failed"] is True
-        assert result["tp_failed"] is True
         assert result["sl_order_id"] is None
         assert result["tp_order_id"] is None
+        # tp_failed is NOT set (TP block was never entered)
+        assert result.get("tp_failed") is None
+        adapter._client.place_limit_order.assert_not_called()
 
-        # Two alerts published
+        # Only the SL CRITICAL alert is published
         publish_calls = redis_mock.publish.call_args_list
         alert_calls = [
             c for c in publish_calls
             if c[0][0] == "captain:alerts"
         ]
-        assert len(alert_calls) == 2
-
+        event_types = {json.loads(c[0][1])["event_type"] for c in alert_calls}
+        assert "SL_PLACEMENT_FAILED" in event_types
+        assert "TP_PLACEMENT_FAILED" not in event_types
         priorities = {json.loads(c[0][1])["priority"] for c in alert_calls}
-        assert "CRITICAL" in priorities  # SL failure
-        assert "HIGH" in priorities      # TP failure
+        assert "CRITICAL" in priorities
+        assert "HIGH" not in priorities  # no TP HIGH alert
 
 
 class TestSuccessfulSLTPPlacement:
@@ -526,3 +536,205 @@ class TestBracketOrder:
         assert len(pending_expire_calls) == 1
         ttl = pending_expire_calls[0][0][1]
         assert ttl == 10
+
+
+# ---------------------------------------------------------------------------
+# F4 orphan-TP guard tests
+# Ref: BATCH_2_F4_ORPHAN_TP.md; audit §1 row #4 (2026-05-18 order
+#      2994362566, limit BUY @ 60665, placed 23:08:07, cancelled 23:22:43).
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackTPGuardF4:
+    """Fallback TP must be skipped when the SL attempt failed and the
+    position has already been flattened or is emergency-unprotected.
+    When SL succeeded or sl_price is None the TP block still runs."""
+
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_fallback_tp_skipped_when_sl_failed_and_flattened(
+        self, _mock_gate, _mock_compliance, _mock_resolve, redis_mock,
+    ):
+        """SL fails → close_position succeeds → status FLATTENED_SL_FAIL.
+        TP must NOT be attempted (orphan TP guard, F4)."""
+        adapter = _make_adapter()
+
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-F4-1",
+        }
+        adapter._client.place_stop_order.return_value = {
+            "success": False,
+            "errorMessage": "Order price is outside allowed range",
+        }
+        # close_position succeeds (default MagicMock return — no raise)
+
+        result = adapter.send_signal(_base_order())
+
+        # Status reflects flatten-after-SL-fail
+        assert result["status"] == "FLATTENED_SL_FAIL"
+        assert result["entry_order_id"] == "ENTRY-F4-1"
+        assert result.get("sl_failed") is True
+        assert result["sl_order_id"] is None
+
+        # TP block must not have run
+        assert result.get("tp_order_id") is None
+        assert result.get("tp_failed") is None
+        assert result.get("tp_error") is None
+        adapter._client.place_limit_order.assert_not_called()
+
+        # Flatten was still called (regression: existing behaviour preserved)
+        adapter._client.close_position.assert_called_once()
+
+        # SL CRITICAL alert still published; no TP alert
+        publish_calls = redis_mock.publish.call_args_list
+        alerts = [c for c in publish_calls if c[0][0] == "captain:alerts"]
+        event_types = {json.loads(c[0][1])["event_type"] for c in alerts}
+        assert "SL_PLACEMENT_FAILED" in event_types
+        assert "TP_PLACEMENT_FAILED" not in event_types
+
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_fallback_tp_skipped_when_emergency_unprotected(
+        self, _mock_gate, _mock_compliance, _mock_resolve, redis_mock,
+    ):
+        """SL fails → close_position also raises → status EMERGENCY_UNPROTECTED.
+        TP must NOT be attempted (orphan TP guard, F4)."""
+        adapter = _make_adapter()
+
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-F4-2",
+        }
+        adapter._client.place_stop_order.return_value = {
+            "success": False,
+            "errorMessage": "rate limit",
+        }
+        adapter._client.close_position.side_effect = Exception(
+            "simulated flatten failure"
+        )
+
+        result = adapter.send_signal(_base_order())
+
+        assert result["status"] == "EMERGENCY_UNPROTECTED"
+        assert result.get("sl_failed") is True
+        assert result.get("tp_order_id") is None
+        assert result.get("tp_failed") is None
+        adapter._client.place_limit_order.assert_not_called()
+
+        # Both SL-fail and FLATTEN_FAILED EMERGENCY alerts still published
+        publish_calls = redis_mock.publish.call_args_list
+        alerts = [c for c in publish_calls if c[0][0] == "captain:alerts"]
+        event_types = {json.loads(c[0][1])["event_type"] for c in alerts}
+        assert "SL_PLACEMENT_FAILED" in event_types
+        assert "FLATTEN_FAILED" in event_types
+        assert "TP_PLACEMENT_FAILED" not in event_types
+
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_fallback_tp_placed_when_sl_succeeded(
+        self, _mock_gate, _mock_compliance, _mock_resolve, redis_mock,
+    ):
+        """Regression: SL succeeds → guard must NOT fire → TP placed normally."""
+        adapter = _make_adapter()
+
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-F4-3",
+        }
+        adapter._client.place_stop_order.return_value = {
+            "success": True,
+            "orderId": "SL-F4-3",
+        }
+        adapter._client.place_limit_order.return_value = {
+            "success": True,
+            "orderId": "TP-F4-3",
+        }
+
+        result = adapter.send_signal(_base_order())
+
+        assert result["status"] == "PLACED"
+        assert result["sl_order_id"] == "SL-F4-3"
+        assert result["tp_order_id"] == "TP-F4-3"  # TP placed — guard didn't fire
+        assert result.get("sl_failed") is None
+        assert result.get("tp_failed") is None
+        adapter._client.close_position.assert_not_called()
+        adapter._client.place_limit_order.assert_called_once()
+
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_fallback_tp_placed_when_sl_price_is_none(
+        self, _mock_gate, _mock_compliance, _mock_resolve, redis_mock,
+    ):
+        """When sl_price is None the SL block is never entered; sl_failed is
+        never set; the guard must NOT fire and TP must still be placed.
+        Preserves the audit hard-rule: 'if sl_price is None, TP block must
+        still run as before'."""
+        adapter = _make_adapter()
+
+        adapter._client.place_market_order.return_value = {
+            "success": True,
+            "orderId": "ENTRY-F4-4",
+        }
+        adapter._client.place_limit_order.return_value = {
+            "success": True,
+            "orderId": "TP-F4-4",
+        }
+
+        result = adapter.send_signal(_base_order(sl=None))
+
+        assert result["status"] == "PLACED"
+        assert result["sl_order_id"] is None   # never set — SL block skipped
+        assert result["tp_order_id"] == "TP-F4-4"
+        assert result.get("sl_failed") is None  # key absent — confirms 'is True' precision
+        adapter._client.place_stop_order.assert_not_called()
+        adapter._client.close_position.assert_not_called()
+        adapter._client.place_limit_order.assert_called_once()
+
+    @patch("captain_command.blocks.b3_api_adapter.get_tick_size",
+           return_value=0.25)
+    @patch("captain_command.blocks.b3_api_adapter.resolve_contract_id",
+           return_value="CON.F.US.EP.M26")
+    @patch("captain_command.blocks.b3_api_adapter.compliance_check",
+           return_value={"approved": True})
+    @patch("captain_command.blocks.b3_api_adapter.check_compliance_gate",
+           return_value={"execution_mode": "AUTO", "allowed": True})
+    def test_bracket_path_unaffected_by_f4_guard(
+        self, _mock_gate, _mock_compliance, _mock_resolve, _mock_tick,
+        redis_mock,
+    ):
+        """Bracket success path returns before the fallback flow; neither the
+        fallback SL, flatten, nor the F4 TP guard are reached."""
+        adapter = _make_adapter()
+        adapter._client.place_bracket_order.return_value = {
+            "success": True,
+            "orderId": "BRK-F4",
+        }
+
+        result = adapter.send_signal(_base_order(entry_price=5500.0, sl=5490.0, tp=5520.0))
+
+        assert result["status"] == "PLACED"
+        assert result["bracket"] is True
+        assert result["sl_order_id"] == "BRACKET"
+        assert result["tp_order_id"] == "BRACKET"
+        # None of the separate-order helpers were called
+        adapter._client.place_market_order.assert_not_called()
+        adapter._client.place_stop_order.assert_not_called()
+        adapter._client.place_limit_order.assert_not_called()
+        adapter._client.close_position.assert_not_called()
