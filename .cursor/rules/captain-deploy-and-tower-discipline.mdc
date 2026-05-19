@@ -173,6 +173,47 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-19 — QuestDB stale `.lock` files survive unclean shutdown; host user (WSL2 bind-mount) gets `Permission denied`
+
+**Original (broken):**
+```fish
+# After `dco up -d --build` left questdb-1 unhealthy and blocked captain-command:
+dco stop questdb
+find ~/captain-system/questdb/db -maxdepth 2 -name "*.lock" -delete
+```
+
+**Error observed:**
+```
+find: cannot delete '.../telemetry.lock': Permission denied
+find: cannot delete '.../p3_d00_asset_universe~8.lock': Permission denied
+# ... 9 more, all "Permission denied"
+```
+And `dco up -d` still failed with:
+```
+dependency failed to start: container captain-system-questdb-1 is unhealthy
+service "captain-command" is not running
+```
+
+**Corrected:**
+```fish
+# Clear locks from inside a throwaway container that mounts the SAME bind
+# path as docker-compose.yml and uses the SAME SHA-pinned image — so the
+# in-container UID matches the UID that owns the stale locks. The
+# questdb/questdb image at this digest runs as root by default (verified
+# with `id`: uid=0(root)); the throwaway container inherits that, so
+# `find -delete` succeeds with no host-side privilege.
+docker run --rm \
+    --entrypoint sh \
+    -v ~/captain-system/questdb/db:/var/lib/questdb/db \
+    questdb/questdb@sha256:e3643adc18f68bc02f3074c841d3f765f6c299443f8e4ca57b3bcac1a05e224d \
+    -c 'find /var/lib/questdb/db -maxdepth 2 -name "*.lock" -delete'
+dco up -d questdb
+```
+
+**Reason:** the `questdb/questdb` image at this digest runs its entrypoint as **root** (UID 0). Lock files written during a previous unclean container shutdown land on the WSL2 bind mount owned by UID 0, and the host user `nomaan` (UID 1000) has no permission to delete them. A throwaway `docker run --rm --entrypoint sh` against the **same SHA-pinned digest** (NOT `:latest`) inherits root by default and can clean the locks via the same bind mount. `sudo find … -delete` from the host works but escalates host privileges unnecessarily; the throwaway-container path is the preferred fix. NEVER substitute `questdb/questdb:latest` here — `docker-compose.yml` pins by digest specifically because QuestDB major-version upgrades can silently change the on-disk storage format and corrupt the bind-mounted data dir. After clearing locks, always poll `curl -sf http://localhost:9000/exec?query=SELECT+1` until it answers before running `dco up -d` for the rest of the stack, so dependent services (`captain-command`, `captain-online`, `captain-offline`) don't crash-loop on a still-warming QuestDB.
+
+**Related verification trap:** after re-applying the bootstrap, verify D00 with `LATEST ON last_updated PARTITION BY asset_id`. A bare `SELECT … FROM p3_d00_asset_universe WHERE asset_id = 'NKD'` against a WAL table with months of history returns **some** row (typically the first partition), NOT the most-recent write — which can falsely report missing keys and trigger a panic-rollback minutes before market open. Match the read pattern in `shared/questdb_client.read_d00_row()` (`LATEST ON last_updated PARTITION BY asset_id`) for every D00 verification.
+
 ### 2026-05-06 — `dco up -d --build` ships stale config: container reads old JSON despite host file being updated
 
 **Original (broken):**
