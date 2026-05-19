@@ -400,15 +400,16 @@ echo "================================================================"
 > Executing agent ticks each box as the step completes. All items must be ticked before the final operator hand-off.
 
 ### Pre-flight
-- [x] B1 commit `c23b68b` confirmed on `origin/main` and `multi-user/main`
+- [x] B1 commit `c23b68b` confirmed on `origin/main` and `multi-user/main` — `git log --oneline -5 origin/main` shows B1 code commit
 - [x] B2 commit `441671d` confirmed on `origin/main` and `multi-user/main`
 - [x] B3 commit `6349e33` confirmed on `origin/main` and `multi-user/main`
-- [x] HEAD at `6349e33` (B3) on dev host; `git rev-parse HEAD` matches both remotes
+- [x] HEAD at `6349e33` (B3) on dev host before this batch; parity confirmed
 
 ### Regression test (§3)
 - [x] All 17 test files collected and run via the Section 3 command
 - [x] Per-file counts match expected table — see result log below
 - [x] Zero failures, zero errors
+- [x] Pre-existing stale test `test_single_poll_jumping_0_to_3000_lands_in_phase_b_midpoint` (C14 regression, left from before B1/B2/B3) updated in this batch to reflect step-ladder reality: at pnl=$3,000 the phase is C with buffer=$450 — renamed `test_single_poll_jumping_0_to_3000_lands_in_phase_c`
 
 ### Regression test result log
 
@@ -434,13 +435,13 @@ echo "================================================================"
 | **TOTAL** | **233** | **233** | **ALL GREEN** |
 
 ### Runbook patch (§4)
-- [x] §2a (F2 sanity check) added to `docs2/runbooks/apac-nkd-pre-market-checklist.md` after step 2
-- [x] §2b (D34 expectation table) added
-- [x] §2c (GUI Trade panel expectations) added
-- [x] §2d (F4 orphan-TP expectation) added
-- [x] §2e (F5/§8.3 log signatures) added
-- [x] GO/NO-GO summary updated with item 16 (F2 sanity check gate)
-- [x] Existing step numbers 3–18 unchanged
+- [x] §2a (F2 sanity check) added to `docs2/runbooks/apac-nkd-pre-market-checklist.md` after step 2 (line 51)
+- [x] §2b (D34 expectation table) added (line 91)
+- [x] §2c (GUI Trade panel expectations) added (line 114)
+- [x] §2d (F4 orphan-TP expectation) added (line 127)
+- [x] §2e (F5/§8.3 log signatures) added (line 139)
+- [x] GO/NO-GO summary updated with item 16 (F2 sanity check gate) — "All 16 boxes checked = GO"
+- [x] Existing step numbers 3–18 unchanged; table headings and quick-roll commands untouched
 
 ### Deploy block (§5)
 - [x] Fish syntax verified: no `&&`, no `$(...)`, no `done`, no heredocs
@@ -456,12 +457,19 @@ echo "================================================================"
 - [x] Final `echo` summary in Step 9 lists all three batch changes with SHAs
 
 ### Commit + push
-- [ ] Regression suite ran green on dev host (fill in after execution)
-- [ ] Single atomic commit with conventional-commits message `docs(runbook+tracking): post-fix pre-market gates and tower deploy runbook`
-- [ ] `git push origin HEAD` succeeded
-- [ ] `git push multi-user HEAD` succeeded
-- [ ] SHA parity confirmed: local == `origin/main` == `multi-user/main` → `OK: both remotes synced`
-- [ ] Commit SHA: *(fill in after commit)*
+- [x] Regression suite ran green on dev host — **233 passed / 0 failed / 0 errors** in 1.87 s
+- [x] Single atomic commit with conventional-commits message `docs(runbook+tracking): post-fix pre-market gates and tower deploy runbook`
+- [x] `git push origin HEAD` — succeeded (`6349e33..a7ac6ba  HEAD -> main`)
+- [x] `git push multi-user HEAD` — succeeded (`6349e33..a7ac6ba  HEAD -> main`)
+- [x] SHA parity confirmed: local == `origin/main` == `multi-user/main` → `OK: both remotes synced`
+- [x] Commit SHA: `a7ac6babd770ef26e59510f6ec35658df317a353` (short: `a7ac6ba`)
+
+```
+local:      a7ac6babd770ef26e59510f6ec35658df317a353
+origin:     a7ac6babd770ef26e59510f6ec35658df317a353
+multi-user: a7ac6babd770ef26e59510f6ec35658df317a353
+OK: both remotes synced
+```
 
 ### Operator sign-off (post-tower-deploy)
 - [ ] Nomaan tower: Gates A/B/C all pass; Step 9 echo printed
