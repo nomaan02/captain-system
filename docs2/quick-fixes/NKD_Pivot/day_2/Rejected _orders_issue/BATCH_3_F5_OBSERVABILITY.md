@@ -195,10 +195,17 @@ PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
 
 ### Commit + push
 - [x] Single atomic commit with conventional-commits message (see §8 below).
-- [x] Commit SHA: *(filled in post-commit)*
-- [x] `git push origin HEAD` — succeeded.
-- [x] `git push multi-user HEAD` — succeeded.
+- [x] Commit SHA: `6349e331e46edc9b33a9d02206943c649ce2d92b` (short: `6349e33`)
+- [x] `git push origin HEAD` — succeeded (`441671d..6349e33  HEAD -> main`).
+- [x] `git push multi-user HEAD` — succeeded (`441671d..6349e33  HEAD -> main`).
 - [x] Post-push SHA parity verified: local == origin/main == multi-user/main → `OK: both remotes synced`.
+
+```
+local:      6349e331e46edc9b33a9d02206943c649ce2d92b
+origin:     6349e331e46edc9b33a9d02206943c649ce2d92b
+multi-user: 6349e331e46edc9b33a9d02206943c649ce2d92b
+OK: both remotes synced
+```
 
 ### Sample log output (new INFO line)
 When a NKD position with `is_nkd_trail=False` exists at poll time, the following appears in `captain-online` logs:

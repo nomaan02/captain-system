@@ -93,8 +93,19 @@ def test_single_poll_jumping_0_to_4200_issues_one_modify_for_phase_c():
     assert persisted[0]["modify_seq"] == 1
 
 
-def test_single_poll_jumping_0_to_3000_lands_in_phase_b_midpoint():
-    """0 → $3000 jump in one poll lands at the middle of Phase B."""
+def test_single_poll_jumping_0_to_3000_lands_in_phase_c():
+    """0 → $3000 jump in one poll lands exactly at the Phase C boundary.
+
+    C14 replaced the linear taper with a step-ladder:
+      Phase A: pnl < $2,000  (buffer = snapped_d_init = $1,750)
+      Phase B: $2,000 <= pnl < $3,000  (buffer = $1,000 flat)
+      Phase C: pnl >= $3,000  (buffer = $450 flat)
+
+    At exactly pnl = $3,000 the condition `pnl < _PHASE_C_START_BASE_DOLLARS`
+    evaluates False, so the step-ladder routes to Phase C with a $450 buffer.
+    This test was previously named "…_phase_b_midpoint" and used the old
+    linear-taper formula; updated in Batch 4 to match the C14 step-ladder.
+    """
     pos = _make_position()
     client = MagicMock()
     client.modify_order.return_value = {"success": True}
@@ -111,10 +122,8 @@ def test_single_poll_jumping_0_to_3000_lands_in_phase_b_midpoint():
     )
 
     assert client.modify_order.call_count == 1
-    assert pos["current_phase"] == "B"
-    # progress=(3000-1750)/(4000-1750)=1250/2250≈0.556
-    # buffer = 1750 - 0.556*(1750-450) ≈ 1750 - 722.22 = ~1027.78
-    assert float(pos["current_buffer"]) == pytest.approx(1027.78, abs=1.0)
+    assert pos["current_phase"] == "C"
+    assert pos["current_buffer"] == Decimal("450")
 
 
 def test_pre_existing_phase_a_stop_replaced_by_phase_c_in_one_poll():

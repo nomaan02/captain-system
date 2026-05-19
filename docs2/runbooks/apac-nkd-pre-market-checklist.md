@@ -48,6 +48,109 @@ trail_step_dollars: 500
 **Failure action:** Re-run step 1. If still missing, check `scripts/bootstrap_production.py`
 line 49 that `P2_STRATEGIES["NKD"]` has these keys.
 
+### 2a — F2 sanity check: verify trail-control fields thread through sanitise_for_api (both towers)
+
+This is the **primary human-readable proof that Batch 1 (F2 fix) is active** on this tower.
+Runs in 5 s. A failure here means the trail block will be silently inert for the entire trade.
+**If any line returns `False`, STOP — do not open the APAC session.**
+
+```fish
+dco exec -T captain-command python3 -c "
+from captain_command.blocks.b1_core_routing import sanitise_for_api
+signal = {
+    'asset': 'NKD', 'direction': -1, 'size': 1,
+    'tp_level': 60680, 'sl_level': 61805,
+    'is_nkd_trail': True, 'tp_dollars': 4450, 'snapped_d_init': 1025.0,
+    'jitter_x': 0.5, 'jitter_y': 1, 'jitter_j': 10.0,
+    'signal_id': 'TEST', 'user_id': 'primary_user',
+    '_context': {'entry_price': 61600},
+    'per_account': {'21855714': {'contracts': 1}},
+}
+sanitised = sanitise_for_api(signal, '21855714', signal['per_account']['21855714'])
+print('is_nkd_trail in sanitised?', 'is_nkd_trail' in sanitised)
+print('tp_dollars in sanitised?', 'tp_dollars' in sanitised)
+print('snapped_d_init in sanitised?', 'snapped_d_init' in sanitised)
+print('jitter_j in sanitised?', 'jitter_j' in sanitised)
+print('Total keys:', len(sanitised))
+"
+```
+
+**Expected (post-B1 deploy):**
+```
+is_nkd_trail in sanitised? True
+tp_dollars in sanitised? True
+snapped_d_init in sanitised? True
+jitter_j in sanitised? True
+Total keys: 19
+```
+
+**Failure action:** any line `False` → B1 is not on this tower. Re-run the tower deploy runbook at
+`docs2/quick-fixes/NKD_Pivot/day_2/Rejected _orders_issue/BATCH_4_VALIDATION_DEPLOY.md` §5.
+Do NOT open the APAC session (audit §4 proof: trail block silently skips every NKD position).
+
+### 2b — D34 expectation table post-fix (check after first NKD trade fills)
+
+With Batch 1 deployed, D34 must have ≥1 row within 30 s of the first NKD bracket fill.
+
+```fish
+curl -s -G "http://localhost:9000/exec" \
+  --data-urlencode "query=SELECT signal_id, current_phase, current_buffer, current_stop_price, jitter_j, modify_seq FROM p3_d34_nkd_trail_state LATEST ON last_updated PARTITION BY signal_id" \
+  | jq '.dataset'
+```
+
+**Expected column values (post-B1):**
+- `current_phase` — `"A"` on entry; advances to `"B"` at +$2,000 profit, `"C"` at +$3,000 profit
+- `current_buffer` — `1025` in Phase A; `1000` in Phase B; `450` in Phase C
+- `current_stop_price` — non-null price on the correct side of entry
+- `jitter_j` — `0` on Nomaan tower; non-zero on Isaac tower
+- `modify_seq` — integer ≥ 1, increments each poll cycle
+
+**Failure action:** if D34 stays empty >2 min after fill:
+```fish
+dco logs captain-online 2>&1 | grep -iE "ON-B7B-NKD|nkd_trail|ERROR"
+```
+A `"scan saw N NKD position(s) with is_nkd_trail=False"` line confirms B1 regression — stop and roll back.
+
+### 2c — GUI Trade panel expectations post-fix (check within 10 s of TAKEN)
+
+With Batch 1 deployed, these columns must populate in the GUI Trade panel within 10 s of TAKEN
+(they were permanently blank/null pre-B1):
+
+- `current_phase` — `A`, `B`, or `C`
+- `current_buffer` — dollar buffer value (starts $1,025; steps to $1,000 at Phase B, $450 at Phase C)
+- `current_stop_price` — current trailing SL price (updates every 10 s per poll cycle)
+- `modify_seq` — integer, increments on each successful `modify_order` call
+
+**Failure action:** columns still blank after 30 s → run step 2a to confirm B1 is active.
+If 2a passes but GUI is blank, check `dco logs captain-online 2>&1 | grep "ON-B7B-NKD"` for errors.
+
+### 2d — F4 orphan-TP confirmation (check if a bracket rejection ever fires)
+
+Batch 2 (F4) prevents orphan LIMIT orders after a fallback SL fails and the position is flattened.
+This was the root cause of order `2994362566` (Limit BUY @ 60665, 2026-05-18, cancelled 14 min later).
+
+If `captain:alerts` shows a `SL_PLACEMENT_FAILED` event, check the TopstepX order export:
+- There must be **no open LIMIT BUY or SELL** without a corresponding open position.
+- The `captain-command` logs should show: `Fallback TP placement SKIPPED for entry <id> (sl_failed=True status=FLATTENED_SL_FAIL) — orphan TP guard (F4).`
+
+**Failure action:** if an orphan LIMIT appears, cancel it manually in the broker GUI.
+Verify B2 is on the tower: `git log --oneline -5 | grep 441671d` must return a result.
+
+### 2e — F5/§8.3 log signatures to grep after first NKD trade
+
+```fish
+dco logs captain-online 2>&1 | grep "ON-B7B-NKD"
+```
+
+**Expected message catalogue:**
+
+| Message | Expected frequency | Action if unexpected |
+|---|---|---|
+| `ON-B7B-NKD: modify OK signal=… seq=…` | Every poll cycle while position open | If never appears, trail block not running — check D34 (step 2b) |
+| `ON-B7B-NKD: jitter sampled signal=… parity=… X=… Y=… J=…` | **Should NOT fire** on normal post-B1 path | If fires, jitter_j not threading from B6 — check B1 on tower |
+| `ON-B7B-NKD: scan saw N NKD position(s) with is_nkd_trail=False — trail logic inert for those positions; verify F2 fix is on tower` | **NEVER after B1** | **STOP** — B1 regressed or not on this tower. Roll back. |
+| `NKD_TRAIL_JITTER_MISSING` CRITICAL in `captain:alerts` | **NEVER after B1** (Isaac tower only) | Isaac jitter threading regressed — check git HEAD, re-deploy B1. |
+
 ---
 
 ## T−30 min: Containers and execution mode
@@ -346,8 +449,9 @@ appear here.
 | 13. captain-command logs clean | ☐ |
 | 14. b7b_nkd_trail importable | ☐ |
 | 15. Isaac tower: INSTANCE_PARITY=1 confirmed (C16 jitter active) | ☐ |
+| 16. F2 sanity check: all 4 fields `True`, Total keys 19 (step 2a — both towers) | ☐ |
 
-All 15 boxes checked = **GO**. Any ❌ = fix before 18:00 ET.
+All 16 boxes checked = **GO**. Any ❌ = fix before 18:00 ET.
 
 > **C16 Isaac tower gate (§14 new):** Run inside captain-online on Isaac tower:
 > ```fish
