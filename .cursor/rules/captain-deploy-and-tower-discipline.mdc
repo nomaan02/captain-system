@@ -173,6 +173,52 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-19 — `python3 -m pytest` on tower fails with `No module named pytest`
+
+**Original (broken):** an operator following the BATCH_4 deploy runbook (`docs2/quick-fixes/NKD_Pivot/day_2/Rejected _orders_issue/BATCH_4_VALIDATION_DEPLOY.md` §3) pasted the consolidated regression suite command into the tower's fish shell:
+```fish
+PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
+  python3 -m pytest tests/test_command_sanitise.py [...] -v
+```
+
+**Error observed:**
+```
+/usr/bin/python3: No module named pytest
+```
+
+**Corrected (preferred — skip on tower, run on dev host):** the consolidated `pytest` suite is a **dev-host pre-deploy gate**, never part of the tower deploy. The tower's equivalent is Gate C inside the live `captain-command` container (the F2 sanity script in §5 Step 8 of BATCH_4), which proves B1 is active without needing `pytest` installed:
+```fish
+dco exec -T captain-command python3 -c "
+from captain_command.blocks.b1_core_routing import sanitise_for_api
+signal = {
+    'asset': 'NKD', 'direction': -1, 'size': 1,
+    'tp_level': 60680, 'sl_level': 61805,
+    'is_nkd_trail': True, 'tp_dollars': 4450, 'snapped_d_init': 1025.0,
+    'jitter_x': 0.5, 'jitter_y': 1, 'jitter_j': 10.0,
+    'signal_id': 'TEST', 'user_id': 'primary_user',
+    '_context': {'entry_price': 61600},
+    'per_account': {'21855714': {'contracts': 1}},
+}
+sanitised = sanitise_for_api(signal, '21855714', signal['per_account']['21855714'])
+print('is_nkd_trail in sanitised?', 'is_nkd_trail' in sanitised)
+print('tp_dollars in sanitised?', 'tp_dollars' in sanitised)
+print('snapped_d_init in sanitised?', 'snapped_d_init' in sanitised)
+print('jitter_j in sanitised?', 'jitter_j' in sanitised)
+print('Total keys:', len(sanitised))
+"
+```
+
+**Corrected (alternative — install pytest on tower if operator really wants it):**
+```fish
+# Idempotent — installs pytest at user-site, no sudo, no system pollution.
+command -v pip3 > /dev/null 2>&1; or sudo apt install -y python3-pip
+python3 -m pip install --user pytest 2>/dev/null
+python3 -c "import pytest; print('pytest', pytest.__version__)"
+# Then re-run the suite from ~/captain-system as in BATCH_4 §3.1.
+```
+
+**Reason:** Ubuntu/Debian's system `python3` (`/usr/bin/python3`, used by fish on the tower) does not ship `pytest`; on the dev host (where the planning/execution agents validate code before commit) `pytest` is installed because `CLAUDE.md` "Tests run on the host" — the host being the dev machine, not a production tower. Production tower verification belongs in the post-deploy gates (D00 query, Redis HGETALL, in-container F2 sanity, log grep), all of which use `dco exec` / `curl` / `redis-cli` and avoid the `pytest` dependency entirely. NEVER emit `python3 -m pytest …` as a tower-side instruction without an explicit "DEV HOST ONLY" banner AND a tower-side alternative.
+
 ### 2026-05-19 — QuestDB stale `.lock` files survive unclean shutdown; host user (WSL2 bind-mount) gets `Permission denied`
 
 **Original (broken):**

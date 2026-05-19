@@ -44,7 +44,29 @@ If `MISMATCH` — stop. Do not proceed until both remotes are at the same HEAD.
 
 ## 3. Consolidated regression test command
 
-Run at the workspace root **on the dev host** (not inside a container). This is the single authoritative command for all NKD-relevant tests, including every new test added in B1, B2, and B3:
+> **===========================================================================**
+> **DEV-HOST ONLY — DO NOT RUN ON TOWERS DURING DEPLOY.**
+> **===========================================================================**
+>
+> This section is the **dev-host pre-deploy gate** that the planning/execution
+> agents run before commits land on `main`. The tower's system Python
+> (`/usr/bin/python3`) ships **without** `pytest` (Ubuntu apt does not bundle
+> it by default), and the tests also reference container-only dependencies
+> per [`CLAUDE.md`](../../../../../CLAUDE.md) "Tests run on the host".
+>
+> **If you are on a tower (Tower A or Tower B) following the deploy runbook,
+> SKIP this entire section** and jump straight to [§5 Tower deploy runbook](#5-tower-side-deploy-runbook-operator-only).
+> The tower's equivalent of §3 is **Gate C** (F2 sanity inside the live
+> `captain-command` container) at §5 Step 8, which proves B1 is active
+> without needing `pytest` installed.
+>
+> **Symptom if run on tower:** `/usr/bin/python3: No module named pytest`
+> (workspace rule §5 entry "2026-05-19 — `python3 -m pytest` on tower fails
+> with `No module named pytest`").
+
+### 3.1 Dev-host command (canonical)
+
+Run at the workspace root **on the dev host** (not inside a container, not on a tower). This is the single authoritative command for all NKD-relevant tests, including every new test added in B1, B2, and B3:
 
 ```bash
 PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
@@ -67,7 +89,32 @@ PYTHONPATH=./:./captain-online:./captain-offline:./captain-command \
     tests/test_nkd_replay_22h.py -v
 ```
 
-### Expected test counts
+### 3.2 Optional tower-side variant (only if operator explicitly wants pytest on a tower)
+
+You generally do NOT need this — Gate C in §5 Step 8 is the operative tower-side
+proof that B1 is active inside the running container. But if you want to ALSO
+run the pure-Python pytest subset on the tower (e.g. as a paranoia check after
+a code pull but before `dco build`), install `pytest` first as a one-off:
+
+```fish
+# Idempotent install of pytest at user-site (no sudo, no system pollution).
+python3 -m pip install --user pytest 2>/dev/null
+# Confirm it's importable
+python3 -c "import pytest; print('pytest', pytest.__version__)"
+```
+
+Then run the **same** consolidated command from §3.1 above at `~/captain-system/`
+(workspace root on the tower). Note: a few tests transitively import
+container-only deps (`pysignalr`, `numpy`); those that do will be collected as
+errors on a tower that lacks them. Treat this as a smoke check, not a
+definitive gate — the definitive proof on the tower is Gate C.
+
+If `python3 -m pip` is also missing on the tower:
+```fish
+sudo apt install -y python3-pip
+```
+
+### Expected test counts (dev-host §3.1)
 
 If any count diverges from this table, stop and diagnose before proceeding to the runbook patch or commit.
 
@@ -211,10 +258,16 @@ dco logs captain-online 2>&1 | grep "ON-B7B-NKD"
 ## 5. Tower-side deploy runbook (operator-only)
 
 > **AGENT MUST NOT EXECUTE THIS SECTION.** The commands below are for the operator to run manually on each tower's fish shell terminal.
+>
+> **DO NOT run §3 (regression suite) on the tower.** §3 is a dev-host pre-deploy
+> gate that requires `pytest` and the full Python test environment. The tower
+> equivalent is **Gate C** at Step 8 below (F2 sanity inside the live
+> `captain-command` container) — it proves B1 is active without `pytest`.
+>
+> **Start here at Step 0.** All 9 steps below are pasteable into fish as a
+> single block. They are idempotent and safe to re-run if interrupted.
 
 **Tower order: Nomaan tower first (INSTANCE_PARITY=0), then Isaac tower (INSTANCE_PARITY=1).**
-
-Paste the entire block below into the tower's fish terminal in one shot. All steps are idempotent — safe to re-run if interrupted.
 
 ```fish
 # ================================================================
