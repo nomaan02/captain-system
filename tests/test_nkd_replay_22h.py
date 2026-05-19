@@ -150,10 +150,10 @@ class TestNKDReplayPnLTrajectory:
     def test_full_trajectory_phase_a_to_tp_hit_22h(self):
         """Reproduce the 22h trade: gradual climb through A → B → C → TP."""
         # PnL path (every 10s poll, compressed to material points):
-        # - Phase A: -200, 100, 400, 600, 900, 1100, 1400 (loss → near phase B)
-        # - Cross into B: 1500, 2000, 2500, 3000, 3500
-        # - Cross into C: 4000, 4100, 4200, 4300, 4400
-        # - TP hit: 4450
+        # - Phase A: -200, 100, 400, 600, 900, 1100, 1400, 1500 (Phase B starts at $2000)
+        # - Cross into B at $2000: 2000, 2500
+        # - Cross into C at $3000: 3000, 3500, 4000, 4100, 4200, 4300, 4400
+        # - TP hit at $4450
         pnl_path = [
             Decimal("-200"),
             Decimal("100"), Decimal("400"), Decimal("600"),

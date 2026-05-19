@@ -200,43 +200,36 @@ class TestComputeNkdPhase:
         assert buf == Decimal("1750")
 
     def test_phase_b_start_boundary_returns_phase_b_at_d_init(self):
-        """At pnl == phase_b_start (no jitter): enter Phase B, buffer=d_init."""
-        d_init = Decimal("1750")
-        phase, buf = compute_nkd_phase(d_init, d_init, Decimal("0"))
+        """At pnl == 2000 (Phase B start): enter Phase B, buffer=1000 (flat step)."""
+        phase, buf = compute_nkd_phase(
+            Decimal("2000"), Decimal("1025"), Decimal("0"))
         assert phase == _PHASE_B
-        assert buf == d_init  # progress=0 → buffer=d_init
+        assert buf == Decimal("1000")
 
     def test_phase_b_just_before_c_returns_buffer_near_450(self):
-        """At pnl just under phase_c_start: buffer → 450."""
-        d_init = Decimal("1750")
-        pnl = Decimal("3999.99")  # one cent below 4000
-        phase, buf = compute_nkd_phase(pnl, d_init, Decimal("0"))
+        """At pnl just under phase_c_start (2999): still Phase B, buffer=1000 flat."""
+        phase, buf = compute_nkd_phase(
+            Decimal("2999"), Decimal("1025"), Decimal("0"))
         assert phase == _PHASE_B
-        # Use math.isclose on float() for tolerance
-        assert float(buf) == pytest.approx(450.00, abs=0.05)
+        assert buf == Decimal("1000")
 
     def test_phase_b_midpoint_at_d_init_1750(self):
-        """At midpoint between 1750 and 4000: buffer == (1750 + 450) / 2 = 1100."""
-        d_init = Decimal("1750")
-        pnl = (d_init + _PHASE_C_START_BASE_DOLLARS) / Decimal("2")  # 2875
-        phase, buf = compute_nkd_phase(pnl, d_init, Decimal("0"))
+        """At pnl=2500 (mid-Phase B): buffer=1000 flat step (not a midpoint average)."""
+        phase, buf = compute_nkd_phase(
+            Decimal("2500"), Decimal("1750"), Decimal("0"))
         assert phase == _PHASE_B
-        # progress = 0.5 → buffer = d_init - 0.5 * (d_init - 450)
-        #                       = 1750 - 0.5 * 1300 = 1100
-        assert buf == Decimal("1100")
+        assert buf == Decimal("1000")
 
     def test_phase_b_midpoint_at_d_init_1500(self):
-        """d_init==1500 (phase_b_start collapses to 1500): midpoint = 2750.
-        At midpoint: buffer = 1500 - 0.5 * (1500 - 450) = 975."""
-        d_init = Decimal("1500")
-        pnl = Decimal("2750")
-        phase, buf = compute_nkd_phase(pnl, d_init, Decimal("0"))
+        """d_init=1500: Phase B uses flat $1000 buffer (not a linear taper)."""
+        phase, buf = compute_nkd_phase(
+            Decimal("2500"), Decimal("1500"), Decimal("0"))
         assert phase == _PHASE_B
-        assert buf == Decimal("975")
+        assert buf == Decimal("1000")
 
     def test_phase_c_returns_tight_450(self):
-        """In [4000, 4450): Phase C, buffer=450."""
-        for pnl in (Decimal("4000"), Decimal("4200"), Decimal("4449")):
+        """In [3000, 4450): Phase C, buffer=450."""
+        for pnl in (Decimal("3001"), Decimal("4200"), Decimal("4449")):
             phase, buf = compute_nkd_phase(
                 pnl, Decimal("1750"), Decimal("0"))
             assert phase == _PHASE_C, f"pnl={pnl}"
@@ -249,20 +242,39 @@ class TestComputeNkdPhase:
                 pnl, Decimal("1750"), Decimal("0"))
             assert phase == _PHASE_TP
 
+    def test_phase_b_constant_1000(self):
+        """Phase B buffer is flat $1000 regardless of pnl within [2000, 3000)."""
+        for pnl in (Decimal("2000"), Decimal("2500"), Decimal("2999")):
+            phase, buf = compute_nkd_phase(pnl, Decimal("1025"), Decimal("0"))
+            assert phase == _PHASE_B, f"pnl={pnl} should be Phase B"
+            assert buf == Decimal("1000"), f"pnl={pnl} buffer should be flat 1000"
+
+    def test_phase_c_starts_at_3000(self):
+        """pnl=3000 is the first tick of Phase C; buffer=450."""
+        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("1025"), Decimal("0"))
+        assert phase == _PHASE_C
+        assert buf == Decimal("450")
+
+    def test_phase_b_degenerate_when_d_init_lt_1000(self):
+        """d_init=800 (< 1000): Phase B buffer floored at d_init=800, not 1000."""
+        phase, buf = compute_nkd_phase(Decimal("2500"), Decimal("800"), Decimal("0"))
+        assert phase == _PHASE_B
+        assert buf == Decimal("800")  # min(1000, 800) = 800
+
     def test_d_init_le_450_collapses_phase_b(self):
-        """Degenerate case: d_init=300 (≤450). Buffer stays at 300 in A/B."""
-        for pnl in (Decimal("0"), Decimal("500"), Decimal("2000"), Decimal("3500")):
-            phase, buf = compute_nkd_phase(
-                pnl, Decimal("300"), Decimal("0"))
-            if pnl < Decimal("1500"):
-                assert phase == _PHASE_A, f"pnl={pnl}"
-            else:
-                assert phase == _PHASE_B, f"pnl={pnl}"
-            assert buf == Decimal("300"), f"pnl={pnl} expected collapsed=300, got {buf}"
-        # At pnl==4000 we enter Phase C and the buffer tightens to 450
-        # (broker side wins).
-        phase, buf = compute_nkd_phase(
-            Decimal("4000"), Decimal("300"), Decimal("0"))
+        """Degenerate: d_init=300 (< 1000). Phase B buffer floored at d_init (never wider)."""
+        # Phase A: pnl < 2000
+        for pnl in (Decimal("0"), Decimal("500"), Decimal("1999")):
+            phase, buf = compute_nkd_phase(pnl, Decimal("300"), Decimal("0"))
+            assert phase == _PHASE_A, f"pnl={pnl}"
+            assert buf == Decimal("300"), f"pnl={pnl}"
+        # Phase B: 2000 <= pnl < 3000, buffer = min(1000, 300) = 300
+        for pnl in (Decimal("2000"), Decimal("2500"), Decimal("2999")):
+            phase, buf = compute_nkd_phase(pnl, Decimal("300"), Decimal("0"))
+            assert phase == _PHASE_B, f"pnl={pnl}"
+            assert buf == Decimal("300"), f"pnl={pnl} (floor at d_init=300)"
+        # Phase C: pnl >= 3000, buffer=450 (spec is 450 in Phase C regardless of d_init)
+        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("300"), Decimal("0"))
         assert phase == _PHASE_C
         assert buf == Decimal("450")
 
@@ -458,45 +470,42 @@ class TestPhaseAStepGate:
 
 
 # ---------------------------------------------------------------------------
-# Phase B linear taper — end-to-end
+# Phase B flat step — end-to-end
 # ---------------------------------------------------------------------------
 
-class TestPhaseBLinearTaperE2E:
-    """Phase B buffer interpolation observable through stop placement."""
+class TestPhaseBStep:
+    """Phase B flat-$1000 buffer observable through stop placement."""
 
     def test_buffer_at_boundaries(self):
-        """At phase_b_start: buffer=d_init. At phase_c_start-1: buffer≈450."""
-        # phase_b_start boundary (no jitter, d_init=1750 -> b_start=1750)
+        """At pnl=2000 (Phase B start) and pnl=2999 (Phase B end): buffer=1000."""
+        # Phase B start boundary
         phase, buf = compute_nkd_phase(
-            Decimal("1750"), Decimal("1750"), Decimal("0"))
+            Decimal("2000"), Decimal("1750"), Decimal("0"))
         assert phase == _PHASE_B
-        assert buf == Decimal("1750")
+        assert buf == Decimal("1000")
 
-        # Near phase_c_start
+        # Near phase_c_start (2999 < 3000)
         phase, buf = compute_nkd_phase(
-            Decimal("3999"), Decimal("1750"), Decimal("0"))
+            Decimal("2999"), Decimal("1750"), Decimal("0"))
         assert phase == _PHASE_B
-        assert float(buf) == pytest.approx(450.578, abs=1.0)
+        assert buf == Decimal("1000")
 
-    def test_taper_e2e_observable_stop_move(self):
-        """Stop tightens (toward entry) as PnL progresses through Phase B."""
+    def test_step_e2e_observable_stop_move(self):
+        """Buffer is flat $1000 throughout Phase B; stop tracks mark at $1000 distance."""
         pos = _make_nkd_position(snapped_d_init=Decimal("1750"))
         client = _make_client(True)
 
-        # Phase B early: pnl=$2000 → buffer ≈ 1750 - (250/2250)*1300
-        # = 1750 - 144.4 = ~1605.5; stop=mark-1605.5/5 = mark - 321.1
+        # Phase B at pnl=$2000: buffer=1000, stop=mark-1000/5=mark-200 NKD pts
         mark_early = _pnl_to_mark_long(Decimal("2000"), 38000)  # =38400
         _scan([pos], quote_price=mark_early, client=client)
         stop_early = pos["current_stop_price"]
 
-        # Phase B late: pnl=$3500 → buffer ≈ 1750 - (1750/2250)*1300
-        # = 1750 - 1011 = ~739; stop = mark - 739/5 = mark - 147.8
-        mark_late = _pnl_to_mark_long(Decimal("3500"), 38000)  # =38700
+        # Phase B at pnl=$2500: buffer still 1000, stop=mark-200 NKD pts
+        mark_late = _pnl_to_mark_long(Decimal("2500"), 38000)   # =38500
         _scan([pos], quote_price=mark_late, client=client)
         stop_late = pos["current_stop_price"]
 
-        # Stop should be tighter (closer to entry-side proportion of mark)
-        # In absolute terms it must be higher than early (mark went up + buffer shrank)
+        # Ratchet advances stop with mark (higher mark → higher stop for LONG)
         assert stop_late > stop_early
 
 

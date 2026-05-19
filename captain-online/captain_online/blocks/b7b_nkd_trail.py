@@ -11,22 +11,19 @@ AFTER ``monitor_positions`` has resolved any TP_HIT / SL_HIT exits. Walks
 the subset of open positions where ``is_nkd_trail == True`` and ratchets
 the broker-side STOP order toward entry as the trade earns PnL.
 
-3-phase ratchet (deterministic on Nomaan tower; Isaac tower applies a
-per-trade jitter J that perturbs phase thresholds only — never broker
-prices):
+3-phase ratchet:
+  Phase A  pnl <  2000           -> stop @ d_init ($1025 for all NKD trades)
+  Phase B  pnl <  3000           -> stop @ $1000 behind mark (flat step)
+  Phase C  pnl <  4450           -> stop @ $450  behind mark (tight trail)
+  TP_HIT   pnl >= 4450           -> no further modify (LIMIT TP fills)
 
-  Phase A  pnl <  max(d_init, 1500 + J)           -> stop @ d_init
-                                                     gated to one
-                                                     modify per $500 step
-  Phase B  pnl <  4000 + J                        -> stop linearly tapers
-                                                     from d_init -> 450
-  Phase C  pnl <  4450                            -> stop @ 450 (tight)
-  TP_HIT   pnl >= 4450                            -> no further modify
-                                                     (LIMIT TP fills)
+Jitter J (Isaac tower only, INSTANCE_PARITY=="1") is added in dollars
+to the SL buffer sent to the broker AND to the TP dollar target at B6
+signal placement. Phase boundaries ($2000 / $3000 / $4450) are NOT
+jittered — they stay clean for both towers.
 
-Degenerate case: when ``snapped_d_init <= 450`` the trail collapses to a
-constant 450-buffer for the lifetime of the trade (Phase B taper has
-zero / negative slope).
+Degenerate case: when ``snapped_d_init < 1000`` Phase B buffer is floored
+at d_init so the stop never retreats.
 
 Ratchet enforcement: the stop is recomputed STATELESSLY each poll, then
 compared against the previously-stored stop. The "more conservative"
@@ -66,11 +63,12 @@ _PHASE_B = "B"
 _PHASE_C = "C"
 _PHASE_TP = "TP_HIT"
 
-_PHASE_B_START_BASE_DOLLARS = Decimal("1500")
-_PHASE_C_START_BASE_DOLLARS = Decimal("4000")
-_TP_TARGET_DOLLARS = Decimal("4450")
-_PHASE_C_BUFFER_DOLLARS = Decimal("450")
-_PHASE_A_STEP_DOLLARS = Decimal("500")
+_PHASE_B_START_BASE_DOLLARS = Decimal("2000")   # profit level where Phase B starts
+_PHASE_C_START_BASE_DOLLARS = Decimal("3000")   # profit level where Phase C starts ($450 trail)
+_TP_TARGET_DOLLARS          = Decimal("4450")
+_PHASE_B_BUFFER_DOLLARS     = Decimal("1000")   # flat buffer during Phase B
+_PHASE_C_BUFFER_DOLLARS     = Decimal("450")    # flat buffer during Phase C and TP zone
+_PHASE_A_STEP_DOLLARS       = Decimal("500")    # Phase A modify gate
 
 _STALE_QUOTE_THRESHOLD_SECONDS = 30.0
 _REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
@@ -123,55 +121,30 @@ def sample_isaac_jitter(
 def compute_nkd_phase(
     pnl_dollars: Decimal,
     d_init: Decimal,
-    jitter_j: Decimal,
+    jitter_j: Decimal,            # retained in signature for backward compat;
+                                   # ignored for phase boundaries per Isaac spec
 ) -> tuple[str, Decimal]:
-    """Stateless phase + buffer derivation.
+    """Stateless phase + buffer derivation — 3-step ladder.
 
-    Returns ``(phase_name, buffer_dollars)``. Phase decision is single-pass
-    so a fast crossing of multiple $500 boundaries in one 10s poll lands
-    on the correct final phase + buffer rather than walking each boundary
-    intermediately.
+    Phase A  pnl < 2000                -> buffer = d_init  (hold initial SL)
+    Phase B  2000 <= pnl < 3000        -> buffer = 1000    (trail $1000 behind mark)
+    Phase C  3000 <= pnl < 4450        -> buffer = 450     (tight trail)
+    TP_HIT   pnl >= 4450               -> buffer = 450     (let LIMIT TP fill)
 
-    Phase A (pnl_dollars < phase_b_start)
-        Stop sits ``d_init`` dollars from entry (LONG: below; SHORT: above).
-        Caller is responsible for the $500 step-gate that prevents modify
-        spam during this phase — phase-math alone returns d_init unchanged
-        for every PnL value in the phase.
+    Jitter J is NOT applied to phase boundaries (phase boundaries are clean
+    per Isaac's confirmed spec). J is applied to the dollar buffer at the
+    broker-price computation stage in _scan_one_trail (C16).
 
-    Phase B (phase_b_start <= pnl_dollars < phase_c_start)
-        Linear taper: buffer interpolates from d_init at phase_b_start to
-        450 at phase_c_start. Degenerate when d_init <= 450: trail collapses
-        and buffer stays at d_init (never widens).
-
-    Phase C (phase_c_start <= pnl_dollars < tp_target)
-        Tight trail at 450 dollars. Broker-side LIMIT will fire first;
-        this phase exists for adverse-tick survival.
-
-    TP_HIT (pnl_dollars >= tp_target)
-        Returns buffer=450 but the SCAN loop MUST NOT issue any modify.
-        The broker-side LIMIT TP fills at 4450 exactly.
+    Degenerate case: when d_init <= 450 the Phase B $1000 step may exceed
+    d_init. We floor Phase B's buffer at d_init so the stop never retreats.
     """
-    phase_b_start = max(d_init, _PHASE_B_START_BASE_DOLLARS + jitter_j)
-    phase_c_start = _PHASE_C_START_BASE_DOLLARS + jitter_j
-
-    if pnl_dollars < phase_b_start:
+    if pnl_dollars < _PHASE_B_START_BASE_DOLLARS:
         return (_PHASE_A, d_init)
 
-    if pnl_dollars < phase_c_start:
-        if d_init <= _PHASE_C_BUFFER_DOLLARS:
-            # Degenerate case — taper has zero or negative slope. Keep the
-            # buffer at d_init for the whole of phase B; the trail still
-            # works, it just never tightens further until phase C / TP.
-            return (_PHASE_B, d_init)
-        denom = phase_c_start - phase_b_start
-        if denom <= 0:
-            # Jitter pushed phase_c_start back behind phase_b_start. This
-            # only happens for extreme negative J combined with d_init > 1520.
-            # Safety: collapse to tight buffer immediately.
-            return (_PHASE_B, _PHASE_C_BUFFER_DOLLARS)
-        progress = (pnl_dollars - phase_b_start) / denom
-        buffer = d_init - (progress * (d_init - _PHASE_C_BUFFER_DOLLARS))
-        return (_PHASE_B, buffer)
+    if pnl_dollars < _PHASE_C_START_BASE_DOLLARS:
+        # Phase B: $1000 flat, but never wider than d_init
+        buffer_b = min(_PHASE_B_BUFFER_DOLLARS, d_init)
+        return (_PHASE_B, buffer_b)
 
     if pnl_dollars < _TP_TARGET_DOLLARS:
         return (_PHASE_C, _PHASE_C_BUFFER_DOLLARS)
