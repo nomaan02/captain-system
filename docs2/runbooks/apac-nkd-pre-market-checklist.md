@@ -264,8 +264,9 @@ ON-B1: NKD data ingested
 ON-B2: NKD regime computed
 ON-B4: NKD kelly_contracts=1 (or similar)
 ON-B6: NKD signal generated is_nkd_trail=True tp_dollars=4450
-ON-B7B-NKD: snapped_d_init=625.00 phase=A
+ON-B7B-NKD: snapped_d_init=1025.00 phase=A
 ```
+*(C15: snapped_d_init is fixed at $1025, NOT OR-range derived. Phase B starts at $2000 profit.)*
 
 ### 16 — Confirm signal includes trail fields (after B6 fires)
 
@@ -280,8 +281,9 @@ docker exec captain-system-redis-1 redis-cli -a "$REDIS_PASSWORD" --no-auth-warn
 ```
 is_nkd_trail    True
 tp_dollars      4450
-snapped_d_init  625.0
+snapped_d_init  1025.0
 ```
+*(C15: snapped_d_init = 1025.0 fixed. On Isaac tower (parity=1) the signal also contains `jitter_j`, `jitter_x`, `jitter_y` and `tp_level` is placed at `4450 + J` — C16.)*
 
 **Failure action:** If `is_nkd_trail` is absent or `False`, D00 bootstrap (step 1–2) didn't
 complete. The trail block will not activate. Manually stop the trade if a position was taken.
@@ -343,8 +345,18 @@ appear here.
 | 12. captain-online logs clean | ☐ |
 | 13. captain-command logs clean | ☐ |
 | 14. b7b_nkd_trail importable | ☐ |
+| 15. Isaac tower: INSTANCE_PARITY=1 confirmed (C16 jitter active) | ☐ |
 
-All 14 boxes checked = **GO**. Any ❌ = fix before 18:00 ET.
+All 15 boxes checked = **GO**. Any ❌ = fix before 18:00 ET.
+
+> **C16 Isaac tower gate (§14 new):** Run inside captain-online on Isaac tower:
+> ```fish
+> dco exec captain-online printenv INSTANCE_PARITY
+> # Must return "1"; if blank or "0" jitter J=0 (safe but anti-copy-trade disabled)
+> ```
+> Phase B now starts at $2000 profit (flat $1000 buffer). Phase C starts at $3000 ($450 buffer).
+> Initial SL = **$1025 fixed** (41 NKD ticks = 1025 / (5 × 5)).
+> Isaac tower: broker SL buffer = 1000 + J, TP bracket = 4450 + J (sampled once per trade).
 
 ---
 
