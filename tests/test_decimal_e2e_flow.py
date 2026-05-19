@@ -442,3 +442,99 @@ class TestDecimalFloatComparisons:
         # Negative
         d2 = Decimal("-3000.50")
         assert f"${d2:,.2f}" == "$-3,000.50"
+
+
+# ---------------------------------------------------------------------------
+# Hop 3b: F2 fix — _handle_taken_skipped threads NKD jitter into position dict
+# ---------------------------------------------------------------------------
+
+class TestHandleTakenSkippedNkdJitterThreading:
+    """Audit F2 fix: _handle_taken_skipped must read jitter_x/y/j from the
+    stream message instead of hard-coding them to None. See
+    REJECTED_ORDERS_AUDIT.md §4 step 4 (the line that previously forced None
+    was orchestrator.py:1238-1240) and §8.2 (Isaac-tower jitter symmetry).
+    """
+
+    def test_taken_skipped_threads_jitter_to_position_dict(self, monkeypatch):
+        """Stream message with jitter_j=Decimal('-10.0') → position dict
+        carries jitter_j=Decimal('-10.0') (NOT None)."""
+        from captain_online.blocks.orchestrator import OnlineOrchestrator
+
+        orch = OnlineOrchestrator.__new__(OnlineOrchestrator)
+        orch.open_positions = []
+        orch.shadow_positions = []
+        orch._position_lock = MagicMock()
+        orch._position_lock.__enter__ = MagicMock(return_value=None)
+        orch._position_lock.__exit__ = MagicMock(return_value=None)
+        monkeypatch.setattr(
+            "captain_online.blocks.orchestrator.get_redis_client",
+            lambda: MagicMock(),
+        )
+
+        payload = {
+            "type": "TAKEN_SKIPPED",
+            "action": "TAKEN",
+            "signal_id": "SIG-NKD-E2E-001",
+            "user_id": "primary_user",
+            "asset": "NKD",
+            "direction": -1,
+            "actual_entry_price": Decimal("61600"),
+            "entry_price": Decimal("61570"),
+            "contracts": 1,
+            "tp_level": Decimal("60680"),
+            "sl_level": Decimal("61805"),
+            "point_value": Decimal("5"),
+            "risk_amount": Decimal("1025"),
+            "account_id": "21855714",
+            "session": 3,
+            "is_nkd_trail": True,
+            "tp_dollars": Decimal("4450"),
+            "snapped_d_init": Decimal("1025.0"),
+            "jitter_x": Decimal("0.5"),
+            "jitter_y": 1,
+            "jitter_j": Decimal("-10.0"),
+        }
+        orch._handle_taken_skipped(payload)
+
+        assert len(orch.open_positions) == 1
+        pos = orch.open_positions[0]
+        assert pos["is_nkd_trail"] is True
+        assert pos["tp_dollars"] == Decimal("4450")
+        assert pos["snapped_d_init"] == Decimal("1025.0")
+        assert pos["jitter_x"] == Decimal("0.5")
+        assert pos["jitter_y"] == 1  # int, not Decimal
+        assert pos["jitter_j"] == Decimal("-10.0")
+        assert pos["current_phase"] is None
+        assert pos["current_buffer"] is None
+        assert pos["current_stop_price"] is None
+        assert pos["modify_seq"] == 0
+
+    def test_taken_skipped_non_nkd_position_jitter_remains_none(self, monkeypatch):
+        """Regression guard: non-NKD signals must still produce
+        is_nkd_trail=False and jitter_*=None — no behaviour change for
+        ES/MES/etc.
+        """
+        from captain_online.blocks.orchestrator import OnlineOrchestrator
+
+        orch = OnlineOrchestrator.__new__(OnlineOrchestrator)
+        orch.open_positions = []
+        orch.shadow_positions = []
+        orch._position_lock = MagicMock()
+        orch._position_lock.__enter__ = MagicMock(return_value=None)
+        orch._position_lock.__exit__ = MagicMock(return_value=None)
+        monkeypatch.setattr(
+            "captain_online.blocks.orchestrator.get_redis_client",
+            lambda: MagicMock(),
+        )
+
+        payload = _decimal_taken_skipped_payload()  # MES, no NKD fields
+        orch._handle_taken_skipped(payload)
+
+        assert len(orch.open_positions) == 1
+        pos = orch.open_positions[0]
+        assert pos["is_nkd_trail"] is False  # bool(None) coerces to False
+        assert pos["tp_dollars"] is None
+        assert pos["snapped_d_init"] is None
+        assert pos["jitter_x"] is None
+        assert pos["jitter_y"] is None
+        assert pos["jitter_j"] is None

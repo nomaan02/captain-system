@@ -1231,13 +1231,23 @@ class OnlineOrchestrator:
                 "tp_order_id": data.get("tp_order_id"),
                 # NKD pivot trail-control fields (None for all non-NKD assets).
                 # Populated by B6 → Command orchestrator → here when is_nkd_trail=True.
+                # F2 fix (audit §4 + §7 Option B): tp_dollars / snapped_d_init /
+                # jitter_* now thread through sanitise_for_api → _auto_execute_signal
+                # → STREAM_COMMANDS → here.
                 "is_nkd_trail": bool(data.get("is_nkd_trail", False)),
                 "tp_dollars": as_money_or_none(data.get("tp_dollars")),
                 "snapped_d_init": as_money_or_none(data.get("snapped_d_init")),
-                # Trail state fields — None on entry; updated by b7b_nkd_trail on each poll.
-                "jitter_x": None,
-                "jitter_y": None,
-                "jitter_j": None,
+                # F2 audit §8.2: jitter_x/y/j threaded from B6 sample. The
+                # defence-in-depth re-sample at b7b_nkd_trail.py:660-669 still
+                # wins when these are None (e.g. replay tests or pre-F2 Redis
+                # hash rehydration), but the normal Isaac-tower path now reuses
+                # B6's J for per-trade symmetry.
+                "jitter_x": as_money_or_none(data.get("jitter_x")),
+                "jitter_y": (
+                    int(data["jitter_y"])
+                    if data.get("jitter_y") is not None else None
+                ),
+                "jitter_j": as_money_or_none(data.get("jitter_j")),
                 "current_phase": None,
                 "current_buffer": None,
                 "current_stop_price": None,

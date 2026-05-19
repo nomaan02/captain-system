@@ -129,11 +129,17 @@ def sanitise_for_gui(signal: dict) -> dict:
 
 
 def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
-    """Return the 6-field sanitised order — nothing else leaves Captain.
+    """Return the sanitised order — original 13 fields plus 6 NKD trail-control
+    fields (None for all non-NKD assets per F2 fix, audit §4 + §7 Option B).
 
     Spec: Command lines 139-160.  PROHIBITED_FIELDS never sent externally.
     Additional internal context (_context) is carried for TAKEN command
     publishing but is NOT sent to the brokerage API.
+
+    NKD pivot (F2): is_nkd_trail / tp_dollars / snapped_d_init / jitter_x /
+    jitter_y / jitter_j are forwarded so _auto_execute_signal can publish
+    them on STREAM_COMMANDS for b7b_nkd_trail. For non-NKD assets these
+    keys are absent on the signal and resolve to None.
     """
     ctx = signal.get("_context", {})
     return {
@@ -150,6 +156,12 @@ def sanitise_for_api(signal: dict, ac_id: str, ac_detail: dict) -> dict:
         "regime_state": ctx.get("regime_state"),
         "combined_modifier": ctx.get("combined_modifier"),
         "aim_breakdown": ctx.get("aim_breakdown"),
+        "is_nkd_trail": signal.get("is_nkd_trail"),
+        "tp_dollars": signal.get("tp_dollars"),
+        "snapped_d_init": signal.get("snapped_d_init"),
+        "jitter_x": signal.get("jitter_x"),
+        "jitter_y": signal.get("jitter_y"),
+        "jitter_j": signal.get("jitter_j"),
     }
 
 
@@ -226,6 +238,17 @@ def route_command(data: dict, gui_push_fn: Callable):
             # so Online B7 can resolve the actual exchange fill on close.
             "bracket": bool(data.get("bracket", False)),
             "entry_order_id": data.get("entry_order_id"),
+            # NKD pivot (F3, audit §7 Option B): forward trail-control fields
+            # from the manual GUI TAKEN payload so b7b_nkd_trail engages even
+            # on manual takes. Absent for all non-NKD assets (key not present
+            # → None → ignored by b7b at line 533:
+            # 'if not pos.get("is_nkd_trail"): continue').
+            "is_nkd_trail": data.get("is_nkd_trail"),
+            "tp_dollars": data.get("tp_dollars"),
+            "snapped_d_init": data.get("snapped_d_init"),
+            "jitter_x": data.get("jitter_x"),
+            "jitter_y": data.get("jitter_y"),
+            "jitter_j": data.get("jitter_j"),
         })
 
         gui_push_fn(user_id, {

@@ -697,10 +697,19 @@ class CommandOrchestrator:
                 "tp_order_id": result.get("tp_order_id"),
                 # NKD pivot: forward trail-control fields from the original signal
                 # so the online orchestrator can wire them into the position dict.
-                # Absent for all non-NKD assets (key not present → None → ignored).
+                # Absent for all non-NKD assets (key not present → None → ignored
+                # by b7b at line 533 'if not pos.get("is_nkd_trail"): continue').
+                # Pre-F2, the .get() reads returned None because sanitise_for_api
+                # stripped these keys; post-F2 they thread through end-to-end.
                 "is_nkd_trail": sanitised_order.get("is_nkd_trail"),
                 "tp_dollars": sanitised_order.get("tp_dollars"),
                 "snapped_d_init": sanitised_order.get("snapped_d_init"),
+                # NKD pivot audit §8.2: forward signed-J jitter components so the
+                # broker-side SL buffer on Isaac tower trails with the same J B6
+                # used for the TP bracket (per-trade J symmetry).
+                "jitter_x": sanitised_order.get("jitter_x"),
+                "jitter_y": sanitised_order.get("jitter_y"),
+                "jitter_j": sanitised_order.get("jitter_j"),
             })
         else:
             logger.error("AUTO-EXECUTE FAILED: %s — %s", status, result)

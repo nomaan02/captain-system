@@ -99,3 +99,106 @@ def test_log_trade_confirmation_does_not_typeerror_on_decimal_actual_entry(monke
     assert "params" in captured, "INSERT path did not execute — Decimal regressed."
     parsed = loads_decimal(captured["params"][5])
     assert parsed["actual_entry_price"] == Decimal("5825.50")
+
+
+def test_route_command_taken_preserves_nkd_trail_fields(monkeypatch):
+    """Audit F3 fix: the manual GUI TAKEN path must forward all 6 NKD
+    trail-control fields onto STREAM_COMMANDS so b7b_nkd_trail engages
+    even when a NKD signal is taken manually via the GUI (not auto-execute).
+    See REJECTED_ORDERS_AUDIT.md §0 F3, §7 Option B.
+    """
+    from captain_command.blocks import b1_core_routing
+
+    captured: dict = {}
+
+    def _fake_publish(stream, data):
+        captured["stream"] = stream
+        captured["data"] = data
+        return "1-0"
+
+    monkeypatch.setattr(b1_core_routing, "publish_to_stream", _fake_publish)
+    monkeypatch.setattr(
+        b1_core_routing, "_log_trade_confirmation",
+        lambda *_args, **_kw: None,
+    )
+
+    data = {
+        "type": "TAKEN_SKIPPED",
+        "action": "TAKEN",
+        "signal_id": "SIG-NKD-MANUAL-001",
+        "user_id": "primary_user",
+        "asset": "NKD",
+        "direction": -1,
+        "actual_entry_price": 61600,
+        "entry_price": 61570,
+        "contracts": 1,
+        "tp_level": 60680,
+        "sl_level": 61805,
+        "account_id": "21855714",
+        "session": 3,
+        "bracket": True,
+        "entry_order_id": "ENT-NKD-001",
+        "is_nkd_trail": True,
+        "tp_dollars": 4450,
+        "snapped_d_init": 1025.0,
+        "jitter_x": 0.5,
+        "jitter_y": 1,
+        "jitter_j": 10.0,
+    }
+    b1_core_routing.route_command(data, gui_push_fn=lambda *_a, **_kw: None)
+
+    assert "data" in captured, "publish_to_stream was never called"
+    msg = captured["data"]
+    assert msg["type"] == "TAKEN_SKIPPED"
+    assert msg["action"] == "TAKEN"
+    assert msg["asset"] == "NKD"
+    assert msg["is_nkd_trail"] is True
+    assert msg["tp_dollars"] == 4450
+    assert msg["snapped_d_init"] == 1025.0
+    assert msg["jitter_x"] == 0.5
+    assert msg["jitter_y"] == 1
+    assert msg["jitter_j"] == 10.0
+
+
+def test_route_command_taken_non_nkd_signal_has_none_nkd_keys(monkeypatch):
+    """Defensive: GUI clients that do not yet ship the 6 NKD keys must not
+    cause KeyError or change behaviour for ES/MES/etc. — the 6 keys default
+    to None on STREAM_COMMANDS, and downstream _handle_taken_skipped will
+    coerce them harmlessly.
+    """
+    from captain_command.blocks import b1_core_routing
+
+    captured: dict = {}
+
+    def _fake_publish(stream, data):
+        captured["data"] = data
+        return "1-0"
+
+    monkeypatch.setattr(b1_core_routing, "publish_to_stream", _fake_publish)
+    monkeypatch.setattr(
+        b1_core_routing, "_log_trade_confirmation",
+        lambda *_args, **_kw: None,
+    )
+
+    data = {
+        "type": "TAKEN_SKIPPED",
+        "action": "TAKEN",
+        "signal_id": "SIG-ES-MANUAL-001",
+        "user_id": "primary_user",
+        "asset": "ES",
+        "direction": 1,
+        "contracts": 2,
+        "tp_level": 6443.20,
+        "sl_level": 6460.53,
+        "account_id": "20319784",
+    }
+    b1_core_routing.route_command(data, gui_push_fn=lambda *_a, **_kw: None)
+
+    msg = captured["data"]
+    assert msg["asset"] == "ES"
+    assert msg["is_nkd_trail"] is None
+    assert msg["tp_dollars"] is None
+    assert msg["snapped_d_init"] is None
+    assert msg["jitter_x"] is None
+    assert msg["jitter_y"] is None
+    assert msg["jitter_j"] is None
