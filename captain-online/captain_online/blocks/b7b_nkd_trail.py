@@ -528,9 +528,12 @@ def scan_nkd_trails(
     # externally closes (UserStream size=0 → orchestrator drops from
     # open_positions) doesn't leak prev_pnl into the module cache forever.
     seen_signal_ids: set[str] = set()
+    skipped_inert = 0
 
     for pos in (open_positions or []):
         if not pos.get("is_nkd_trail"):
+            if (pos.get("asset") or "").upper() == "NKD":
+                skipped_inert += 1
             continue
         sig_id = pos.get("signal_id")
         if sig_id is None:
@@ -552,6 +555,12 @@ def scan_nkd_trails(
         if diag is not None:
             diagnostics.append(diag)
 
+    if skipped_inert > 0:
+        logger.info(
+            "ON-B7B-NKD: scan saw %d NKD position(s) with is_nkd_trail=False — "
+            "trail logic inert for those positions; verify F2 fix is on tower",
+            skipped_inert,
+        )
     _purge_prev_pnl(seen_signal_ids)
     return diagnostics
 
@@ -658,6 +667,20 @@ def _scan_one_trail(
     jitter_j_raw = pos.get("jitter_j")
     first_poll = jitter_j_raw is None
     if first_poll:
+        # Alert on Isaac tower: post-Batch-1 (F2 fix), jitter_j must arrive
+        # pre-populated from B6 via the position dict. If it is still None on
+        # the first poll, B6->position-dict threading has regressed and the SL
+        # trail will use a different J from the TP bracket price (audit §8.2).
+        # Defence-in-depth re-sampling below still protects the position.
+        if parity_env == "1":
+            _emit_alert(
+                redis_client, user_id, "CRITICAL", "NKD_TRAIL_JITTER_MISSING",
+                f"NKD trail: jitter_j absent from position dict on first poll "
+                f"(Isaac tower, signal={sig_id}). B6->position-dict threading "
+                f"may have regressed; SL will use a fresh J that differs from "
+                f"the TP bracket J. Re-sampling now (defence-in-depth).",
+                {"signal_id": sig_id, "asset": asset},
+            )
         x, y, j = sample_isaac_jitter(parity_env)
         pos["jitter_x"] = x
         pos["jitter_y"] = y

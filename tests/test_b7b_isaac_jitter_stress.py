@@ -26,6 +26,7 @@ guarantee disappears.
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import statistics
@@ -597,3 +598,100 @@ class TestEffectiveBufferJitter:
         assert abs(stop_price - expected) <= 5.0, (
             f"stop {stop_price} deviates from expected {expected}"
         )
+
+
+# ---------------------------------------------------------------------------
+# F5/§8.2 observability — CRITICAL alert on Isaac when jitter missing
+# ---------------------------------------------------------------------------
+
+class TestJitterMissingAlert:
+    """F5/§8.2 fix: on Isaac tower (parity_env='1'), a missing jitter_j on
+    first poll must emit a CRITICAL NKD_TRAIL_JITTER_MISSING alert BEFORE
+    the defence-in-depth re-sampling, then re-sampling must still run.
+    On Nomaan tower (parity_env=''), missing J is benign — no alert.
+    """
+
+    def test_first_poll_critical_alert_when_jitter_missing_on_isaac(self):
+        """Isaac tower (parity_env='1') + jitter_j=None -> CRITICAL alert fires,
+        then defence-in-depth re-sampling produces a non-zero J."""
+        random.seed(42)
+        pos = _make_nkd_position(jitter_j=None)
+        mock_redis = MagicMock()
+        # hget returns None → _mirror_position_to_redis early-returns (no decode needed)
+        mock_redis.hget.return_value = None
+
+        scan_nkd_trails(
+            open_positions=[pos],
+            client=_make_client(True),
+            redis_client=mock_redis,
+            quote_lookup=_FakeFeed(_pnl_to_mark_long(500)),
+            persist_d34=lambda row: None,
+            compliance_modify_check=lambda *_: (True, None),
+            parity_env="1",
+        )
+
+        # Alert must have fired via redis_client.publish
+        assert mock_redis.publish.called, (
+            "_emit_alert must call redis_client.publish when jitter_j is None "
+            "on Isaac tower"
+        )
+        # Find the NKD_TRAIL_JITTER_MISSING call among all publish calls
+        jitter_alert_calls = []
+        for call_args in mock_redis.publish.call_args_list:
+            payload_str = call_args[0][1]  # second positional arg to publish(channel, msg)
+            try:
+                payload = json.loads(payload_str)
+                if payload.get("event_type") == "NKD_TRAIL_JITTER_MISSING":
+                    jitter_alert_calls.append(payload)
+            except (json.JSONDecodeError, IndexError):
+                pass
+
+        assert len(jitter_alert_calls) == 1, (
+            f"Expected exactly 1 NKD_TRAIL_JITTER_MISSING alert, "
+            f"got {len(jitter_alert_calls)}"
+        )
+        assert jitter_alert_calls[0]["priority"] == "CRITICAL"
+
+        # Defence-in-depth re-sampling must still have produced a non-zero J
+        # (on Isaac tower, sample_isaac_jitter('1') always gives |J| >= 0.2)
+        assert pos.get("jitter_j") is not None, (
+            "pos['jitter_j'] must be set after re-sample"
+        )
+        assert float(pos["jitter_j"]) != 0.0, (
+            f"Isaac re-sample must produce non-zero J, got {pos['jitter_j']}"
+        )
+
+    def test_first_poll_no_alert_on_nomaan(self):
+        """Nomaan tower (parity_env='') + jitter_j=None -> no CRITICAL alert.
+        Missing J is benign on Nomaan: sample_isaac_jitter('') returns J=0."""
+        pos = _make_nkd_position(jitter_j=None)
+        mock_redis = MagicMock()
+        # hget returns None → _mirror_position_to_redis early-returns (no decode needed)
+        mock_redis.hget.return_value = None
+
+        scan_nkd_trails(
+            open_positions=[pos],
+            client=_make_client(True),
+            redis_client=mock_redis,
+            quote_lookup=_FakeFeed(_pnl_to_mark_long(500)),
+            persist_d34=lambda row: None,
+            compliance_modify_check=lambda *_: (True, None),
+            parity_env="",
+        )
+
+        # No NKD_TRAIL_JITTER_MISSING alert on Nomaan tower
+        jitter_alert_calls = []
+        for call_args in mock_redis.publish.call_args_list:
+            try:
+                payload = json.loads(call_args[0][1])
+                if payload.get("event_type") == "NKD_TRAIL_JITTER_MISSING":
+                    jitter_alert_calls.append(payload)
+            except Exception:
+                pass
+
+        assert jitter_alert_calls == [], (
+            "NKD_TRAIL_JITTER_MISSING must NOT fire on Nomaan tower "
+            f"(parity_env=''), got: {jitter_alert_calls}"
+        )
+        # J=0 on Nomaan (sample_isaac_jitter('') always returns Decimal('0'))
+        assert pos.get("jitter_j") == Decimal("0")

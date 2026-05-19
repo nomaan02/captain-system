@@ -15,6 +15,7 @@ NKD spec constants:
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 from decimal import Decimal
@@ -706,3 +707,82 @@ class TestComputeStopPrice:
         with pytest.raises(ValueError):
             compute_stop_price(
                 Decimal("38500"), Decimal("450"), 1, Decimal("0"), 1)
+
+
+# ---------------------------------------------------------------------------
+# §8.3 observability — silent-skip log
+# ---------------------------------------------------------------------------
+
+class TestScanObservability:
+    """§8.3 fix: scan_nkd_trails must emit a single aggregate INFO line per
+    scan cycle when one or more NKD positions are skipped due to
+    is_nkd_trail=False. Non-NKD positions and empty lists must NOT trigger it.
+    """
+
+    def test_scan_logs_when_nkd_position_skipped(self, caplog):
+        """One NKD position with is_nkd_trail=False -> INFO log fires with count=1."""
+        pos = _make_nkd_position(jitter_j=Decimal("0"))
+        pos["is_nkd_trail"] = False  # override the True set by _make_nkd_position
+
+        with caplog.at_level(logging.INFO,
+                             logger="captain_online.blocks.b7b_nkd_trail"):
+            scan_nkd_trails(
+                open_positions=[pos],
+                client=MagicMock(),
+                redis_client=None,
+                quote_lookup=lambda a, c: (Decimal("38000"), 0.0),
+                persist_d34=lambda row: None,
+                compliance_modify_check=lambda *_: (True, None),
+                parity_env="0",
+            )
+
+        matching = [
+            r for r in caplog.records
+            if "is_nkd_trail=False" in r.message
+        ]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 INFO line about skipped NKD position, "
+            f"got {len(matching)}: {[r.message for r in matching]}"
+        )
+        assert "1 NKD position(s)" in matching[0].message
+
+    def test_scan_does_not_log_when_no_nkd_positions(self, caplog):
+        """Empty list and non-NKD positions must not produce the skip INFO line."""
+        # Sub-test 1: empty list
+        with caplog.at_level(logging.INFO,
+                             logger="captain_online.blocks.b7b_nkd_trail"):
+            scan_nkd_trails(
+                open_positions=[],
+                client=MagicMock(),
+                redis_client=None,
+                quote_lookup=lambda a, c: (Decimal("38000"), 0.0),
+                persist_d34=lambda row: None,
+                compliance_modify_check=lambda *_: (True, None),
+                parity_env="0",
+            )
+
+        skip_logs = [r for r in caplog.records if "is_nkd_trail=False" in r.message]
+        assert skip_logs == [], "No skip-log expected for empty position list"
+
+        caplog.clear()
+
+        # Sub-test 2: non-NKD position (ES) with is_nkd_trail=False — must NOT
+        # increment skipped_inert because asset != "NKD"
+        es_pos = {
+            "asset": "ES", "is_nkd_trail": False,
+            "signal_id": "SIG-ES-001", "user_id": "primary_user",
+        }
+        with caplog.at_level(logging.INFO,
+                             logger="captain_online.blocks.b7b_nkd_trail"):
+            scan_nkd_trails(
+                open_positions=[es_pos],
+                client=MagicMock(),
+                redis_client=None,
+                quote_lookup=lambda a, c: (Decimal("4500"), 0.0),
+                persist_d34=lambda row: None,
+                compliance_modify_check=lambda *_: (True, None),
+                parity_env="0",
+            )
+
+        skip_logs = [r for r in caplog.records if "is_nkd_trail=False" in r.message]
+        assert skip_logs == [], "Non-NKD skipped positions must not trigger the NKD log"
