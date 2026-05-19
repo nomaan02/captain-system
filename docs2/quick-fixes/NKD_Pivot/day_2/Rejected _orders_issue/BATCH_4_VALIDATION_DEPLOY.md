@@ -462,12 +462,13 @@ echo "================================================================"
 - [x] `git push origin HEAD` — succeeded (`6349e33..a7ac6ba  HEAD -> main`)
 - [x] `git push multi-user HEAD` — succeeded (`6349e33..a7ac6ba  HEAD -> main`)
 - [x] SHA parity confirmed: local == `origin/main` == `multi-user/main` → `OK: both remotes synced`
-- [x] Commit SHA: `a7ac6babd770ef26e59510f6ec35658df317a353` (short: `a7ac6ba`)
+- [x] Commit SHA (B4 main): `a7ac6babd770ef26e59510f6ec35658df317a353` (short: `a7ac6ba`)
+- [x] Commit SHA (B4 checklist): `43c53cede6e7ca2ba89d2ba72ade1fa38c7ee667` (short: `43c53ce`)
 
 ```
-local:      a7ac6babd770ef26e59510f6ec35658df317a353
-origin:     a7ac6babd770ef26e59510f6ec35658df317a353
-multi-user: a7ac6babd770ef26e59510f6ec35658df317a353
+local:      43c53cede6e7ca2ba89d2ba72ade1fa38c7ee667
+origin:     43c53cede6e7ca2ba89d2ba72ade1fa38c7ee667
+multi-user: 43c53cede6e7ca2ba89d2ba72ade1fa38c7ee667
 OK: both remotes synced
 ```
 
