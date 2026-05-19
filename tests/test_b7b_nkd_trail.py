@@ -189,41 +189,41 @@ class TestComputeNkdPhase:
 
     def test_pnl_negative_returns_phase_a_at_d_init(self):
         phase, buf = compute_nkd_phase(
-            Decimal("-500"), Decimal("1750"), Decimal("0"))
+            Decimal("-500"), Decimal("1750"))
         assert phase == _PHASE_A
         assert buf == Decimal("1750")
 
     def test_pnl_zero_returns_phase_a_at_d_init(self):
         phase, buf = compute_nkd_phase(
-            Decimal("0"), Decimal("1750"), Decimal("0"))
+            Decimal("0"), Decimal("1750"))
         assert phase == _PHASE_A
         assert buf == Decimal("1750")
 
     def test_phase_b_start_boundary_returns_phase_b_at_d_init(self):
         """At pnl == 2000 (Phase B start): enter Phase B, buffer=1000 (flat step)."""
         phase, buf = compute_nkd_phase(
-            Decimal("2000"), Decimal("1025"), Decimal("0"))
+            Decimal("2000"), Decimal("1025"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
     def test_phase_b_just_before_c_returns_buffer_near_450(self):
         """At pnl just under phase_c_start (2999): still Phase B, buffer=1000 flat."""
         phase, buf = compute_nkd_phase(
-            Decimal("2999"), Decimal("1025"), Decimal("0"))
+            Decimal("2999"), Decimal("1025"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
     def test_phase_b_midpoint_at_d_init_1750(self):
         """At pnl=2500 (mid-Phase B): buffer=1000 flat step (not a midpoint average)."""
         phase, buf = compute_nkd_phase(
-            Decimal("2500"), Decimal("1750"), Decimal("0"))
+            Decimal("2500"), Decimal("1750"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
     def test_phase_b_midpoint_at_d_init_1500(self):
         """d_init=1500: Phase B uses flat $1000 buffer (not a linear taper)."""
         phase, buf = compute_nkd_phase(
-            Decimal("2500"), Decimal("1500"), Decimal("0"))
+            Decimal("2500"), Decimal("1500"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
@@ -231,7 +231,7 @@ class TestComputeNkdPhase:
         """In [3000, 4450): Phase C, buffer=450."""
         for pnl in (Decimal("3001"), Decimal("4200"), Decimal("4449")):
             phase, buf = compute_nkd_phase(
-                pnl, Decimal("1750"), Decimal("0"))
+                pnl, Decimal("1750"))
             assert phase == _PHASE_C, f"pnl={pnl}"
             assert buf == _PHASE_C_BUFFER_DOLLARS, f"pnl={pnl}"
 
@@ -239,25 +239,25 @@ class TestComputeNkdPhase:
         """pnl >= 4450 → TP_HIT."""
         for pnl in (Decimal("4450"), Decimal("5000"), Decimal("10000")):
             phase, _ = compute_nkd_phase(
-                pnl, Decimal("1750"), Decimal("0"))
+                pnl, Decimal("1750"))
             assert phase == _PHASE_TP
 
     def test_phase_b_constant_1000(self):
         """Phase B buffer is flat $1000 regardless of pnl within [2000, 3000)."""
         for pnl in (Decimal("2000"), Decimal("2500"), Decimal("2999")):
-            phase, buf = compute_nkd_phase(pnl, Decimal("1025"), Decimal("0"))
+            phase, buf = compute_nkd_phase(pnl, Decimal("1025"))
             assert phase == _PHASE_B, f"pnl={pnl} should be Phase B"
             assert buf == Decimal("1000"), f"pnl={pnl} buffer should be flat 1000"
 
     def test_phase_c_starts_at_3000(self):
         """pnl=3000 is the first tick of Phase C; buffer=450."""
-        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("1025"), Decimal("0"))
+        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("1025"))
         assert phase == _PHASE_C
         assert buf == Decimal("450")
 
     def test_phase_b_degenerate_when_d_init_lt_1000(self):
         """d_init=800 (< 1000): Phase B buffer floored at d_init=800, not 1000."""
-        phase, buf = compute_nkd_phase(Decimal("2500"), Decimal("800"), Decimal("0"))
+        phase, buf = compute_nkd_phase(Decimal("2500"), Decimal("800"))
         assert phase == _PHASE_B
         assert buf == Decimal("800")  # min(1000, 800) = 800
 
@@ -265,16 +265,16 @@ class TestComputeNkdPhase:
         """Degenerate: d_init=300 (< 1000). Phase B buffer floored at d_init (never wider)."""
         # Phase A: pnl < 2000
         for pnl in (Decimal("0"), Decimal("500"), Decimal("1999")):
-            phase, buf = compute_nkd_phase(pnl, Decimal("300"), Decimal("0"))
+            phase, buf = compute_nkd_phase(pnl, Decimal("300"))
             assert phase == _PHASE_A, f"pnl={pnl}"
             assert buf == Decimal("300"), f"pnl={pnl}"
         # Phase B: 2000 <= pnl < 3000, buffer = min(1000, 300) = 300
         for pnl in (Decimal("2000"), Decimal("2500"), Decimal("2999")):
-            phase, buf = compute_nkd_phase(pnl, Decimal("300"), Decimal("0"))
+            phase, buf = compute_nkd_phase(pnl, Decimal("300"))
             assert phase == _PHASE_B, f"pnl={pnl}"
             assert buf == Decimal("300"), f"pnl={pnl} (floor at d_init=300)"
         # Phase C: pnl >= 3000, buffer=450 (spec is 450 in Phase C regardless of d_init)
-        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("300"), Decimal("0"))
+        phase, buf = compute_nkd_phase(Decimal("3000"), Decimal("300"))
         assert phase == _PHASE_C
         assert buf == Decimal("450")
 
@@ -308,30 +308,71 @@ class TestSampleIsaacJitter:
             else:
                 assert j < 0
 
-    def test_isaac_jitter_does_not_touch_broker_prices(self):
-        """End-to-end: even with a non-zero J, the broker receives only
-        prices computed from (mark, buffer) — J never appears in the
-        modify_order call."""
+    def test_isaac_jitter_shifts_broker_prices(self):
+        """End-to-end (C16+): Isaac tower's broker stop is shifted by J.
+        The stop for Isaac (J≠0) differs from Nomaan (J=0) at the same mark."""
         random.seed(101)
+        entry = Decimal("38000")
+        d_init = Decimal("1025")
+        mark = _pnl_to_mark_long(Decimal("2000"), 38000)  # Phase B
+
+        # Nomaan tower (J=0): pre-populated jitter_j=0
+        pos_n = _make_nkd_position(
+            entry_price=entry, snapped_d_init=d_init,
+            jitter_x=Decimal("0"), jitter_y=0, jitter_j=Decimal("0"))
+        diag_n, client_n, _, _ = _scan([pos_n], quote_price=mark, parity_env="0")
+
+        # Isaac tower: pre-populate a known J to make the test deterministic
+        j_val = Decimal("15")  # |J|=15 within spec range
+        pos_i = _make_nkd_position(
+            entry_price=entry, snapped_d_init=d_init,
+            jitter_x=Decimal("0.75"), jitter_y=1, jitter_j=j_val)
+        diag_i, client_i, _, _ = _scan([pos_i], quote_price=mark, parity_env="1")
+
+        # Both towers must have made a modify_order call
+        client_n.modify_order.assert_called_once()
+        client_i.modify_order.assert_called_once()
+
+        stop_n = client_n.modify_order.call_args.kwargs["stop_price"]
+        stop_i = client_i.modify_order.call_args.kwargs["stop_price"]
+
+        # Both stops must be on NKD 5-tick grid
+        assert (stop_n * 1.0) % 5.0 == pytest.approx(0.0), \
+            f"Nomaan stop {stop_n} not on NKD 5-tick grid"
+        assert (stop_i * 1.0) % 5.0 == pytest.approx(0.0), \
+            f"Isaac stop {stop_i} not on NKD 5-tick grid"
+
+        # Isaac's stop must differ from Nomaan's (effective_buffer = buffer + J)
+        assert stop_i != stop_n, (
+            f"Isaac (J={j_val}) and Nomaan (J=0) produced identical broker stop "
+            f"({stop_n}). J should shift the broker SL buffer by ${j_val}."
+        )
+
+    def test_jitter_widens_broker_sl_buffer_by_j(self):
+        """effective_buffer = buffer + J. For J=+10 and Phase B buffer=1000,
+        Isaac's broker stop is placed 1010 dollars behind the mark."""
+        entry = Decimal("38000")
+        d_init = Decimal("1025")
+        mark = _pnl_to_mark_long(Decimal("2000"), 38000)  # Phase B, buffer=1000
+        j_val = Decimal("10")  # positive J: stop is further away
+
         pos = _make_nkd_position(
-            entry_price=Decimal("38000"), snapped_d_init=Decimal("1750"))
-        # Run with Isaac jitter — phase math will see J
-        mark = _pnl_to_mark_long(Decimal("2000"), 38000)  # mid Phase B
-        diag, client, persisted, _ = _scan(
-            [pos], quote_price=mark, parity_env="1")
-        # Jitter was sampled
-        assert pos["jitter_x"] != Decimal("0") or pos["jitter_y"] != 0 \
-            or pos["jitter_j"] != Decimal("0")
-        # modify_order was called exactly once with a stop_price derived from
-        # mark and buffer — never with J added
+            entry_price=entry, snapped_d_init=d_init,
+            jitter_x=Decimal("0.5"), jitter_y=1, jitter_j=j_val)
+        _, client, _, _ = _scan([pos], quote_price=mark, parity_env="1")
+
         client.modify_order.assert_called_once()
-        kwargs = client.modify_order.call_args.kwargs
-        # stop_price float must be a clean NKD tick-grid value, no jitter
-        # leakage (J would shift it by < 4 NKD points = $20)
-        stop_price = kwargs["stop_price"]
-        # NKD tick is 5.0; must be on grid
-        assert (stop_price * 1.0) % 5.0 == pytest.approx(0.0), \
-            f"stop_price {stop_price} not on NKD 5-tick grid"
+        stop_price = client.modify_order.call_args.kwargs["stop_price"]
+
+        # Phase B buffer = min(1000, 1025) = 1000
+        # effective_buffer = 1000 + 10 = 1010
+        # stop = mark - 1010/5 = 38400 - 202 = 38198 → snap outward (floor for LONG)
+        # 38198 / 5 = 7639.6 → floor → 7639 * 5 = 38195
+        expected_stop = 38195.0  # floor(38198/5)*5
+        assert stop_price == pytest.approx(expected_stop, abs=5.0), (
+            f"Isaac stop {stop_price} should be ~{expected_stop} "
+            f"(mark={float(mark)}, buffer=1000, J={j_val})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -480,13 +521,13 @@ class TestPhaseBStep:
         """At pnl=2000 (Phase B start) and pnl=2999 (Phase B end): buffer=1000."""
         # Phase B start boundary
         phase, buf = compute_nkd_phase(
-            Decimal("2000"), Decimal("1750"), Decimal("0"))
+            Decimal("2000"), Decimal("1750"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
         # Near phase_c_start (2999 < 3000)
         phase, buf = compute_nkd_phase(
-            Decimal("2999"), Decimal("1750"), Decimal("0"))
+            Decimal("2999"), Decimal("1750"))
         assert phase == _PHASE_B
         assert buf == Decimal("1000")
 
@@ -517,7 +558,7 @@ class TestPhaseCTightTrail:
     def test_phase_c_buffer_is_450(self):
         for pnl in (Decimal("4000"), Decimal("4200"), Decimal("4449")):
             _, buf = compute_nkd_phase(
-                pnl, Decimal("1750"), Decimal("0"))
+                pnl, Decimal("1750"))
             assert buf == Decimal("450")
 
     def test_phase_c_stop_placement_e2e(self):
@@ -588,7 +629,7 @@ class TestTpNeverExceeded:
             pnl_dollars = rng.uniform(-2000, 10000)
             phase, _ = compute_nkd_phase(
                 Decimal(str(round(pnl_dollars, 2))),
-                Decimal("1750"), Decimal("0"))
+                Decimal("1750"))
             if pnl_dollars >= 4450:
                 assert phase == _PHASE_TP, \
                     f"pnl={pnl_dollars} expected TP_HIT, got {phase}"

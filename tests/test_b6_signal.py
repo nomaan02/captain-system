@@ -298,6 +298,72 @@ class TestNKDTrailFieldsInSignal:
         assert "snapped_d_init" not in signal
 
 
+class TestNKDJitterInB6Signal:
+    """C16: Isaac tower signals have J-shifted tp_level; Nomaan is unshifted."""
+
+    @patch("captain_online.blocks.b6_signal_output._publish_signals")
+    @patch("captain_online.blocks.b6_signal_output._log_signal_output")
+    @patch("captain_online.blocks.b6_signal_output._load_system_param", side_effect=lambda k, d: d)
+    @patch("captain_online.blocks.b6_signal_output._get_daily_pnl", return_value=0.0)
+    def test_jitter_shifts_broker_tp_by_j(self, mock_pnl, mock_param, mock_log, mock_pub):
+        """On Isaac tower, NKD signal tp_level = _tp_from_dollars(4450 + J, ...).
+        On Nomaan tower, J=0 → tp_level = standard 4450-based value."""
+        import os
+        import random
+        from decimal import Decimal
+        from captain_online.blocks.b6_signal_output import _tp_from_dollars
+
+        entry = 38000.0
+        point_value = 5.0
+
+        nkd_features = make_features("NKD")
+        nkd_features["NKD"]["entry_price"] = entry
+        nkd_features["NKD"]["or_range"] = 125.0
+        nkd_features["NKD"]["or_direction"] = 1
+        nkd_strategy = make_locked_strategy(
+            "NKD", is_nkd_trail=True, tp_dollars=4450, sl_dollars_fixed=1025,
+            sl_multiple=0.35, tp_multiple=0.70, default_direction=1,
+        )
+        nkd_assets_detail = make_assets_detail("NKD", point_value=Decimal("5.0"),
+                                                tick_size=Decimal("5.0"))
+
+        common_kwargs = dict(
+            recommended_trades=["NKD"], available_not_recommended=[],
+            quality_results={"NKD": {"quality_score": 0.015, "quality_multiplier": 1.0,
+                                     "data_maturity": 1.0}},
+            final_contracts={"NKD": {"acc_eval_1": 1}},
+            account_recommendation={"NKD": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"NKD": {"acc_eval_1": None}},
+            features=nkd_features, ewma_states={}, aim_breakdown={"NKD": {}},
+            combined_modifier={"NKD": 1.0},
+            regime_probs={"NKD": {"LOW_VOL": 0.6, "HIGH_VOL": 0.4}},
+            expected_edge={"NKD": 0.02}, locked_strategies=nkd_strategy,
+            tsm_configs={}, user_silo=make_user_silo(accounts=["acc_eval_1"]),
+            assets_detail=nkd_assets_detail, session_id=3,
+        )
+
+        # Nomaan tower: J=0, tp_level at standard 4450
+        with patch.dict(os.environ, {"INSTANCE_PARITY": "0"}):
+            result_n = run_signal_output(**common_kwargs)
+        sig_n = result_n["signals"][0]
+        assert sig_n["jitter_j"] == 0.0
+        expected_tp_n = _tp_from_dollars(4450.0, entry, 1, point_value, 1, "NKD")
+        assert sig_n["tp_level"] == pytest.approx(expected_tp_n, abs=5.0)
+
+        # Isaac tower: J != 0, tp_level shifted by J
+        random.seed(42)
+        with patch.dict(os.environ, {"INSTANCE_PARITY": "1"}):
+            result_i = run_signal_output(**common_kwargs)
+        sig_i = result_i["signals"][0]
+        j = sig_i["jitter_j"]
+        assert j != 0.0, "Expected non-zero J from Isaac tower"
+        expected_tp_i = _tp_from_dollars(4450.0 + j, entry, 1, point_value, 1, "NKD")
+        assert sig_i["tp_level"] == pytest.approx(expected_tp_i, abs=5.0), (
+            f"Isaac tp_level={sig_i['tp_level']} should be "
+            f"_tp_from_dollars(4450+{j})={expected_tp_i}"
+        )
+
+
 class TestTPSLComputation:
     """TP/SL helpers."""
 

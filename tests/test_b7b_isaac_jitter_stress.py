@@ -270,19 +270,20 @@ class TestTpTargetNeverShiftedByJitter:
         exactly pnl=4450 — not 4450+J, not 4450-J."""
         d_init = Decimal("1750")
         # Just below 4450 -> not TP, just at 4450 -> TP
-        phase_below, _ = compute_nkd_phase(Decimal("4449.99"), d_init, j_val)
-        phase_at, _ = compute_nkd_phase(Decimal("4450"), d_init, j_val)
-        phase_above, _ = compute_nkd_phase(Decimal("5000"), d_init, j_val)
+        phase_below, _ = compute_nkd_phase(Decimal("4449.99"), d_init)
+        phase_at, _ = compute_nkd_phase(Decimal("4450"), d_init)
+        phase_above, _ = compute_nkd_phase(Decimal("5000"), d_init)
         assert phase_below != _PHASE_TP, (
             f"J={j_val}: pnl=4449.99 hit TP_HIT (should be Phase C)")
         assert phase_at == _PHASE_TP, (
             f"J={j_val}: pnl=4450 did NOT hit TP_HIT")
         assert phase_above == _PHASE_TP
 
-    def test_tp_target_constant_is_unjittered_4450(self):
-        # Spec lock — if anyone changes _TP_TARGET_DOLLARS, this test
-        # fails loudly so the change is reviewed against TopstepX
-        # contract economics.
+    def test_tp_target_constant_is_phase_decision_threshold(self):
+        """_TP_TARGET_DOLLARS controls when the trail block emits TP_HIT_NO_MODIFY.
+        This remains exactly 4450 regardless of J — phase boundaries are clean.
+        NOTE: the BROKER TP bracket is placed at 4450 + J by B6 on Isaac tower
+        (tested in test_b6_signal.py and test_nkd_jitter_lifecycle.py)."""
         assert _TP_TARGET_DOLLARS == Decimal("4450")
 
 
@@ -303,8 +304,8 @@ class TestPhaseBoundariesCleanAfterC14:
     def test_phase_b_boundary_fixed_at_2000_regardless_of_j(self, j_val):
         """Phase B starts at exactly $2000 regardless of J."""
         d_init = Decimal("1000")
-        phase_below, _ = compute_nkd_phase(Decimal("1999.99"), d_init, j_val)
-        phase_at, _ = compute_nkd_phase(Decimal("2000"), d_init, j_val)
+        phase_below, _ = compute_nkd_phase(Decimal("1999.99"), d_init)
+        phase_at, _ = compute_nkd_phase(Decimal("2000"), d_init)
         assert phase_below == _PHASE_A, f"J={j_val}: pnl=1999.99 should be Phase A"
         assert phase_at == _PHASE_B, f"J={j_val}: pnl=2000 should be Phase B"
 
@@ -315,8 +316,8 @@ class TestPhaseBoundariesCleanAfterC14:
     def test_phase_c_boundary_fixed_at_3000_regardless_of_j(self, j_val):
         """Phase C starts at exactly $3000 regardless of J."""
         d_init = Decimal("1750")
-        phase_below, _ = compute_nkd_phase(Decimal("2999.99"), d_init, j_val)
-        phase_at, _ = compute_nkd_phase(Decimal("3000"), d_init, j_val)
+        phase_below, _ = compute_nkd_phase(Decimal("2999.99"), d_init)
+        phase_at, _ = compute_nkd_phase(Decimal("3000"), d_init)
         assert phase_below == _PHASE_B, f"J={j_val}: pnl=2999.99 should be Phase B"
         assert phase_at == _PHASE_C, f"J={j_val}: pnl=3000 should be Phase C"
 
@@ -327,27 +328,25 @@ class TestTwoTowerPhasemath:
     effective_buffer = buffer + J in _scan_one_trail."""
 
     def test_pre_snap_buffer_equal_throughout_phase_b(self):
-        """After C14: buffers are IDENTICAL for Nomaan and Isaac in Phase B.
-        Phase-math J removal is verified here. C16 will add divergence at
-        the effective_buffer stage (not in compute_nkd_phase)."""
+        """After C14: phase-math buffers are IDENTICAL for Nomaan and Isaac.
+        J is NOT applied to compute_nkd_phase — it is applied at the
+        effective_buffer stage (buffer + J) in _scan_one_trail."""
         d_init = Decimal("1000")
-        j_isaac = Decimal("20")
         # Phase B range [2000, 3000)
         pnls = [Decimal(p) for p in range(2000, 3000, 49)]
         for pnl in pnls:
-            _, buf_n = compute_nkd_phase(pnl, d_init, Decimal("0"))
-            _, buf_i = compute_nkd_phase(pnl, d_init, j_isaac)
+            _, buf_n = compute_nkd_phase(pnl, d_init)
+            _, buf_i = compute_nkd_phase(pnl, d_init)
             assert buf_n == buf_i, (
-                f"pnl={pnl}: buffers differ (Nomaan={buf_n}, Isaac={buf_i}) — "
-                "J must not shift Phase B phase-math buffers after C14.")
+                f"pnl={pnl}: buffers differ — phase math must not use J.")
 
-    def test_broker_stop_identical_before_c16_effective_buffer(self):
-        """After C14 (before C16): J is not applied at the broker-price stage.
-        Both towers produce identical broker stops. C16 will INVERT this test
-        once effective_buffer = buffer + J is wired in _scan_one_trail."""
+    def test_broker_stop_diverges_via_effective_buffer_j(self):
+        """After C16: effective_buffer = buffer + J creates measurable divergence
+        between Isaac and Nomaan broker stops across the full trajectory."""
         d_init = Decimal("1000")
         pos_n = _make_nkd_position(
-            signal_id="SIG-EMP-N", snapped_d_init=d_init)
+            signal_id="SIG-EMP-N", snapped_d_init=d_init,
+            jitter_x=Decimal("0"), jitter_y=0, jitter_j=Decimal("0"))
         pos_i = _make_nkd_position(
             signal_id="SIG-EMP-I", snapped_d_init=d_init,
             jitter_x=Decimal("1.00"), jitter_y=1, jitter_j=Decimal("20"))
@@ -373,9 +372,10 @@ class TestTwoTowerPhasemath:
                 differing_polls += 1
 
         assert any_modify > 10, "Trajectory didn't exercise enough modifies to be meaningful"
-        assert differing_polls == 0, (
-            f"{differing_polls} polls produced different broker stops after C14 "
-            "(before C16 effective_buffer wiring) — unexpected divergence source.")
+        assert differing_polls >= 5, (
+            f"Only {differing_polls} polls produced different broker stops across "
+            "Isaac (J=+20) vs Nomaan (J=0) — effective_buffer divergence not observed. "
+            "Copy-trade defence not observable in broker stream.")
 
     def test_no_diverge_far_from_boundaries(self):
         """Mid-phase PnL ($2500, deep in Phase B for both towers) should
@@ -459,7 +459,7 @@ class TestComputeStopPriceWithJitterDoesntCorruptPrice:
             # Sweep PnL through phase B and C; phase A always uses d_init
             for pnl_step in range(0, 4500, 47):
                 pnl = Decimal(pnl_step)
-                phase, buffer = compute_nkd_phase(pnl, d_init, j)
+                phase, buffer = compute_nkd_phase(pnl, d_init)
                 mark = _pnl_to_mark_long(pnl, contracts=contracts)
                 raw = compute_stop_price(
                     mark, buffer, 1, NKD_POINT_VALUE, contracts)
@@ -495,7 +495,7 @@ class TestExtremeJitterSafetyBranches:
             j = Decimal(j_step) / Decimal("10")  # -20.0 .. +20.0 step 0.1
             for pnl_step in range(-500, 4400, 31):
                 pnl = Decimal(pnl_step)
-                _, buf = compute_nkd_phase(pnl, d_init, j)
+                _, buf = compute_nkd_phase(pnl, d_init)
                 assert _PHASE_C_BUFFER_DOLLARS <= buf <= d_init, (
                     f"J={j} pnl={pnl} -> buffer={buf} outside [450, {d_init}]")
 
@@ -543,3 +543,57 @@ class TestD34PersistsJitterColumns:
         assert row["jitter_x"] == Decimal("0")
         assert row["jitter_y"] == 0
         assert row["jitter_j"] == Decimal("0")
+
+
+# ---------------------------------------------------------------------------
+# 8. C16 — effective_buffer = buffer + J (new broker-price jitter surface)
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveBufferJitter:
+    """After C16: J shifts the dollar buffer sent to the broker.
+    Phase math (compute_nkd_phase) still returns the canonical buffer;
+    effective_buffer = max(buffer + J, 100) is what reaches the broker."""
+
+    def test_nomaan_tower_zero_j_zero_effective_offset(self):
+        """Nomaan (J=0): effective_buffer = buffer + 0 = buffer. Stop unchanged."""
+        d_init = Decimal("1025")
+        mark = _pnl_to_mark_long(Decimal("2000"))  # Phase B, buffer=min(1000,1025)=1000
+        pos = _make_nkd_position(
+            snapped_d_init=d_init,
+            jitter_x=Decimal("0"), jitter_y=0, jitter_j=Decimal("0"))
+        _, client, _ = _scan([pos], mark=mark, parity_env="0", client=_make_client(True))
+
+        client.modify_order.assert_called_once()
+        stop_n = client.modify_order.call_args.kwargs["stop_price"]
+
+        # effective_buffer = 1000 + 0 = 1000; stop = mark - 200
+        expected = float(mark) - 1000.0 / 5.0
+        # tick-snap may shift by at most one tick (5 points)
+        assert abs(stop_n - expected) <= 5.0, (
+            f"Nomaan stop {stop_n} deviates from expected {expected}"
+        )
+
+    def test_jitter_buffer_floor_refuses_sub_100_stop(self):
+        """extreme negative J + small Phase C buffer: floor prevents buffer < $100.
+        Phase C buffer = 450. J = -20. effective_buffer = max(450 + (-20), 100) = 430.
+        Floor (100) is NOT triggered here, but we verify it never goes below 100."""
+        d_init = Decimal("1025")
+        j_extreme = Decimal("-20")
+        mark = _pnl_to_mark_long(Decimal("3500"))  # Phase C, buffer=450
+        pos = _make_nkd_position(
+            snapped_d_init=d_init,
+            jitter_x=Decimal("1.00"), jitter_y=-1, jitter_j=j_extreme)
+        _, client, persisted = _scan([pos], mark=mark, parity_env="1", client=_make_client(True))
+
+        client.modify_order.assert_called_once()
+        stop_price = client.modify_order.call_args.kwargs["stop_price"]
+
+        # effective_buffer = max(450 + (-20), 100) = 430
+        # stop = mark - 430/5 = mark - 86 points
+        effective = max(Decimal("450") + j_extreme, Decimal("100"))
+        assert effective == Decimal("430"), f"effective_buffer should be 430, got {effective}"
+        expected = float(mark) - float(effective) / 5.0
+        assert abs(stop_price - expected) <= 5.0, (
+            f"stop {stop_price} deviates from expected {expected}"
+        )

@@ -48,6 +48,7 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from shared.contract_resolver import resolve_contract_id, tick_snap_outward
+from shared.nkd_jitter import sample_isaac_jitter
 from shared.redis_client import CH_ALERTS, get_redis_client
 from shared.constants import now_et
 
@@ -69,6 +70,7 @@ _TP_TARGET_DOLLARS          = Decimal("4450")
 _PHASE_B_BUFFER_DOLLARS     = Decimal("1000")   # flat buffer during Phase B
 _PHASE_C_BUFFER_DOLLARS     = Decimal("450")    # flat buffer during Phase C and TP zone
 _PHASE_A_STEP_DOLLARS       = Decimal("500")    # Phase A modify gate
+_EFFECTIVE_BUFFER_FLOOR     = Decimal("100")    # minimum broker SL buffer (floor for extreme J)
 
 _STALE_QUOTE_THRESHOLD_SECONDS = 30.0
 _REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
@@ -84,45 +86,16 @@ _JITTER_SCALE = Decimal("20")  # |J| ∈ [0.2, 20.0] per spec
 # Pure functions (no IO; safe to call from unit tests without mocks)
 # ---------------------------------------------------------------------------
 
-def sample_isaac_jitter(
-    parity_env: Optional[str],
-) -> tuple[Decimal, int, Decimal]:
-    """Sample once-per-trade jitter parameters.
-
-    Nomaan tower (``INSTANCE_PARITY`` ∈ {None, "", "0"}): returns
-    ``(Decimal(0), 0, Decimal(0))`` — trail is fully deterministic.
-
-    Isaac tower (``INSTANCE_PARITY == "1"``): draws ``X ~ U(0.01, 1.00)``,
-    ``Y ~ choice({-1, +1})``, ``J = 20 * X * Y`` so |J| ∈ [0.2, 20.0].
-
-    J only perturbs phase threshold COMPARISONS (1500+J, 4000+J). It
-    never reaches a broker price. The "send orders at jittered prices"
-    interpretation would create a per-tower price-arbitrage surface that
-    Isaac's spec explicitly forbids.
-
-    Returns
-    -------
-    (X, Y, J) : tuple[Decimal, int, Decimal]
-        Persisted to D34 on the trade's first poll; re-loaded from the
-        position dict on every subsequent poll so jitter is constant for
-        the trade's lifetime.
-    """
-    if parity_env != "1":
-        return (Decimal("0"), 0, Decimal("0"))
-    # 8 decimal places matches D34's DOUBLE precision without surprising
-    # the operator with 17-digit float-y strings in audit dumps.
-    x_float = random.uniform(_JITTER_X_MIN, _JITTER_X_MAX)
-    x = Decimal(str(round(x_float, 8)))
-    y = random.choice([-1, 1])
-    j = _JITTER_SCALE * x * Decimal(y)
-    return (x, y, j)
+# sample_isaac_jitter is imported from shared.nkd_jitter (see import above).
+# It is re-exported here so existing tests importing it from this module continue
+# to work without modification.
+# Signature: sample_isaac_jitter(parity_env) -> tuple[Decimal, int, Decimal]
+# Returns (X, Y, J): Nomaan tower -> (0, 0, 0); Isaac tower -> J = 20*X*Y.
 
 
 def compute_nkd_phase(
     pnl_dollars: Decimal,
     d_init: Decimal,
-    jitter_j: Decimal,            # retained in signature for backward compat;
-                                   # ignored for phase boundaries per Isaac spec
 ) -> tuple[str, Decimal]:
     """Stateless phase + buffer derivation — 3-step ladder.
 
@@ -131,9 +104,8 @@ def compute_nkd_phase(
     Phase C  3000 <= pnl < 4450        -> buffer = 450     (tight trail)
     TP_HIT   pnl >= 4450               -> buffer = 450     (let LIMIT TP fill)
 
-    Jitter J is NOT applied to phase boundaries (phase boundaries are clean
-    per Isaac's confirmed spec). J is applied to the dollar buffer at the
-    broker-price computation stage in _scan_one_trail (C16).
+    Phase boundaries are CLEAN — J does not appear here. Jitter J applies in
+    _scan_one_trail: effective_buffer = buffer + J (with floor at $100).
 
     Degenerate case: when d_init <= 450 the Phase B $1000 step may exceed
     d_init. We floor Phase B's buffer at d_init so the stop never retreats.
@@ -705,7 +677,12 @@ def _scan_one_trail(
     # Live PnL — same byte-for-byte formula as b7_position_monitor.
     pnl = _compute_live_pnl(mark, entry_price, direction, contracts, point_value)
 
-    phase, buffer = compute_nkd_phase(pnl, snapped_d_init, jitter_j)
+    phase, buffer = compute_nkd_phase(pnl, snapped_d_init)
+
+    # Apply Isaac-tower jitter to broker SL dollar buffer.
+    # J is a signed dollar offset; floor at _EFFECTIVE_BUFFER_FLOOR so an
+    # extreme negative J cannot produce an absurdly tight stop.
+    effective_buffer = max(buffer + jitter_j, _EFFECTIVE_BUFFER_FLOOR)
 
     # TP_HIT: no further modify. Broker LIMIT @ 4450 owns the exit.
     if phase == _PHASE_TP:
@@ -727,8 +704,8 @@ def _scan_one_trail(
             "modify_status": "TP_HIT_NO_MODIFY", "skip_reason": None,
         }
 
-    # Compute candidate stop price + snap outward to NKD tick grid.
-    stop_raw = compute_stop_price(mark, buffer, direction, point_value, contracts)
+    # Compute candidate stop price using the broker-effective buffer (buffer + J).
+    stop_raw = compute_stop_price(mark, effective_buffer, direction, point_value, contracts)
     stop_snapped = Decimal(str(tick_snap_outward(float(stop_raw), asset, direction)))
 
     # Ratchet — refuse to weaken the broker-side stop.
@@ -786,13 +763,13 @@ def _scan_one_trail(
             pos, persist, sig_id=sig_id, asset=asset, contract_id=contract_id,
             account_id=account_id_raw, direction=direction, contracts=contracts,
             entry_price=entry_price, snapped_d_init=snapped_d_init,
-            phase=phase, buffer=buffer, stop_price=current_stop, pnl=pnl,
+            phase=phase, buffer=effective_buffer, stop_price=current_stop, pnl=pnl,
             modify_seq=int(pos.get("modify_seq") or 0),
             modify_status="COMPLIANCE_HALT",
             modify_error=comp_reason or "compliance_modify_check returned False",
         )
         return {
-            "signal_id": sig_id, "phase": phase, "buffer": float(buffer),
+            "signal_id": sig_id, "phase": phase, "buffer": float(effective_buffer),
             "stop_price": float(current_stop) if current_stop is not None else None,
             "modify_status": "COMPLIANCE_HALT", "skip_reason": comp_reason,
         }
@@ -860,21 +837,23 @@ def _scan_one_trail(
         # broker reject doesn't lock us out of retrying with a fresh mark.
         pos["current_stop_price"] = stop_new
         pos["current_phase"] = phase
-        pos["current_buffer"] = buffer
+        pos["current_buffer"] = effective_buffer  # broker-applied buffer (buffer + J)
         pos["modify_seq"] = new_modify_seq
         logger.info(
-            "ON-B7B-NKD: modify OK signal=%s phase=%s buffer=$%.2f "
+            "ON-B7B-NKD: modify OK signal=%s phase=%s effective_buffer=$%.2f "
             "stop=%.2f pnl=$%.2f seq=%d",
-            sig_id, phase, float(buffer), float(stop_new),
+            sig_id, phase, float(effective_buffer), float(stop_new),
             float(pnl), new_modify_seq,
         )
 
     # Persist row regardless of outcome (full snapshot, includes status).
+    # buffer= receives the broker-applied effective_buffer so D34 reflects
+    # what was actually sent (effective_buffer = phase_buffer + J).
     _persist_state_row(
         pos, persist, sig_id=sig_id, asset=asset, contract_id=contract_id,
         account_id=account_id_raw, direction=direction, contracts=contracts,
         entry_price=entry_price, snapped_d_init=snapped_d_init,
-        phase=phase, buffer=buffer,
+        phase=phase, buffer=effective_buffer,
         stop_price=stop_new if modify_status == "OK" else current_stop,
         pnl=pnl, modify_seq=new_modify_seq,
         modify_status=modify_status, modify_error=modify_error,
@@ -890,7 +869,7 @@ def _scan_one_trail(
     _set_prev_pnl(pos, pnl)
 
     return {
-        "signal_id": sig_id, "phase": phase, "buffer": float(buffer),
+        "signal_id": sig_id, "phase": phase, "buffer": float(effective_buffer),
         "stop_price": float(stop_new),
         "modify_status": modify_status, "skip_reason": modify_error,
     }

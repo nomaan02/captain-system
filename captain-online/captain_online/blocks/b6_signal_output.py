@@ -21,6 +21,7 @@ Writes: Redis signals channel, P3-D17 (session_log)
 import json
 import logging
 import math
+import os
 import random
 import time
 import uuid
@@ -151,10 +152,27 @@ def run_signal_output(
                     sl_dollars_fixed, float(entry_price_raw),
                     direction, point_value, total_size, u,
                 )
+            # Sample J on Isaac tower; zero on Nomaan. J persists for the trade lifetime.
+            from shared.nkd_jitter import sample_isaac_jitter as _sample_j
+            parity_env = os.environ.get("INSTANCE_PARITY", "")
+            jitter_x, jitter_y, jitter_j = _sample_j(parity_env)
+            # Compute NKD tp_level with J (broker TP bracket at 4450 + J on Isaac tower).
+            if entry_price_raw is not None:
+                tp_dollars_base = float(strategy.get("tp_dollars", 4450))
+                tp_level_nkd = _tp_from_dollars(
+                    tp_dollars_base + float(jitter_j),
+                    float(entry_price_raw), direction, point_value, total_size, u,
+                )
+            else:
+                tp_level_nkd = tp_level
             nkd_trail_fields = {
                 "is_nkd_trail": True,
                 "tp_dollars": strategy.get("tp_dollars"),
                 "snapped_d_init": snapped_d_init,
+                "jitter_x": float(jitter_x),
+                "jitter_y": jitter_y,
+                "jitter_j": float(jitter_j),
+                "_tp_level_override": tp_level_nkd,
             }
 
         signal = {
@@ -163,7 +181,8 @@ def run_signal_output(
             "asset": u,
             "direction": direction,
             "size": total_size,
-            "tp_level": tp_level,
+            # NKD overrides tp_level to 4450 + J on Isaac tower; non-NKD uses computed value.
+            "tp_level": nkd_trail_fields.pop("_tp_level_override", tp_level),
             "sl_level": sl_level,
             "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
 
