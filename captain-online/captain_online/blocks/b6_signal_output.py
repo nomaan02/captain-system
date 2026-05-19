@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 
 from shared.redis_client import publish_to_stream, STREAM_SIGNALS, get_redis_client, CH_ALERTS
 from shared.questdb_client import get_cursor, qexecute
-from shared.contract_resolver import get_tick_size
+from shared.contract_resolver import get_tick_size, tick_snap_outward
 from shared.statistics import get_ewma_for_regime
 from shared.json_helpers import parse_json
 from shared.decimal_boundary import as_money, as_money_or_none, to_float
@@ -136,15 +136,21 @@ def run_signal_output(
             continue
 
         # NKD trail fields — only included when the locked_strategy opts in.
-        # snapped_d_init is the dollar value of the initial stop distance.
+        # snapped_d_init is always the fixed dollar SL per Isaac spec ($1025).
         nkd_trail_fields: dict = {}
         if strategy.get("is_nkd_trail"):
             point_value = float(asset_detail.get("point_value", 50.0))
             entry_price_raw = asset_features.get("entry_price")
-            if entry_price_raw is not None and sl_level is not None:
-                snapped_d_init = abs(float(entry_price_raw) - float(sl_level)) * point_value
-            else:
-                snapped_d_init = None
+            # Fixed dollar SL per Isaac spec — always $1025, never OR-range derived
+            sl_dollars_fixed = float(strategy.get("sl_dollars_fixed", 1025))
+            snapped_d_init = sl_dollars_fixed
+            # Override sl_level used for the broker bracket with the fixed-dollar SL.
+            # _sl_from_dollars snaps outward (wider) to the NKD tick grid.
+            if entry_price_raw is not None:
+                sl_level = _sl_from_dollars(
+                    sl_dollars_fixed, float(entry_price_raw),
+                    direction, point_value, total_size, u,
+                )
             nkd_trail_fields = {
                 "is_nkd_trail": True,
                 "tp_dollars": strategy.get("tp_dollars"),
@@ -300,6 +306,29 @@ def _tp_from_dollars(
     elif direction == -1:
         return round(math.ceil(tp_raw / tick) * tick, ndigits)
     return tp_raw
+
+
+def _sl_from_dollars(
+    dollars: float,
+    entry: float,
+    direction: int,
+    point_value: float,
+    size: int,
+    asset_id: str,
+) -> float:
+    """Compute stop-loss level from a dollar-denominated distance.
+
+    Converts a dollar amount to price distance, then snaps OUTWARD (wider
+    than the dollar threshold, so the stop is at least as far as requested):
+    LONG  -> floor (stop price lower, further below entry)
+    SHORT -> ceil  (stop price higher, further above entry)
+
+    This is the asymmetric OUTWARD rounder documented in NKD_PIVOT_AUDIT.md
+    §5.3. Used for NKD trail trades where D_init is a fixed dollar amount.
+    """
+    sl_distance_points = dollars / (point_value * max(1, size))
+    sl_raw = entry - (sl_distance_points * direction)
+    return tick_snap_outward(sl_raw, asset_id, direction)
 
 
 def _compute_tp(

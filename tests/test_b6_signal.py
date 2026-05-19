@@ -129,6 +129,7 @@ class TestNKDTrailFieldsInSignal:
             "NKD",
             is_nkd_trail=True,
             tp_dollars=4450,
+            sl_dollars_fixed=1025,
             sl_multiple=0.35,
             tp_multiple=0.70,
         )
@@ -158,8 +159,111 @@ class TestNKDTrailFieldsInSignal:
         signal = result["signals"][0]
         assert signal["is_nkd_trail"] is True
         assert signal["tp_dollars"] == 4450
-        assert signal["snapped_d_init"] is not None
-        assert signal["snapped_d_init"] > 0
+        assert signal["snapped_d_init"] == 1025.0
+
+    @patch("captain_online.blocks.b6_signal_output._publish_signals")
+    @patch("captain_online.blocks.b6_signal_output._log_signal_output")
+    @patch("captain_online.blocks.b6_signal_output._load_system_param", side_effect=lambda k, d: d)
+    @patch("captain_online.blocks.b6_signal_output._get_daily_pnl", return_value=0.0)
+    def test_nkd_signal_uses_fixed_1025_sl(self, mock_pnl, mock_param, mock_log, mock_pub):
+        """snapped_d_init is exactly $1025 regardless of or_range."""
+        from tests.fixtures.synthetic_data import make_features, make_locked_strategy, make_assets_detail
+        from decimal import Decimal
+
+        for or_range in [50.0, 125.0, 300.0, 500.0]:
+            nkd_features = make_features("NKD")
+            nkd_features["NKD"]["entry_price"] = 38000.0
+            nkd_features["NKD"]["or_range"] = or_range
+
+            nkd_strategy = make_locked_strategy(
+                "NKD",
+                is_nkd_trail=True,
+                tp_dollars=4450,
+                sl_dollars_fixed=1025,
+                sl_multiple=0.35,
+                tp_multiple=0.70,
+            )
+            nkd_assets_detail = make_assets_detail("NKD", point_value=Decimal("5.0"), tick_size=Decimal("5.0"))
+
+            result = run_signal_output(
+                recommended_trades=["NKD"],
+                available_not_recommended=[],
+                quality_results={"NKD": {"quality_score": 0.015, "quality_multiplier": 1.0, "data_maturity": 1.0}},
+                final_contracts={"NKD": {"acc_eval_1": 1}},
+                account_recommendation={"NKD": {"acc_eval_1": "TRADE"}},
+                account_skip_reason={"NKD": {"acc_eval_1": None}},
+                features=nkd_features,
+                ewma_states={},
+                aim_breakdown={"NKD": {}},
+                combined_modifier={"NKD": 1.0},
+                regime_probs={"NKD": {"LOW_VOL": 0.6, "HIGH_VOL": 0.4}},
+                expected_edge={"NKD": 0.02},
+                locked_strategies=nkd_strategy,
+                tsm_configs={},
+                user_silo=make_user_silo(accounts=["acc_eval_1"]),
+                assets_detail=nkd_assets_detail,
+                session_id=3,
+            )
+            signal = result["signals"][0]
+            assert signal["snapped_d_init"] == 1025.0, (
+                f"or_range={or_range}: snapped_d_init should be fixed 1025, "
+                f"got {signal['snapped_d_init']}"
+            )
+
+    @patch("captain_online.blocks.b6_signal_output._publish_signals")
+    @patch("captain_online.blocks.b6_signal_output._log_signal_output")
+    @patch("captain_online.blocks.b6_signal_output._load_system_param", side_effect=lambda k, d: d)
+    @patch("captain_online.blocks.b6_signal_output._get_daily_pnl", return_value=0.0)
+    def test_nkd_sl_level_uses_fixed_dollar_distance(self, mock_pnl, mock_param, mock_log, mock_pub):
+        """NKD sl_level is derived from $1025 / point_value, not sl_multiple * or_range."""
+        from tests.fixtures.synthetic_data import make_features, make_locked_strategy, make_assets_detail
+        from decimal import Decimal
+
+        entry = 38000.0
+        point_value = 5.0
+        nkd_features = make_features("NKD")
+        nkd_features["NKD"]["entry_price"] = entry
+        nkd_features["NKD"]["or_range"] = 200.0
+        nkd_features["NKD"]["or_direction"] = 1  # LONG
+
+        nkd_strategy = make_locked_strategy(
+            "NKD",
+            is_nkd_trail=True,
+            tp_dollars=4450,
+            sl_dollars_fixed=1025,
+            sl_multiple=0.35,
+            tp_multiple=0.70,
+            default_direction=1,
+        )
+        nkd_assets_detail = make_assets_detail("NKD", point_value=Decimal("5.0"), tick_size=Decimal("5.0"))
+
+        result = run_signal_output(
+            recommended_trades=["NKD"],
+            available_not_recommended=[],
+            quality_results={"NKD": {"quality_score": 0.015, "quality_multiplier": 1.0, "data_maturity": 1.0}},
+            final_contracts={"NKD": {"acc_eval_1": 1}},
+            account_recommendation={"NKD": {"acc_eval_1": "TRADE"}},
+            account_skip_reason={"NKD": {"acc_eval_1": None}},
+            features=nkd_features,
+            ewma_states={},
+            aim_breakdown={"NKD": {}},
+            combined_modifier={"NKD": 1.0},
+            regime_probs={"NKD": {"LOW_VOL": 0.6, "HIGH_VOL": 0.4}},
+            expected_edge={"NKD": 0.02},
+            locked_strategies=nkd_strategy,
+            tsm_configs={},
+            user_silo=make_user_silo(accounts=["acc_eval_1"]),
+            assets_detail=nkd_assets_detail,
+            session_id=3,
+        )
+        signal = result["signals"][0]
+        sl_level = signal["sl_level"]
+        # For 1 contract LONG: sl_distance = 1025 / (5 * 1) = 205 points
+        # sl_level should be entry - 205 = 37795
+        dollar_distance = abs(float(entry) - float(sl_level)) * float(point_value)
+        assert dollar_distance == pytest.approx(1025.0, abs=1.0), (
+            f"NKD sl_level dollar distance = {dollar_distance:.2f}, expected 1025.0"
+        )
 
     @patch("captain_online.blocks.b6_signal_output._publish_signals")
     @patch("captain_online.blocks.b6_signal_output._log_signal_output")

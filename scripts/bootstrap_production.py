@@ -47,7 +47,10 @@ P2_STRATEGIES = {
     "MYM": {"m": 9,  "k": 115, "feature_threshold": 65.873016,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.7705, "complexity_tier": "C1"},
     "NKD": {"m": 6,  "k": 6,   "feature_threshold": 0.174242,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8533, "complexity_tier": "C1",
             "tp_dollars": 4450, "is_nkd_trail": True, "trail_step_dollars": 500,
-            "trail_phase_b_start_dollars": 1500, "trail_phase_c_start_dollars": 4000,
+            "sl_dollars_fixed": 1025,
+            "trail_phase_b_start_dollars": 2000,   # Phase A→B boundary (was 1500)
+            "trail_phase_b_buffer_dollars": 1000,  # Phase B flat buffer
+            "trail_phase_c_start_dollars": 3000,   # Phase B→C boundary (was 4000)
             "trail_phase_c_buffer_dollars": 450},
     "MGC": {"m": 2,  "k": 29,  "feature_threshold": -0.543427,        "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8892, "complexity_tier": "C1"},
     "ZB":  {"m": 10, "k": 113, "feature_threshold": 0.759294,         "regime_method": 1, "regime_class": "REGIME_NEUTRAL", "OO": 0.8054, "complexity_tier": "C1"},
@@ -119,8 +122,9 @@ def _build_locked_strategy(asset_id: str) -> str:
     # These are additive; all other assets retain the base strategy unchanged.
     _NKD_TRAIL_KEYS = (
         "tp_dollars", "is_nkd_trail", "trail_step_dollars",
-        "trail_phase_b_start_dollars", "trail_phase_c_start_dollars",
-        "trail_phase_c_buffer_dollars",
+        "sl_dollars_fixed",
+        "trail_phase_b_start_dollars", "trail_phase_b_buffer_dollars",
+        "trail_phase_c_start_dollars", "trail_phase_c_buffer_dollars",
     )
     for k in _NKD_TRAIL_KEYS:
         if k in p2:

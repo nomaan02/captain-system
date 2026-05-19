@@ -1,8 +1,8 @@
-"""Tests for C4 — NKD locked_strategy trail-control fields in bootstrap_production.py.
+"""Tests for C4/C15 — NKD locked_strategy trail-control fields in bootstrap_production.py.
 
 Verifies that:
-1. P2_STRATEGIES["NKD"] contains all 6 new trail-control keys with correct values.
-2. _build_locked_strategy("NKD") serialises a JSON string that includes all 6 keys.
+1. P2_STRATEGIES["NKD"] contains all 8 trail-control keys with correct values (C15 spec).
+2. _build_locked_strategy("NKD") serialises a JSON string that includes all 8 keys.
 3. Other assets (e.g. ES) are NOT affected — their strategies have no trail keys.
 
 These tests parse module constants and the pure _build_locked_strategy function
@@ -18,8 +18,10 @@ EXPECTED_NKD_TRAIL_KEYS = {
     "tp_dollars": 4450,
     "is_nkd_trail": True,
     "trail_step_dollars": 500,
-    "trail_phase_b_start_dollars": 1500,
-    "trail_phase_c_start_dollars": 4000,
+    "sl_dollars_fixed": 1025,
+    "trail_phase_b_start_dollars": 2000,
+    "trail_phase_b_buffer_dollars": 1000,
+    "trail_phase_c_start_dollars": 3000,
     "trail_phase_c_buffer_dollars": 450,
 }
 
@@ -37,15 +39,15 @@ class TestP2StrategiesNKDTrailFields:
         assert P2_STRATEGIES["NKD"]["trail_step_dollars"] == 500
 
     def test_nkd_trail_phase_b_start_dollars(self):
-        assert P2_STRATEGIES["NKD"]["trail_phase_b_start_dollars"] == 1500
+        assert P2_STRATEGIES["NKD"]["trail_phase_b_start_dollars"] == 2000
 
     def test_nkd_trail_phase_c_start_dollars(self):
-        assert P2_STRATEGIES["NKD"]["trail_phase_c_start_dollars"] == 4000
+        assert P2_STRATEGIES["NKD"]["trail_phase_c_start_dollars"] == 3000
 
     def test_nkd_trail_phase_c_buffer_dollars(self):
         assert P2_STRATEGIES["NKD"]["trail_phase_c_buffer_dollars"] == 450
 
-    def test_all_six_keys_present(self):
+    def test_all_eight_keys_present(self):
         for k, v in EXPECTED_NKD_TRAIL_KEYS.items():
             assert P2_STRATEGIES["NKD"][k] == v, f"Mismatch on key {k!r}"
 
@@ -59,7 +61,7 @@ class TestP2StrategiesNKDTrailFields:
 
 
 class TestBuildLockedStrategyNKD:
-    """_build_locked_strategy("NKD") produces JSON with trail-control keys."""
+    """_build_locked_strategy("NKD") produces JSON with all trail-control keys."""
 
     def setup_method(self):
         self.locked_json = _build_locked_strategy("NKD")
@@ -68,7 +70,7 @@ class TestBuildLockedStrategyNKD:
     def test_returns_valid_json(self):
         assert isinstance(self.locked, dict)
 
-    def test_all_six_trail_keys_in_json(self):
+    def test_all_eight_trail_keys_in_json(self):
         for k, v in EXPECTED_NKD_TRAIL_KEYS.items():
             assert k in self.locked, f"Missing key {k!r} in locked_strategy JSON"
             assert self.locked[k] == v, f"Wrong value for {k!r}: {self.locked[k]!r}"
@@ -79,6 +81,18 @@ class TestBuildLockedStrategyNKD:
         assert "sl_multiple" in self.locked
         assert self.locked["tp_multiple"] == pytest.approx(0.70)
         assert self.locked["sl_multiple"] == pytest.approx(0.35)
+
+    def test_sl_dollars_fixed_in_locked_strategy(self):
+        assert self.locked["sl_dollars_fixed"] == 1025
+
+    def test_trail_phase_b_buffer_in_locked_strategy(self):
+        assert self.locked["trail_phase_b_buffer_dollars"] == 1000
+
+    def test_trail_phase_b_start_is_2000(self):
+        assert self.locked["trail_phase_b_start_dollars"] == 2000
+
+    def test_trail_phase_c_start_is_3000(self):
+        assert self.locked["trail_phase_c_start_dollars"] == 3000
 
 
 class TestBuildLockedStrategyOtherAssets:
