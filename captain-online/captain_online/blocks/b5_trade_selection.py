@@ -117,6 +117,23 @@ def run_trade_selection(
         if max_contracts > 0 and expected_edge.get(u, 0) > 0:
             selected_trades.append(u)
 
+    # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD is always selected
+    # regardless of expected_edge, correlation filter, or max_simultaneous_positions.
+    # Restore NKD contracts to 1 if upstream logic zeroed them, and ensure NKD is
+    # in selected_trades so B5B/B5C/B6 pick it up.
+    if "NKD" in active_assets:
+        for ac in accounts:
+            if final_contracts.get("NKD", {}).get(ac, 0) == 0:
+                final_contracts.setdefault("NKD", {})[ac] = 1
+                account_recommendation.setdefault("NKD", {})[ac] = "TRADE"
+                account_skip_reason.setdefault("NKD", {})[ac] = None
+        if "NKD" not in selected_trades:
+            selected_trades.append("NKD")
+        logger.info(
+            "ON-B5: NKD bypass — auto-selecting NKD regardless of "
+            "edge/correlation/max_pos for user=%s", user_id,
+        )
+
     logger.info("ON-B5: Trade selection for user %s: %d/%d assets selected",
                 user_id, len(selected_trades), len(active_assets))
 

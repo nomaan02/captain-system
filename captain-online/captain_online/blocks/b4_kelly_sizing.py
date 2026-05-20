@@ -127,6 +127,22 @@ def run_kelly_sizing(
         account_recommendation[u] = {}
         account_skip_reason[u] = {}
 
+        # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD is a
+        # fixed-strategy 1-contract trade; do not run Kelly/AIM/TSM math.
+        # Accepted-risk: non-NKD trades later in the same day will not see
+        # NKD's realised P&L impact on internal sizing. Topstep server-side
+        # MDD remains the backstop.
+        if u == "NKD":
+            for ac_id in accounts:
+                final_contracts[u][ac_id] = 1
+                account_recommendation[u][ac_id] = "TRADE"
+                account_skip_reason[u][ac_id] = None
+            logger.info(
+                "ON-B4: NKD bypass — forcing 1 contract per active account "
+                "for user=%s accounts=%s", user_id, list(accounts),
+            )
+            continue
+
         # Step 1: Blended Kelly across regimes (Paper 219)
         blended_kelly = 0.0
         r_probs = regime_probs.get(u, {"LOW_VOL": 0.5, "HIGH_VOL": 0.5})

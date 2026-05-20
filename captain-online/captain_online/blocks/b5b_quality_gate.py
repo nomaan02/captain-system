@@ -48,6 +48,26 @@ def run_quality_gate(
     quality_results = {}
 
     for u in selected_trades:
+        # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD always passes
+        # the quality gate; do not consult expected_edge / modifier / D03
+        # trade count. NKD has its own fixed-strategy quality semantics
+        # (Phase 3-trail ratchet replaces the dollar-per-contract floor).
+        if u == "NKD":
+            quality_results[u] = {
+                "quality_score": 1.0,
+                "dollar_per_contract": 1.0,
+                "total_contracts": 1,
+                "quality_multiplier": 1.0,
+                "passes_gate": True,
+                "edge": float("nan"),
+                "modifier": 1.0,
+                "data_maturity": 1.0,
+                "trade_count": 0,
+                "reason": "NKD_BYPASS",
+            }
+            logger.info("ON-B5B: NKD bypass — auto-passing quality gate for NKD")
+            continue
+
         # Trade count for data maturity
         # Cold-start: set floor at 0.5 so quality gate doesn't block all trades
         # on fresh systems. Full maturity requires 50 trades.

@@ -123,6 +123,14 @@ def run_circuit_breaker_screen(
     blocked_count = 0
 
     for u in recommended_trades:
+        # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD signals
+        # bypass all CB layers (VIX, Sharpe floor, cold-start, etc.).
+        # Accepted-risk: a heavy-loss day on NKD will not trip the CB for
+        # ES/NQ/etc. Topstep server-side MDD remains the backstop.
+        if u == "NKD":
+            logger.info("ON-B5C: NKD bypass — skipping CB layers for NKD")
+            continue
+
         # Per-asset point value (fall back to scalar default).
         asset_pv = point_value
         if assets_detail:
