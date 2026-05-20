@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # R1: Bracket-pending helper (defence-in-depth for SL/TP order-ID capture)
 # ---------------------------------------------------------------------------
 
-_BRACKET_PENDING_TTL_S = 10
+_BRACKET_PENDING_TTL_S = 600  # Q3-(1): extended from 10s — UserStream reconnect can drop the key mid-fill
 
 
 def _push_bracket_pending(
