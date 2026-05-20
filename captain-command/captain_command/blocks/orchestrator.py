@@ -58,6 +58,7 @@ from captain_command.blocks.b1_core_routing import (
 from captain_command.blocks.parity import (
     build_parity_key,
     compute_parity_decision,
+    is_nkd_exempt_batch,
 )
 from captain_command.blocks.b2_gui_data_server import (
     build_dashboard_snapshot,
@@ -536,6 +537,19 @@ class CommandOrchestrator:
         assets = [s.get("asset", "?") for s in signals]
 
         if not assets:
+            return False
+
+        # Q1 NKD parity exemption (audit 2026-05-20, day_3 handover §2 Q1).
+        # NKD signals must NEVER be parity-skipped — both towers always take NKD,
+        # jitter J differentiates per-trade. Short-circuit BEFORE hashing the key
+        # so the self-check / duplicate detection branch is also skipped for NKD
+        # batches (acceptable — non-NKD batches still get the diagnostic).
+        if is_nkd_exempt_batch(signals):
+            logger.info(
+                "PARITY EXEMPT (NKD): batch contains NKD signal(s); both "
+                "towers take. my_parity=%s assets=%s",
+                my_parity, sorted(set(assets)),
+            )
             return False
 
         key = build_parity_key(

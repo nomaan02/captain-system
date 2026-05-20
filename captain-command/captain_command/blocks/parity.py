@@ -44,6 +44,24 @@ def build_parity_key(today: str, session_id, user_id: str,
     return f"{today}|{session_id}|{user_id}|{','.join(sorted_assets)}"
 
 
+def is_nkd_exempt_batch(signals: list[dict]) -> bool:
+    """Return True if any signal in the batch is NKD (asset or is_nkd_trail flag).
+
+    Q1 NKD parity exemption (audit 2026-05-20): NKD signals must NEVER be
+    parity-skipped — both towers always take NKD, jitter J differentiates
+    per-trade. Pure helper so ``orchestrator._check_parity_skip`` can short
+    -circuit before hashing, and so unit tests can exercise the decision
+    without importing the heavy orchestrator module (which transitively
+    pulls in pysignalr).
+    """
+    if not signals:
+        return False
+    return any(
+        s.get("asset") == "NKD" or s.get("is_nkd_trail")
+        for s in signals
+    )
+
+
 def compute_parity_decision(my_parity: int, key: str) -> tuple[int, bool]:
     """Compute ``(signal_parity, skip)`` from a key and this tower's parity.
 

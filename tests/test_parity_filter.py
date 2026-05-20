@@ -200,10 +200,15 @@ def _payload(*, assets, session_id=1, user_id="primary_user"):
 
 
 def test_check_parity_skip_idempotent(orchestrator_module):
-    """Replaying the same batch twice yields the same parity decision."""
+    """Replaying the same batch twice yields the same parity decision.
+
+    Uses a non-NKD asset because Q1 NKD parity exemption (audit 2026-05-20)
+    short-circuits before the hash machinery for any batch containing NKD;
+    this test must exercise the hash path so we use MGC instead.
+    """
     orch = _make_orch(orchestrator_module)
     fake = FakeRedis()
-    payload = _payload(assets=["NKD"], session_id=4)
+    payload = _payload(assets=["MGC"], session_id=4)
 
     with patch.object(orchestrator_module, "get_redis_client", return_value=fake):
         first = orch._check_parity_skip(0, payload)
@@ -212,10 +217,15 @@ def test_check_parity_skip_idempotent(orchestrator_module):
 
 
 def test_check_parity_skip_duplicate_raises_p1(orchestrator_module):
-    """Duplicate-on-this-tower must fire a P1_CRITICAL incident."""
+    """Duplicate-on-this-tower must fire a P1_CRITICAL incident.
+
+    Uses a non-NKD asset because the Q1 NKD parity exemption (audit
+    2026-05-20) short-circuits before the duplicate-batch detector; the
+    detector must still run as a diagnostic for non-NKD batches.
+    """
     orch = _make_orch(orchestrator_module)
     fake = FakeRedis()
-    payload = _payload(assets=["NKD"], session_id=4)
+    payload = _payload(assets=["MGC"], session_id=4)
 
     with patch.object(
         orchestrator_module, "get_redis_client", return_value=fake,
