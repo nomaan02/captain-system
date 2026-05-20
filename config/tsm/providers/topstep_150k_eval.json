@@ -14,7 +14,7 @@
     "starting_balance": 150000,
     "profit_target": 9000,
     "max_drawdown_limit": 4500,
-    "max_contracts": 15,
+    "max_contracts": 3,
     "scaling_plan_active": false,
     "scaling_plan": null,
     "consistency_rule": null,
