@@ -212,6 +212,7 @@ def run_tsm_simulation(
     trade_returns: list[float],
     tsm_config: dict,
     sizing_override: float = 1.0,
+    asset_id: str = "",
 ) -> dict:
     """Execute P3-PG-14: Monte Carlo TSM simulation.
 
@@ -222,10 +223,20 @@ def run_tsm_simulation(
             starting_balance, current_balance, max_drawdown_limit,
             max_daily_loss, profit_target, evaluation_end_date, risk_goal
         sizing_override: Q-31 decay sizing factor in [0, 1] applied to returns before MC
+        asset_id: Optional asset identifier used only for the Q2-B-strict guard below.
 
     Returns:
         Dict with pass_probability, alert info
     """
+    # Q2-B-strict defensive guard (audit 2026-05-20). NKD is a fixed-strategy
+    # asset; its outcomes MUST NOT reach this TSM write path. The offline
+    # orchestrator short-circuits at _handle_trade_outcome. This assertion
+    # catches future regressions where run_tsm_simulation is called directly
+    # with an NKD outcome, bypassing the orchestrator guard.
+    assert asset_id != "NKD", (
+        "run_tsm_simulation called with asset_id='NKD' — Q2-B-strict bypass at "
+        "captain_offline/blocks/orchestrator.py is broken. Check audit handover doc."
+    )
     if len(trade_returns) < 10:
         logger.warning("TSM simulation %s: insufficient trades (%d < 10)", account_id, len(trade_returns))
         return {"pass_probability": None, "alert": None}
