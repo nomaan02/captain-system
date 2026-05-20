@@ -177,6 +177,55 @@ def compute_stop_price(
     return mark + buffer_points
 
 
+def _match_bracket_children(
+    open_orders: list,
+    *,
+    entry_order_id: "Optional[str | int]",
+    direction: int,
+    contract_id: "Optional[str]",
+) -> "tuple[Optional[dict], Optional[dict]]":
+    """Match SL (type=4) and TP (type=1) children for a given entry order.
+
+    Returns (sl_order, tp_order) — either may be None if unmatched.
+
+    Matching strategy:
+      1. Filter to type ∈ {1=LIMIT/TP, 4=STOP/SL}.
+      2. Filter to side OPPOSITE to entry direction
+         (LONG=1 entry → child side=1 SELL; SHORT=-1 entry → child side=0 BUY).
+      3. Filter to contractId == position contract (if available).
+      4. Prefer parentId == entry_order_id when broker populates it.
+      5. Fallback: take the first remaining match.
+    """
+    if not open_orders:
+        return (None, None)
+
+    # Topstep side encoding: 0 = Bid/Buy, 1 = Ask/Sell.
+    expected_child_side = 1 if direction == 1 else 0
+    entry_oid_str = str(entry_order_id) if entry_order_id is not None else None
+
+    def _candidates_of_type(order_type: int) -> list:
+        return [
+            o for o in open_orders
+            if o.get("type") == order_type
+            and o.get("side") == expected_child_side
+            and (contract_id is None or o.get("contractId") == contract_id)
+        ]
+
+    def _pick_one(candidates: list) -> "Optional[dict]":
+        if not candidates:
+            return None
+        if entry_oid_str is not None:
+            for c in candidates:
+                parent = c.get("parentId")
+                if parent is not None and str(parent) == entry_oid_str:
+                    return c
+        return candidates[0]
+
+    sl = _pick_one(_candidates_of_type(4))  # STOP child = SL
+    tp = _pick_one(_candidates_of_type(1))  # LIMIT child = TP
+    return (sl, tp)
+
+
 def phase_a_should_modify(
     pnl_dollars: Decimal,
     prev_pnl_dollars: Optional[Decimal],
@@ -588,17 +637,100 @@ def _scan_one_trail(
     account_id_raw = pos.get("account")
 
     # Order-ID guard: C5 UserStream capture replaces the "BRACKET" sentinel
-    # with the real LONG once the broker confirms the SL child order. Until
+    # with the real ID once the broker confirms the SL child order. Until
     # then we cannot issue a /Order/modify call.
+    # Q3-(2) audit 2026-05-20: after 3 unresolved polls, try searchOpen REST
+    # to recover the child order IDs (guards against UserStream reconnect drops).
     sl_order_id = pos.get("sl_order_id")
-    if sl_order_id in (None, "BRACKET", "", "None"):
+    sl_unresolved = sl_order_id in (None, "BRACKET", "", "None")
+
+    if sl_unresolved:
+        pos["unresolved_poll_count"] = int(pos.get("unresolved_poll_count", 0)) + 1
+        if pos["unresolved_poll_count"] >= 3:
+            try:
+                account_id_int = int(account_id_raw)
+                open_orders = client.search_open_orders(account_id_int)
+                _direction = int(pos.get("direction", 1) or 1)
+                sl_match, tp_match = _match_bracket_children(
+                    open_orders,
+                    entry_order_id=pos.get("entry_order_id"),
+                    direction=_direction,
+                    contract_id=pos.get("contract_id"),
+                )
+                if sl_match is not None:
+                    pos["sl_order_id"] = str(sl_match["id"])
+                    logger.info(
+                        "ON-B7B-NKD: searchOpen reconcile resolved sl_order_id "
+                        "for signal=%s sl_id=%s after %d unresolved polls",
+                        sig_id, sl_match["id"], pos["unresolved_poll_count"],
+                    )
+                if tp_match is not None and pos.get("tp_order_id") in (
+                    None, "BRACKET", "", "None"
+                ):
+                    pos["tp_order_id"] = str(tp_match["id"])
+                    logger.info(
+                        "ON-B7B-NKD: searchOpen reconcile resolved tp_order_id "
+                        "for signal=%s tp_id=%s", sig_id, tp_match["id"],
+                    )
+                if sl_match is not None:
+                    pos["unresolved_poll_count"] = 0
+                    pos["unresolved_alert_published"] = False
+                    sl_unresolved = False
+                    sl_order_id = pos["sl_order_id"]
+            except Exception as exc:
+                logger.warning(
+                    "ON-B7B-NKD: searchOpen reconcile failed for signal=%s: %s",
+                    sig_id, exc,
+                )
+
+    # Q3-(3) audit 2026-05-20: CRITICAL alert when sl_order_id remains
+    # unresolved for >= 6 polls (~60s at 10s cadence). Published at most once
+    # per position lifetime. Position is broker-protected (OCO bracket holds
+    # initial $1025 SL), but the ratchet is INERT until resolved.
+    if (
+        sl_unresolved
+        and pos.get("unresolved_poll_count", 0) >= 6
+        and not pos.get("unresolved_alert_published", False)
+    ):
+        try:
+            _emit_alert(
+                redis_client, user_id, "CRITICAL", "NKD_TRAIL_SL_UNRESOLVED",
+                f"NKD trail: sl_order_id unresolved for signal={sig_id} "
+                f"after {pos['unresolved_poll_count']} polls (~"
+                f"{pos['unresolved_poll_count'] * 10}s). Position is "
+                f"broker-protected (OCO bracket holds initial $1025 SL), "
+                f"but the ratchet is INERT. Investigate UserStream + "
+                f"bracket:pending TTL.",
+                {
+                    "position_id": sig_id,
+                    "account_id": account_id_raw,
+                    "entry_order_id": pos.get("entry_order_id"),
+                    "unresolved_poll_count": pos["unresolved_poll_count"],
+                    "time_unresolved_seconds": pos["unresolved_poll_count"] * 10,
+                    "pnl_dollars": None,
+                },
+            )
+            pos["unresolved_alert_published"] = True
+            logger.warning(
+                "ON-B7B-NKD: CRITICAL NKD_TRAIL_SL_UNRESOLVED alert published "
+                "for signal=%s after %d unresolved polls",
+                sig_id, pos["unresolved_poll_count"],
+            )
+        except Exception as exc:
+            logger.error(
+                "ON-B7B-NKD: failed to publish NKD_TRAIL_SL_UNRESOLVED alert "
+                "for signal=%s: %s", sig_id, exc,
+            )
+
+    if sl_unresolved:
         return {
             "signal_id": sig_id,
             "phase": None,
             "buffer": None,
             "stop_price": None,
-            "modify_status": None,
+            "modify_status": "SKIPPED",
             "skip_reason": "sl_order_id_unresolved",
+            "unresolved_poll_count": pos.get("unresolved_poll_count", 0),
         }
 
     # Quote lookup + stale-quote guard (CRITICAL — > 30 s stale skips this
@@ -983,6 +1115,8 @@ def _mirror_position_to_redis(
     existing["jitter_y"] = pos.get("jitter_y")
     existing["jitter_j"] = pos.get("jitter_j")
     existing["sl_order_id"] = pos.get("sl_order_id")
+    existing["unresolved_poll_count"] = pos.get("unresolved_poll_count", 0)
+    existing["unresolved_alert_published"] = pos.get("unresolved_alert_published", False)
     try:
         redis_client.hset(open_positions_key, sig_id, dumps_decimal(existing))
     except Exception as exc:
