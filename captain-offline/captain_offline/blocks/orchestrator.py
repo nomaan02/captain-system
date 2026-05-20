@@ -375,6 +375,33 @@ class OfflineOrchestrator:
                 source="orchestrator",
             )
 
+            # Q2-B-strict NKD outcome bypass (audit 2026-05-20 §2 Q2).
+            # NKD is a fixed-strategy 1-contract trade; do not run DMA / BOCPD
+            # / CUSUM / Level / Kelly / CB params / TSM-sim on its outcome.
+            # D03 trade-outcome row is written upstream in captain-online
+            # b7_position_monitor, so per-trade auditability is preserved.
+            # Accepted-risk: non-NKD same-day trades will not see NKD's
+            # realised P&L in their internal sizing. Topstep server-side MDD
+            # remains the backstop.
+            if asset_id == "NKD" or outcome.get("is_nkd_trail"):
+                self.plog.info(
+                    f"NKD outcome bypass: skipping "
+                    f"DMA/BOCPD/CUSUM/Level/Kelly/CB/TSM for {asset_id} "
+                    f"(NKD fixed-strategy, Q2-B-strict, 2026-05-20 audit)",
+                    source="orchestrator",
+                )
+                try:
+                    write_checkpoint(
+                        "OFFLINE", "TRADE_OUTCOME", "skipped_nkd",
+                        "fixed_strategy_bypass", {"asset": asset_id},
+                    )
+                except Exception as _exc:
+                    self.plog.warn(
+                        f"NKD bypass checkpoint failed (non-fatal): {_exc}",
+                        source="orchestrator",
+                    )
+                return
+
             # 1. DMA meta-weight update (gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
             dma_proposed = run_dma_update(outcome, commit=False)
@@ -512,6 +539,18 @@ class OfflineOrchestrator:
             pnl = _stream_numeric_float(outcome.get("pnl", 0))
             logger.info("Theoretical signal outcome: %s pnl=%.2f (Category A learning)",
                          asset_id, pnl)
+
+            # Q2-B-strict NKD signal-outcome bypass (audit 2026-05-20 \u00a72 Q2).
+            # Defence-in-depth: Q1 parity-skip is disabled for NKD so shadow
+            # outcomes for NKD should never reach this handler \u2014 but guard
+            # anyway so any future routing change can't accidentally feed
+            # NKD theoretical PnL into DMA/BOCPD/Kelly learning.
+            if asset_id == "NKD" or outcome.get("is_nkd_trail"):
+                logger.info(
+                    "NKD signal outcome bypass: skipping Category A learning "
+                    "(Q2-B-strict defensive guard, 2026-05-20 audit)"
+                )
+                return
 
             # 1. DMA meta-weight update (Category A \u2014 gated by pseudotrader)
             from captain_offline.blocks.b1_dma_update import run_dma_update
