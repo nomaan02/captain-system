@@ -33,7 +33,7 @@ ROLE = os.environ.get("CAPTAIN_ROLE", "COMMAND")
 
 logging.basicConfig(
     level=logging.INFO,
-    format=f"[{ROLE}] %(asctime)s %(levelname)s %(name)s: %(message)s",
+    format=f"\n[{ROLE}] %(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 

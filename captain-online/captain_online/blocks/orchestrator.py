@@ -42,6 +42,8 @@ from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE, now_et
 from shared.process_logger import ProcessLogger
 from captain_online.blocks.b9_session_controller import (
     get_session_open_times,
+    get_assets_for_session,
+    get_session_config,
     is_session_opening as _sc_is_session_opening,
 )
 
@@ -53,6 +55,21 @@ REDIS_KEY_OPEN_POSITIONS = "captain:open_positions"
 
 # Session open times — loaded from session_registry.json via B9 session controller.
 SESSION_OPEN_TIMES = get_session_open_times()
+
+
+def _should_track_asset(asset_id: str, session_assets: set[str]) -> bool:
+    """Return True iff asset_id should be registered with the OR tracker.
+
+    Excluded:
+    - P00-* pseudotrader / test assets (never trade live sessions).
+    - Assets not in session_assets when that set is non-empty (off-session assets
+      like MGC during NY, or NQ during LON).
+    """
+    if asset_id.startswith("P00-"):
+        return False
+    if session_assets and asset_id not in session_assets:
+        return False
+    return True
 
 
 class OnlineOrchestrator:
@@ -272,23 +289,38 @@ class OnlineOrchestrator:
         # Register active assets with the OR tracker NOW so ticks from
         # session open are captured. Phase A (B1-B5C) takes ~1-2 min;
         # without early registration those ticks would be lost.
+        # Only registers assets that belong to this session (from session_registry.json)
+        # and excludes P00-* pseudotrader/test assets — both are irrelevant noise.
         if self._or_tracker:
             try:
+                session_assets = set(get_assets_for_session(session_id))
                 from shared.questdb_client import get_cursor as _gc
                 with _gc() as _cur:
                     _cur.execute(
                         """SELECT asset_id FROM p3_d00_asset_universe
                            WHERE captain_status = 'ACTIVE'
+                             AND asset_id NOT LIKE 'P00-%'
                            ORDER BY last_updated DESC"""
                     )
                     _rows = _cur.fetchall()
                 _seen = set()
+                _registered = []
                 for _r in _rows:
-                    if _r[0] not in _seen:
-                        _seen.add(_r[0])
-                        self._or_tracker.register_asset(_r[0])
-                if _seen:
-                    logger.info("OR tracker: %d assets registered at session open", len(_seen))
+                    _asset = _r[0]
+                    if _asset in _seen:
+                        continue
+                    if not _should_track_asset(_asset, session_assets):
+                        continue
+                    _seen.add(_asset)
+                    _registered.append(_asset)
+                    self._or_tracker.register_asset(_asset)
+                if _registered:
+                    _cfg = get_session_config(session_id) or {}
+                    _or_window = f"{_cfg.get('or_start', '?')}–{_cfg.get('or_end', '?')}"
+                    logger.info(
+                        "OR tracker registered: %d assets for %s — %s (OR window %s)",
+                        len(_registered), session_name, ", ".join(_registered), _or_window,
+                    )
                     self._publish_pipeline_stage("OR_FORMING")
             except Exception as e:
                 logger.error("Early OR registration failed: %s — will retry after Phase A", e)
@@ -361,7 +393,11 @@ class OnlineOrchestrator:
                 # Register any assets that weren't caught by early registration
                 # (e.g. if early query failed or new assets appeared during Phase A).
                 # register_asset() overwrites, so only register MISSING ones.
+                # Apply the same session-filter and P00-* exclusion as early registration.
+                _fallback_session_assets = set(get_assets_for_session(session_id))
                 for asset in data["active_assets"]:
+                    if not _should_track_asset(asset, _fallback_session_assets):
+                        continue
                     if self._or_tracker.get_state(asset) is None:
                         self._or_tracker.register_asset(asset)
 

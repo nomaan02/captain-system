@@ -44,6 +44,21 @@ from shared.redis_client import get_redis_client, CH_ALERTS
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache: ensures each Kelly default-config warning logs at most once
+# per (account_id, missing_field) per process lifetime. Prevents session-open spam
+# when the same account/field combination is absent across every asset in every session.
+_logged_kelly_defaults: set[tuple[str, str]] = set()
+
+
+def _log_kelly_default_once(account_id: str, field: str, msg: str) -> None:
+    """Emit msg at INFO level at most once per (account_id, field) per process lifetime."""
+    key = (str(account_id), field)
+    if key in _logged_kelly_defaults:
+        return
+    _logged_kelly_defaults.add(key)
+    logger.info(msg)
+
+
 # `_silo_money` and `_to_float` are aliases for shared.decimal_boundary
 # helpers, kept under their original names so call-sites in this module
 # stay short. The Phase 1 consolidation moved the canonical implementation
@@ -429,11 +444,12 @@ def _apply_risk_goal(kelly: float, risk_goal: str, tsm: dict) -> float:
         elif pass_prob is not None and pass_prob < 0.7:
             return kelly * 0.7
         if pass_prob is None:
-            logger.info(
-                "ON-B4: pass_probability absent for account %s (PASS_EVAL) — "
+            _acct = str(tsm.get("account_id", "unknown"))
+            _log_kelly_default_once(
+                _acct, "pass_probability",
+                f"ON-B4: pass_probability absent for account {_acct} (PASS_EVAL) — "
                 "using default 0.85 Kelly multiplier; seed pass_probability once "
-                "≥30 Pseudotrader sessions exist",
-                tsm.get("account_id", "unknown"),
+                "\u226530 Pseudotrader sessions exist",
             )
         return kelly * 0.85
     elif risk_goal == "PRESERVE_CAPITAL":
@@ -469,11 +485,11 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
             except (ValueError, TypeError):
                 pass
         else:
-            logger.info(
-                "ON-B4: evaluation_end_date absent for account %s — "
-                "using default budget_divisor=%d (open-ended combine; no fixed deadline)",
-                tsm.get("account_id", "unknown"),
-                budget_divisor,
+            _acct = str(tsm.get("account_id", "unknown"))
+            _log_kelly_default_once(
+                _acct, "evaluation_end_date",
+                f"ON-B4: evaluation_end_date absent for account {_acct} — "
+                f"using default budget_divisor={budget_divisor} (open-ended combine; no fixed deadline)",
             )
 
         daily_budget = remaining_mdd / budget_divisor if budget_divisor > 0 else 0.0
@@ -488,10 +504,11 @@ def _compute_tsm_cap(tsm: dict, category: str, strategy_sl: float, point_value: 
         else:
             max_by_mll = 999
             if tsm.get("max_daily_loss") is None:
-                logger.info(
-                    "ON-B4: max_daily_loss absent for account %s — "
+                _acct = str(tsm.get("account_id", "unknown"))
+                _log_kelly_default_once(
+                    _acct, "max_daily_loss",
+                    f"ON-B4: max_daily_loss absent for account {_acct} — "
                     "max_by_mll=999 (no MLL on this combine; MDD-only risk limit applies)",
-                    tsm.get("account_id", "unknown"),
                 )
 
         max_contracts = tsm.get("max_contracts") or 999

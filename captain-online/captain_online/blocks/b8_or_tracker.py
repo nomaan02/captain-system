@@ -239,8 +239,8 @@ class ORTracker:
                 cutoff_minutes=self._cutoff_minutes,
             )
             self._sessions[asset_id] = session
-            logger.info("OR tracker registered: %s (%s) OR %s–%s on %s",
-                        asset_id, session_type, or_start, or_end, session_date)
+            logger.debug("OR tracker registered: %s (%s) OR %s–%s on %s",
+                         asset_id, session_type, or_start, or_end, session_date)
 
     def get_state(self, asset_id: str) -> AssetORSession | None:
         """Get current OR state for an asset (snapshot — not a live reference)."""

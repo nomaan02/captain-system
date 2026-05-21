@@ -75,7 +75,7 @@ def ensure_nkd_subscribed(open_positions: list[dict]) -> None:
 
 logging.basicConfig(
     level=logging.INFO,
-    format=f"[{ROLE}] %(asctime)s %(levelname)s %(name)s: %(message)s",
+    format=f"\n[{ROLE}] %(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
