@@ -103,18 +103,26 @@ def run_trade_selection(
     for u in active_assets:
         for ac in accounts:
             if final_contracts.get(u, {}).get(ac, 0) == 0:
-                if account_recommendation.get(u, {}).get(ac) == "TRADE":
+                rec = account_recommendation.get(u, {}).get(ac)
+                if rec in ("TRADE", "TRADE_WARMUP"):
                     account_recommendation.setdefault(u, {})[ac] = "SKIP"
                     account_skip_reason.setdefault(u, {})[ac] = \
                         "Removed by portfolio-level constraint (correlation or position limit)"
 
     # Select trades
+    # W-C warm-up: assets with recommendation "TRADE_WARMUP" are selected even
+    # when expected_edge == 0 (cold-start EWMA hasn't accumulated enough history
+    # to show positive edge, but the asset has earned participation).
     selected_trades = []
     for u in ranked_assets:
         max_contracts = max(
             (final_contracts.get(u, {}).get(ac, 0) for ac in accounts), default=0
         )
-        if max_contracts > 0 and expected_edge.get(u, 0) > 0:
+        is_warmup = any(
+            account_recommendation.get(u, {}).get(ac) == "TRADE_WARMUP"
+            for ac in accounts
+        )
+        if max_contracts > 0 and (expected_edge.get(u, 0) > 0 or is_warmup):
             selected_trades.append(u)
 
     # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD is always selected

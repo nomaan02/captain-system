@@ -105,11 +105,14 @@ def _load_ewma(asset_id: str, regime: str, session: int) -> dict:
         )
         row = cur.fetchone()
     if row:
+        # I-8 fix: use None-check instead of `or default` so a legitimately
+        # learned 0.0 win_rate (or 0.0 avg_win/avg_loss) is preserved and not
+        # silently rewritten to the cold-start default.
         return {
-            "win_rate": row[0] or 0.5,
-            "avg_win": row[1] or 0.01,
-            "avg_loss": row[2] or 0.01,
-            "n_trades": row[3] or 0,
+            "win_rate": row[0] if row[0] is not None else 0.5,
+            "avg_win":  row[1] if row[1] is not None else 0.01,
+            "avg_loss": row[2] if row[2] is not None else 0.01,
+            "n_trades": row[3] if row[3] is not None else 0,
         }
     return {"win_rate": 0.5, "avg_win": 0.01, "avg_loss": 0.01, "n_trades": 0}
 
@@ -260,6 +263,7 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
     })
 
     proposed_kelly = {}
+    proposed_kelly_reason = {}
     for r in ["LOW_VOL", "HIGH_VOL"]:
         for ss in [1, 2, 3]:
             # For the trigger cell, use the proposed EWMA (not yet written)
@@ -269,6 +273,8 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
                 e = _load_ewma(asset_id, r, ss)
             kelly_full = _compute_kelly(e["win_rate"], e["avg_win"], e["avg_loss"])
             proposed_kelly[(r, ss)] = kelly_full
+            # Reason tag per cell (invariant I-2): EDGE or NO_EDGE
+            proposed_kelly_reason[(r, ss)] = "EDGE" if kelly_full > 0 else "NO_EDGE"
 
     # Compute shrinkage (asset-level, data-dependent per PG-15)
     shrinkage = _compute_shrinkage(asset_id)
@@ -278,6 +284,7 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
         "current_ewma": current_ewma,
         "proposed_ewma": dict(ewma),
         "proposed_kelly": proposed_kelly,
+        "proposed_kelly_reason": proposed_kelly_reason,
         "shrinkage": shrinkage,
     }
 
@@ -287,27 +294,28 @@ def run_kelly_update(trade_outcome: dict, commit: bool = True) -> dict:
     # Write EWMA to D05
     _save_ewma(asset_id, regime, session, ewma)
 
-    # Write Kelly to D12
+    # Write Kelly to D12 (includes reason_tag per invariant I-2)
     for (r, ss), kelly_full in proposed_kelly.items():
+        rtag = proposed_kelly_reason.get((r, ss), "NO_EDGE")
         with get_cursor() as cur:
             qexecute(
                 cur,
                 """INSERT INTO p3_d12_kelly_parameters
                    (asset_id, regime, session, kelly_full, shrinkage_factor,
-                    sizing_override, last_updated)
-                   VALUES (%s, %s, %s, %s, %s, %s, now())""",
-                (asset_id, r, ss, kelly_full, None, None),
+                    sizing_override, reason_tag, last_updated)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
+                (asset_id, r, ss, kelly_full, None, None, rtag),
             )
 
-    # Write shrinkage row
+    # Write shrinkage row (reason_tag not meaningful for the ALL/0 row)
     with get_cursor() as cur:
         qexecute(
             cur,
             """INSERT INTO p3_d12_kelly_parameters
                (asset_id, regime, session, kelly_full, shrinkage_factor,
-                sizing_override, last_updated)
-               VALUES (%s, %s, %s, %s, %s, %s, now())""",
-            (asset_id, "ALL", 0, 0.0, shrinkage, None),
+                sizing_override, reason_tag, last_updated)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, now())""",
+            (asset_id, "ALL", 0, 0.0, shrinkage, None, "SHRINKAGE"),
         )
 
     # SQLite WAL checkpoint per spec P3-PG-15: ensures crash recovery

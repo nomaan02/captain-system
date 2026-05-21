@@ -117,3 +117,26 @@ PROHIBITED_EXTERNAL_FIELDS = {
 # SOD reset time (19:00 EST)
 SOD_RESET_HOUR = 19
 SOD_RESET_MINUTE = 0
+
+# ---------------------------------------------------------------------------
+# W-C warm-up policy constants (kelly-zero-fix, Bug-A)
+#
+# An ACTIVE asset is eligible for the 1-contract warm-up floor when it has
+# at least WARMUP_MIN_CELL_N EWMA observations in at least one active
+# regime/session cell.  This decouples "has this asset earned trade time?"
+# from "what does Kelly say about sizing?".
+#
+# WARMUP_MIN_D03     — minimum D03 trades for the pseudotrader cold-start gate
+#                      (already enforced in captain-offline orchestrator; kept
+#                      here as the canonical definition).
+# WARMUP_MIN_CELL_N  — minimum n_trades per (regime, session) cell in D05
+#                      before the warm-up floor applies.
+# WARMUP_KELLY_FLOOR_CONTRACTS — contracts to allocate when floor applies.
+# WARMUP_MAX_DAYS    — auto-exit warm-up after this many calendar days even
+#                      if WARMUP_MIN_CELL_N is never reached.
+# ---------------------------------------------------------------------------
+WARMUP_MIN_D03 = 5
+WARMUP_MIN_CELL_N = 3
+WARMUP_MAX_CELL_N = 30   # n_trades above which Kelly's zero is trusted (no floor)
+WARMUP_KELLY_FLOOR_CONTRACTS = 1
+WARMUP_MAX_DAYS = 20

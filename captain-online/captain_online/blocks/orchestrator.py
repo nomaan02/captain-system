@@ -35,7 +35,7 @@ from shared.redis_client import (
     get_redis_client,
     ensure_consumer_group, read_stream, ack_message, publish_to_stream,
     STREAM_COMMANDS, GROUP_ONLINE_COMMANDS,
-    CH_STATUS, REDIS_KEY_QUOTES,
+    CH_STATUS, CH_ALERTS, REDIS_KEY_QUOTES,
 )
 from shared.journal import write_checkpoint
 from shared.constants import SESSION_IDS, SYSTEM_TIMEZONE, now_et
@@ -674,6 +674,7 @@ class OnlineOrchestrator:
                 user_silo=user_silo,
                 session_id=session_id,
                 final_contracts=trades["final_contracts"],
+                account_recommendation=trades["account_recommendation"],
             )
 
             # V3: Circuit breaker screen (after quality gate, before signal output)
@@ -696,6 +697,35 @@ class OnlineOrchestrator:
             below_count = len(quality["available_not_recommended"])
             logger.info("Phase A — user %s: %d recommended, %d below threshold",
                         user_id, rec_count, below_count)
+
+            # Invariant I-3 guard: if Phase A produces zero recommendations for
+            # an active session, emit a CRITICAL alert so the failure is visible
+            # immediately rather than showing up as silent ON-B6-SKIP warnings.
+            if rec_count == 0 and len(data.get("active_assets", [])) > 0:
+                try:
+                    reasons = {
+                        a: next(iter(v.values()), "UNKNOWN") if v else "UNKNOWN"
+                        for a, v in cb_result.get("account_skip_reason", {}).items()
+                    }
+                    get_redis_client().publish(CH_ALERTS, json.dumps({
+                        "type": "ZERO_RECOMMEND_SESSION",
+                        "priority": "CRITICAL",
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "active_assets": data.get("active_assets", []),
+                        "reasons": reasons,
+                        "timestamp": now_et().isoformat(),
+                    }))
+                    logger.warning(
+                        "ON-OrchA-ZERO-RECOMMEND user=%s session=%s active=%d "
+                        "reasons=%s — CRITICAL alert published",
+                        user_id, session_id,
+                        len(data.get("active_assets", [])), reasons,
+                    )
+                except Exception as _alert_exc:
+                    logger.error(
+                        "Failed to publish ZERO_RECOMMEND_SESSION alert: %s", _alert_exc,
+                    )
 
             return {
                 "user_silo": user_silo,

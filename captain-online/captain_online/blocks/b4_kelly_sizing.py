@@ -40,6 +40,7 @@ from shared.json_helpers import parse_json, parse_json_decimal
 from shared.constants import now_et
 from shared.sizing_helpers import resolve_sizing_sl
 from shared.decimal_boundary import as_money as _silo_money, to_float as _to_float
+from shared.redis_client import get_redis_client, CH_ALERTS
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,6 @@ def run_kelly_sizing(
                            float(silo_drawdown_pct * 100), float(max_silo_dd_d * 100), user_id)
             # NOTIFY: CRITICAL alert for silo drawdown (P3-PG-24 lines 734-736)
             try:
-                from shared.redis_client import get_redis_client, CH_ALERTS
                 client = get_redis_client()
                 client.publish(CH_ALERTS, json.dumps({
                     "type": "SILO_DRAWDOWN",
@@ -245,13 +245,77 @@ def run_kelly_sizing(
             raw_contracts = math.floor(kelly_contracts)
             final = min(raw_contracts, tsm_cap, topstep_daily_cap, scaling_cap)
             final = max(final, 0)
+
+            # W-C warm-up floor (kelly-zero-fix Bug-A, invariant I-3):
+            # When all caps permit ≥1 contract but Kelly collapsed to 0,
+            # promote eligible assets to exactly 1 contract so cold-start
+            # does not silently block trading.
+            from shared.constants import WARMUP_KELLY_FLOOR_CONTRACTS
+            eligible, warmup_n = _is_warmup_eligible(u, ewma_states, r_probs, session_id)
+            warmup_floor_applied = False
+            if (
+                final == 0
+                and raw_contracts == 0
+                and eligible
+                and tsm_cap >= WARMUP_KELLY_FLOOR_CONTRACTS
+                and topstep_daily_cap >= WARMUP_KELLY_FLOOR_CONTRACTS
+                and scaling_cap >= WARMUP_KELLY_FLOOR_CONTRACTS
+            ):
+                final = WARMUP_KELLY_FLOOR_CONTRACTS
+                warmup_floor_applied = True
+
             final_contracts[u][ac_id] = final
 
-            logger.info("ON-B4: %s ac=%s kelly=%.4f→%.4f(rg)→%.1f(raw) risk/c=%.1f cap=%d tsm=%d topstep=%d scale=%d → %d contracts [%s]",
-                        u, ac_id, kelly_with_aim, account_kelly, kelly_contracts,
-                        risk_per_contract_with_fee, account_capital, tsm_cap,
-                        topstep_daily_cap, scaling_cap, final,
-                        "TRADE" if final > 0 else "SKIP")
+            # Derive reason tag for log + alert routing (invariant I-2 / I-5)
+            if final > 0 and warmup_floor_applied:
+                _reason = "WARMUP_FLOOR_APPLIED"
+            elif final > 0:
+                _reason = "EDGE"
+            elif raw_contracts > 0 and (tsm_cap == 0 or topstep_daily_cap == 0):
+                _reason = "STRUCTURAL_CAP_BLOCK"
+            elif not eligible:
+                _reason = "WARMUP_INELIGIBLE"
+            else:
+                _reason = "NO_EDGE"
+
+            # Bug-B alert (invariant I-5): Kelly says trade but caps say no.
+            # Emit a HIGH-priority CH_ALERTS event so ops can see the blockage
+            # without it being a silent SKIP.  Policy: no parameter change
+            # (per user choice A from kelly-zero-fix audit §5.2).
+            if _reason == "STRUCTURAL_CAP_BLOCK" and blended_kelly > 0:
+                try:
+                    get_redis_client().publish(CH_ALERTS, json.dumps({
+                        "type": "STRUCTURAL_CAP_BLOCK",
+                        "priority": "HIGH",
+                        "asset": u,
+                        "account_id": ac_id,
+                        "blended_kelly": blended_kelly,
+                        "raw_contracts": raw_contracts,
+                        "risk_per_contract": risk_per_contract_with_fee,
+                        "tsm_cap": tsm_cap,
+                        "topstep_daily_cap": topstep_daily_cap,
+                        "timestamp": now_et().isoformat(),
+                    }))
+                    logger.warning(
+                        "ON-B4-STRUCTURAL-CAP: %s ac=%s blended_kelly=%.4f "
+                        "raw=%d tsm_cap=%d topstep_cap=%d risk_per_c=%.1f — "
+                        "STRUCTURAL_CAP_BLOCK HIGH alert published",
+                        u, ac_id, blended_kelly, raw_contracts, tsm_cap,
+                        topstep_daily_cap, risk_per_contract_with_fee,
+                    )
+                except Exception as _alert_exc:
+                    logger.error("Failed to publish STRUCTURAL_CAP_BLOCK alert: %s", _alert_exc)
+
+            logger.info(
+                "ON-B4: %s ac=%s kelly=%.4f→%.4f(rg)→%.1f(raw) risk/c=%.1f "
+                "cap=%d tsm=%d topstep=%d scale=%d → %d contracts [%s] "
+                "reason=%s eligible=%s warmup_n=%d",
+                u, ac_id, kelly_with_aim, account_kelly, kelly_contracts,
+                risk_per_contract_with_fee, account_capital, tsm_cap,
+                topstep_daily_cap, scaling_cap, final,
+                "TRADE" if final > 0 else "SKIP",
+                _reason, eligible, warmup_n,
+            )
 
             # Step 6d: Recommendation
             # Phase A: D08 monetary fields are Decimal — coerce for arithmetic with floats.
@@ -262,7 +326,11 @@ def run_kelly_sizing(
                     current_dd = _to_float(tsm.get("current_drawdown", 0))
                     remaining_mdd = mdd_limit - current_dd
 
-            if final == 0:
+            if warmup_floor_applied:
+                # Warm-up floor applied: eligible for trading at 1-contract minimum.
+                account_recommendation[u][ac_id] = "TRADE_WARMUP"
+                account_skip_reason[u][ac_id] = None
+            elif final == 0:
                 max_daily_loss = _to_float(tsm.get("max_daily_loss"))
                 daily_used = _to_float(tsm.get("daily_loss_used", 0))
                 if tsm.get("max_daily_loss") is not None and daily_used >= max_daily_loss:
@@ -322,6 +390,33 @@ def _get_shrinkage(asset_id: str, kelly_params: dict, session_id: int) -> float:
         if k[0] == asset_id:
             return v.get("shrinkage_factor", 1.0)
     return 1.0
+
+
+def _is_warmup_eligible(asset_id: str, ewma_states: dict, regime_probs: dict,
+                        session_id: int) -> tuple[bool, int]:
+    """Return (eligible, max_n_trades_seen_across_active_cells).
+
+    W-C eligibility window: WARMUP_MIN_CELL_N ≤ n_trades ≤ WARMUP_MAX_CELL_N.
+
+    - Below WARMUP_MIN_CELL_N: too few observations to trust (no floor).
+    - Inside the window: cold-start period — 1-contract floor prevents Kelly=0
+      from silently blocking a potentially-viable asset.
+    - Above WARMUP_MAX_CELL_N: enough history — Kelly's zero is trusted
+      (genuine no-edge), so no floor is applied.
+
+    D03 count is NOT consulted here; that gate already lives in the offline
+    pseudotrader cold-start branch (COLD_START_MIN_TRADES=5).
+    """
+    from shared.constants import WARMUP_MIN_CELL_N, WARMUP_MAX_CELL_N
+    max_n = 0
+    for regime in ("LOW_VOL", "HIGH_VOL"):
+        if regime_probs.get(regime, 0.0) <= 0.0:
+            continue
+        ewma = ewma_states.get((asset_id, regime, session_id))
+        if ewma:
+            max_n = max(max_n, int(ewma.get("n_trades", 0)))
+    eligible = WARMUP_MIN_CELL_N <= max_n <= WARMUP_MAX_CELL_N
+    return (eligible, max_n)
 
 
 

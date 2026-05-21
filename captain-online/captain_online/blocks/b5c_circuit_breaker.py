@@ -187,11 +187,12 @@ def run_circuit_breaker_screen(
                 blocked_count += 1
                 logger.info("ON-B5C: CB blocked %s for account %s: %s", u, ac_id, block_result)
 
-    # Re-evaluate recommended trades (remove if all accounts blocked)
+    # Re-evaluate recommended trades (remove if all accounts blocked).
+    # TRADE_WARMUP counts as an active trade recommendation for warm-up assets.
     updated_recommended = []
     for u in recommended_trades:
         has_trade = any(
-            account_recommendation.get(u, {}).get(ac) == "TRADE"
+            account_recommendation.get(u, {}).get(ac) in ("TRADE", "TRADE_WARMUP")
             for ac in accounts
         )
         if has_trade:

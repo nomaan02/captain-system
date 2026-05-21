@@ -173,6 +173,69 @@ across agent sessions.
 
 <!-- New entries appended here on `/record` triggers or via "lessons learned" updates. -->
 
+### 2026-05-21 — NQ structural cap block (tsm_cap=0, topstep_cap=0) on $150 K Topstep combine
+
+**Observed symptom:**
+```
+ON-B4: NQ ac=21855714 kelly=0.0724→0.0724(rg)→17.4(raw) risk/c=531.0
+         cap=150000 tsm=0 topstep=0 scale=15 → 0 contracts [SKIP]
+         reason=STRUCTURAL_CAP_BLOCK eligible=True warmup_n=20
+```
+NQ produces a positive Kelly fraction (0.072, raw ≈ 17 contracts) but is
+blocked to 0 by both `tsm_cap=0` AND `topstep_cap=0`.
+
+**Root cause:**
+NQ's per-contract risk = sl_distance × point_value + fee
+≈ 20 pts × $20/pt + $10 fee = **$410–$531 per contract**.
+
+Two independent caps both round down to 0:
+
+| Cap | Formula | For NQ |
+|-----|---------|--------|
+| `tsm_cap` | `floor(remaining_mdd / tsm_budget_divisor / risk_per_c)` | floor(5000/20/531) = floor(0.47) = **0** |
+| `topstep_daily_cap` | derived from `E_daily_exposure / risk_per_c` | also 0 at $150 K TC settings |
+
+The four "knobs" that could unblock NQ (in order of impact):
+1. **Larger account** (e.g. $250 K TC) → remaining_mdd ≥ $10 K → tsm_cap ≥ 1.
+2. **Lower SL distance** (`bootstrap_production.py` `sl_distance` for NQ) → risk_per_c ↓.
+3. **Lower `tsm_budget_divisor`** (currently 20 in `scripts/seed_system_params.py`) → daily_budget ↑.
+4. **Topstep `c` or `e` parameters** → E_daily_exposure ↑.
+
+**Policy decision (2026-05-21 user choice A):** no parameter changes today.
+NQ is blocked by structural constraints inherent to the $150 K TC account.
+The live visibility mechanism is a **`STRUCTURAL_CAP_BLOCK` HIGH-priority alert**
+on `captain:alerts` published by `b4_kelly_sizing.run_kelly_sizing` whenever
+`blended_kelly > 0 AND tsm_cap == 0`.
+
+**Expected alert format:**
+```json
+{
+  "type": "STRUCTURAL_CAP_BLOCK",
+  "priority": "HIGH",
+  "asset": "NQ",
+  "account_id": "21855714",
+  "blended_kelly": 0.0724,
+  "raw_contracts": 17,
+  "risk_per_contract": 531.0,
+  "tsm_cap": 0,
+  "topstep_daily_cap": 0,
+  "timestamp": "2026-05-21T09:35:00-04:00"
+}
+```
+
+**Monitor / verify on Tower A:**
+```fish
+set -gx REDIS_PASSWORD (grep '^REDIS_PASSWORD=' ~/captain-system/.env | cut -d= -f2)
+docker exec captain-system-redis-1 redis-cli -a "$REDIS_PASSWORD" --no-auth-warning \
+  SUBSCRIBE 'captain:alerts'
+# During NY-open, expect one STRUCTURAL_CAP_BLOCK message per session for NQ.
+```
+
+**Revisit when:** NQ moves to a $250 K combine OR strategy sl_distance is reduced
+below ~5 pts (risk_per_c < $110 → tsm_cap ≥ 1 at $150 K TC with divisor=20).
+
+**Reference:** `docs2/quick-fixes/kello-zero-fix/audit_map.md` §5.2 (Bug-B knobs).
+
 ### 2026-05-19 — `python3 -m pytest` on tower fails with `No module named pytest`
 
 **Original (broken):** an operator following the BATCH_4 deploy runbook (`docs2/quick-fixes/NKD_Pivot/day_2/Rejected _orders_issue/BATCH_4_VALIDATION_DEPLOY.md` §3) pasted the consolidated regression suite command into the tower's fish shell:

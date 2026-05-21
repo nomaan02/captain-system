@@ -261,6 +261,28 @@ CREATE TABLE IF NOT EXISTS p3_d12_kelly_parameters (
 DEDUP UPSERT KEYS(last_updated, asset_id, regime, session);
 """
 
+D12_KELLY_DIAGNOSTIC = """
+CREATE TABLE IF NOT EXISTS p3_d12_kelly_diagnostic (
+    asset_id SYMBOL,
+    regime STRING,
+    session INT,
+    win_rate DOUBLE,
+    avg_win DOUBLE,
+    avg_loss DOUBLE,
+    n_trades INT,
+    cp_prob DOUBLE,
+    alpha DOUBLE,
+    blended_kelly DOUBLE,
+    shrinkage_factor DOUBLE,
+    final_kelly_full DOUBLE,
+    reason_tag SYMBOL,
+    trigger STRING,
+    trade_id STRING,
+    last_updated TIMESTAMP
+) TIMESTAMP(last_updated) PARTITION BY DAY WAL
+DEDUP UPSERT KEYS(last_updated, asset_id, regime, session);
+"""
+
 D13_SENSITIVITY_SCAN_RESULTS = """
 CREATE TABLE IF NOT EXISTS p3_d13_sensitivity_scan_results (
     asset_id SYMBOL,
@@ -830,6 +852,7 @@ CANONICAL_DDLS: list[str] = [
     D07_CORRELATION_MODEL_STATES,
     D08_TSM_STATE,
     D12_KELLY_PARAMETERS,
+    D12_KELLY_DIAGNOSTIC,
     D13_SENSITIVITY_SCAN_RESULTS,
     D15_USER_SESSION_DATA,
     D16_USER_CAPITAL_SILOS,
@@ -1089,6 +1112,12 @@ CANONICAL_MIGRATIONS: list[tuple[str, str]] = [
     (
         "M048_create_d34_nkd_trail_state",
         D34_NKD_TRAIL_STATE,
+    ),
+    # M049: kelly-zero-fix — add reason_tag SYMBOL to D12 so zero-Kelly events
+    # are traceable in QuestDB (audit §6 invariant I-2).
+    (
+        "M049_d12_add_reason_tag",
+        "ALTER TABLE p3_d12_kelly_parameters ADD COLUMN reason_tag SYMBOL",
     ),
 ]
 

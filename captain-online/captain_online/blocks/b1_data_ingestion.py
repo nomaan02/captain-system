@@ -187,10 +187,11 @@ def _load_ewma_states() -> dict:
             "asset_id": r[0],
             "regime": r[1],
             "session": r[2],
-            "win_rate": r[3] or 0.5,
-            "avg_win": r[4] or 0.0,
-            "avg_loss": r[5] or 0.0,
-            "n_trades": r[6] or 0,
+            # I-8 fix: None-check preserves legitimately learned 0.0 values.
+            "win_rate": r[3] if r[3] is not None else 0.5,
+            "avg_win":  r[4] if r[4] is not None else 0.0,
+            "avg_loss": r[5] if r[5] is not None else 0.0,
+            "n_trades": r[6] if r[6] is not None else 0,
         }
     return result
 
@@ -217,8 +218,10 @@ def _load_kelly_params() -> dict:
             "asset_id": r[0],
             "regime": r[1],
             "session": r[2],
-            "kelly_full": r[3] or 0.0,
-            "shrinkage_factor": r[4] or 1.0,
+            # I-8 fix: None-check so a legitimately-stored 0.0 kelly_full is not
+            # upgraded to 0.0 again (benign for kelly but consistent with the fix).
+            "kelly_full": r[3] if r[3] is not None else 0.0,
+            "shrinkage_factor": r[4] if r[4] is not None else 1.0,
         }
         # Collect sizing overrides (Level 2 reductions)
         override = parse_json(r[5], None)

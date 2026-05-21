@@ -21,6 +21,7 @@ import logging
 from datetime import datetime
 
 from shared.questdb_client import get_cursor, qexecute
+from shared.json_helpers import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ def run_quality_gate(
     user_silo: dict,
     session_id: int,
     final_contracts: dict = None,
+    account_recommendation: dict = None,
 ) -> dict:
     """P3-PG-25B: Signal quality gate for one user.
 
@@ -48,6 +50,29 @@ def run_quality_gate(
     quality_results = {}
 
     for u in selected_trades:
+        # W-C warm-up bypass: assets promoted to TRADE_WARMUP by the 1-contract
+        # floor pass the quality gate unconditionally.  Their edge is ~0 from
+        # cold-start EWMA, but we want 1-contract participation to let the live
+        # EWMA accumulate real data.
+        if account_recommendation is not None and any(
+            account_recommendation.get(u, {}).get(ac) == "TRADE_WARMUP"
+            for ac in (parse_json(user_silo.get("accounts", "[]"), []) or [])
+        ):
+            quality_results[u] = {
+                "quality_score": 0.0,
+                "dollar_per_contract": 0.0,
+                "total_contracts": 1,
+                "quality_multiplier": 1.0,
+                "passes_gate": True,
+                "edge": expected_edge.get(u, 0.0),
+                "modifier": combined_modifier.get(u, 1.0),
+                "data_maturity": 1.0,
+                "trade_count": 0,
+                "reason": "WARMUP_BYPASS",
+            }
+            logger.info("ON-B5B: TRADE_WARMUP bypass — auto-passing quality gate for %s", u)
+            continue
+
         # Q2-B-strict NKD bypass (audit 2026-05-20 §2 Q2). NKD always passes
         # the quality gate; do not consult expected_edge / modifier / D03
         # trade count. NKD has its own fixed-strategy quality semantics

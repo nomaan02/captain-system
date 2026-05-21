@@ -89,6 +89,23 @@ def make_kelly_params(asset_id="ES", kelly_full=0.10, shrinkage=0.85,
     }
 
 
+def make_warmup_ewma_states(asset_id="ES", n_trades_per_cell=3, session=1):
+    """EWMA states for a warm-up eligible asset: n_trades >= WARMUP_MIN_CELL_N
+    but edge collapsed to 0 (default bootstrap values).
+
+    Used to build warm-up scenarios where the W-C floor should apply.
+    """
+    states = {}
+    for regime in ("LOW_VOL", "HIGH_VOL"):
+        states[(asset_id, regime, session)] = {
+            "win_rate": 0.5,
+            "avg_win": 0.01,
+            "avg_loss": 0.01,
+            "n_trades": n_trades_per_cell,
+        }
+    return states
+
+
 def make_assets_detail(asset_id="ES", point_value: Decimal | None = None,
                        tick_size: Decimal | None = None):
     """Asset detail dict."""
